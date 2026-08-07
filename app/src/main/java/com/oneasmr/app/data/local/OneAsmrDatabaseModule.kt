@@ -26,13 +26,17 @@ object OneAsmrDatabaseModule {
     fun provideWorkDao(db: OneAsmrDatabase): WorkDao = db.workDao()
 
     /**
-     * Task 12 library paging: a fresh [PagingSource] per Pager generation.
-     * Factory injection keeps LibraryViewModel unit-testable with a fake
-     * source while production always pages through Room's LimitOffsetPagingSource.
+     * Task 12/13 library paging: a fresh [PagingSource] per Pager generation
+     * carrying the full sort + search parameters (order field, direction,
+     * keyword, session random seed). Factory injection keeps
+     * LibraryViewModel/SearchViewModel unit-testable with a fake source while
+     * production always pages through Room's LimitOffsetPagingSource.
      */
     @Provides
     fun provideWorkPagingSourceFactory(workDao: WorkDao): WorkPagingSourceFactory =
-        WorkPagingSourceFactory { workDao.pagingSource() }
+        WorkPagingSourceFactory { order, descending, keyword, randomSeed ->
+            workDao.pagingSource(order, descending, keyword, randomSeed)
+        }
 
     @Provides
     fun provideCircleDao(db: OneAsmrDatabase): CircleDao = db.circleDao()

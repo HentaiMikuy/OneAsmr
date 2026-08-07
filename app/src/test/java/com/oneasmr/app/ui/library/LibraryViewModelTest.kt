@@ -13,6 +13,7 @@ import com.oneasmr.app.data.local.Review
 import com.oneasmr.app.data.local.ScrapeStatus
 import com.oneasmr.app.data.local.TestDataStoreFile
 import com.oneasmr.app.data.local.WorkListItem
+import com.oneasmr.app.data.local.WorkOrder
 import com.oneasmr.app.data.local.WorkPagingSourceFactory
 import com.oneasmr.app.data.local.settings.LibraryViewMode
 import com.oneasmr.app.data.local.settings.SettingsStore
@@ -111,7 +112,7 @@ class LibraryViewModelTest {
             bookkeeping = bookkeeping,
             scanController = controller,
             settingsStore = settings,
-            pagingSourceFactory = WorkPagingSourceFactory { FakePagingSource(sampleItems) },
+            pagingSourceFactory = WorkPagingSourceFactory { _, _, _, _ -> FakePagingSource(sampleItems) },
         )
     }
 
@@ -357,7 +358,7 @@ class LibraryViewModelTest {
             bookkeeping = bookkeeping,
             scanController = controller,
             settingsStore = restarted,
-            pagingSourceFactory = WorkPagingSourceFactory { FakePagingSource(emptyList()) },
+            pagingSourceFactory = WorkPagingSourceFactory { _, _, _, _ -> FakePagingSource(emptyList()) },
         )
         assertEquals(LibraryViewMode.LIST, newVm.libraryViewMode.first { it == LibraryViewMode.LIST })
         newVm.viewModelScope.cancel()
@@ -368,5 +369,51 @@ class LibraryViewModelTest {
         viewModel.onPullRefresh()
         val state = awaitState { true }
         assertEquals(0, state.workCount)
+    }
+
+    @Test
+    fun `sort defaults to id ascending`() = runTest(scheduler) {
+        assertEquals(WorkOrder.ID, viewModel.sortOrder.first())
+        assertEquals(false, viewModel.sortDescending.first())
+    }
+
+    @Test
+    fun `setSort persists the selection across view model restarts`() = runTest(scheduler) {
+        viewModel.setSort(WorkOrder.TITLE_SORT_KEY, descending = true)
+        settings.librarySortOrder.first { it == WorkOrder.TITLE_SORT_KEY }
+        settings.librarySortDescending.first { it }
+
+        cancelScope()
+        val restarted = SettingsStore(settingsStore.restart())
+        val newVm = LibraryViewModel(
+            workDao = db.workDao(),
+            db = db,
+            rootRepository = rootRepository,
+            bookkeeping = bookkeeping,
+            scanController = controller,
+            settingsStore = restarted,
+            pagingSourceFactory = WorkPagingSourceFactory { _, _, _, _ -> FakePagingSource(emptyList()) },
+        )
+        assertEquals(WorkOrder.TITLE_SORT_KEY, newVm.sortOrder.first { it == WorkOrder.TITLE_SORT_KEY })
+        assertEquals(true, newVm.sortDescending.first { it })
+        newVm.viewModelScope.cancel()
+    }
+
+    @Test
+    fun `changing the sort keeps paging healthy with the injected source`() = runTest(scheduler) {
+        newViewModel(sampleItems(40))
+        val items = awaitPagedItems(30)
+        // The fake source serves the whole 40-row sample in the initial load
+        // (initialLoadSize = 90 > 40) — assert data flows, not an exact count.
+        assertTrue(items.size >= 30)
+
+        // A sort change restarts the Pager with a fresh PagingSource; data still flows.
+        viewModel.setSort(WorkOrder.RANDOM, descending = false)
+        settings.librarySortOrder.first { it == WorkOrder.RANDOM }
+        scheduler.advanceUntilIdle()
+        // cachedIn replays the last page from before the switch, then the new
+        // pager takes over — assert data flows, not an exact page size.
+        val after = awaitPagedItems(30)
+        assertTrue(after.size >= 30)
     }
 }

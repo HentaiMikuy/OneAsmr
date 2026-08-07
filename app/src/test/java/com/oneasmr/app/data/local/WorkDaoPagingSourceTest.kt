@@ -60,7 +60,7 @@ class WorkDaoPagingSourceTest {
     @Test
     fun `refresh returns the first page in deterministic id order with next key`() = runBlocking {
         (1..25).forEach { commitWork("RJ${100000 + it}") }
-        val page = refreshPage(db.workDao().pagingSource(), loadSize = 10)
+        val page = refreshPage(db.workDao().pagingSource(WorkOrder.ID, descending = false, keyword = null, randomSeed = 1L), loadSize = 10)
         assertEquals(10, page.data.size)
         assertNull(page.prevKey)
         // Room's LimitOffsetPagingSource keys pages by OFFSET, not index.
@@ -73,7 +73,7 @@ class WorkDaoPagingSourceTest {
     @Test
     fun `walking pages reaches every row with no duplicates`() = runBlocking {
         (1..25).forEach { commitWork("RJ${100000 + it}") }
-        val source = db.workDao().pagingSource()
+        val source = db.workDao().pagingSource(WorkOrder.ID, descending = false, keyword = null, randomSeed = 1L)
         val seen = mutableSetOf<String>()
         var nextKey: Int? = null
         do {
@@ -106,7 +106,7 @@ class WorkDaoPagingSourceTest {
             )
             db.reviewDao().upsert(Review("local:RJ100001", rating = 5, reviewText = null, progress = ProgressState.listened, updatedAt = 1L))
         }
-        val page = refreshPage(db.workDao().pagingSource(), loadSize = 10)
+        val page = refreshPage(db.workDao().pagingSource(WorkOrder.ID, descending = false, keyword = null, randomSeed = 1L), loadSize = 10)
         assertEquals(1, page.data.size)
         val item = page.data.single()
         assertEquals("社团甲", item.circleName)
@@ -122,7 +122,7 @@ class WorkDaoPagingSourceTest {
         runBlocking {
             db.workDao().upsert(db.workDao().getById("local:RJ100001")!!.copy(missing = true))
         }
-        val page = refreshPage(db.workDao().pagingSource(), loadSize = 10)
+        val page = refreshPage(db.workDao().pagingSource(WorkOrder.ID, descending = false, keyword = null, randomSeed = 1L), loadSize = 10)
         val byId = page.data.associateBy { it.id }
         assertTrue(byId.getValue("local:RJ100001").missing)
         assertNull(byId.getValue("local:RJ100001").progress)
@@ -133,7 +133,7 @@ class WorkDaoPagingSourceTest {
     @Test
     fun `load on an invalidated source returns Invalid`() = runBlocking {
         commitWork("RJ100001")
-        val source = db.workDao().pagingSource()
+        val source = db.workDao().pagingSource(WorkOrder.ID, descending = false, keyword = null, randomSeed = 1L)
         val first = refreshPage(source, loadSize = 10)
         assertEquals(1, first.data.size)
         source.invalidate()
@@ -143,12 +143,12 @@ class WorkDaoPagingSourceTest {
 
     @Test
     fun `a fresh source sees rows written after the old source was created`() = runBlocking {
-        val stale = db.workDao().pagingSource()
+        val stale = db.workDao().pagingSource(WorkOrder.ID, descending = false, keyword = null, randomSeed = 1L)
         assertEquals(0, refreshPage(stale, loadSize = 10).data.size)
         commitWork("RJ100001")
         // Room's invalidation tracker fires on the work table write; a new
         // source (what the Pager creates after invalidation) sees the row.
-        val fresh = db.workDao().pagingSource()
+        val fresh = db.workDao().pagingSource(WorkOrder.ID, descending = false, keyword = null, randomSeed = 1L)
         val page = refreshPage(fresh, loadSize = 10)
         assertEquals(1, page.data.size)
         assertNotNull(page.data.first().rootFolderUri)

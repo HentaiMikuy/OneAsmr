@@ -109,7 +109,9 @@ fun OneAsmrNavHost(
                 route = Routes.SEARCH,
                 deepLinks = listOf(navDeepLink { uriPattern = "oneasmr://search" }),
             ) {
-                SearchScreen()
+                SearchScreen(
+                    onOpenWork = { workId -> navController.navigate(Routes.workDetail(workId)) },
+                )
             }
             composable(
                 route = Routes.WORK_DETAIL,

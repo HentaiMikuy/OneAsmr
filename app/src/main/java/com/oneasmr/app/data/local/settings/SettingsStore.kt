@@ -2,9 +2,11 @@ package com.oneasmr.app.data.local.settings
 
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import com.oneasmr.app.data.local.WorkOrder
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
@@ -94,6 +96,23 @@ class SettingsStore @Inject constructor(
     val libraryViewMode: Flow<LibraryViewMode> =
         dataStore.data.map { LibraryViewMode.fromStored(it[KEY_LIBRARY_VIEW_MODE]) }
 
+    /** Library sort order (Task 13); unknown/missing stored values fall back to [WorkOrder.ID]. */
+    val librarySortOrder: Flow<WorkOrder> =
+        dataStore.data.map { WorkOrder.fromStored(it[KEY_LIBRARY_SORT_ORDER]) }
+
+    /** Library sort direction (Task 13); ascending by default. Irrelevant for [WorkOrder.RANDOM]. */
+    val librarySortDescending: Flow<Boolean> =
+        dataStore.data.map { it[KEY_LIBRARY_SORT_DESCENDING] ?: false }
+
+    /**
+     * Task 13 recent search terms, newest first, deduplicated, capped at
+     * [MAX_RECENT_SEARCHES]. Terms are joined into one preference string with
+     * the unit separator (U+001F) — a control character no search box can
+     * type — so a single key round-trips the list.
+     */
+    val recentSearches: Flow<List<String>> =
+        dataStore.data.map { decodeRecentSearches(it[KEY_RECENT_SEARCHES]) }
+
     /**
      * Debug-only DLsite base-url override (Task 11 device QA: the emulator
      * reaches the host proxy through 10.0.2.2). Blank = production
@@ -130,8 +149,38 @@ class SettingsStore @Inject constructor(
         dataStore.edit { it[KEY_LIBRARY_VIEW_MODE] = mode.name }
     }
 
+    /** Persists the library sort selection (order + direction) in one atomic edit. */
+    suspend fun setLibrarySort(order: WorkOrder, descending: Boolean) {
+        dataStore.edit {
+            it[KEY_LIBRARY_SORT_ORDER] = order.name
+            it[KEY_LIBRARY_SORT_DESCENDING] = descending
+        }
+    }
+
+    /**
+     * Records a searched term: moves it to the front, deduplicates, strips the
+     * list separator (defense in depth — the UI never types control chars) and
+     * caps at [MAX_RECENT_SEARCHES]. Blank terms are ignored.
+     */
+    suspend fun addRecentSearch(term: String) {
+        val cleaned = term.replace(SEPARATOR, "").trim()
+        if (cleaned.isEmpty()) return
+        dataStore.edit { prefs ->
+            val existing = decodeRecentSearches(prefs[KEY_RECENT_SEARCHES])
+            prefs[KEY_RECENT_SEARCHES] =
+                (listOf(cleaned) + existing.filterNot { it == cleaned })
+                    .take(MAX_RECENT_SEARCHES)
+                    .joinToString(SEPARATOR)
+        }
+    }
+
+    suspend fun clearRecentSearches() {
+        dataStore.edit { it.remove(KEY_RECENT_SEARCHES) }
+    }
+
     companion object {
         const val DEFAULT_CACHE_CAP_MB = 500
+        const val MAX_RECENT_SEARCHES = 10
 
         private val KEY_THEME_MODE = stringPreferencesKey("theme_mode")
         private val KEY_SERVER_ADDRESS = stringPreferencesKey("server_address")
@@ -139,5 +188,14 @@ class SettingsStore @Inject constructor(
         private val KEY_SCRAPER_BASE_URL_OVERRIDE = stringPreferencesKey("scraper_base_url_override")
         private val KEY_CACHE_CAP_MB = intPreferencesKey("cache_cap_mb")
         private val KEY_LIBRARY_VIEW_MODE = stringPreferencesKey("library_view_mode")
+        private val KEY_LIBRARY_SORT_ORDER = stringPreferencesKey("library_sort_order")
+        private val KEY_LIBRARY_SORT_DESCENDING = booleanPreferencesKey("library_sort_descending")
+        private val KEY_RECENT_SEARCHES = stringPreferencesKey("recent_searches")
+
+        /** Unit separator: the only forbidden character in a search term. */
+        private const val SEPARATOR = "\u001F"
+
+        private fun decodeRecentSearches(stored: String?): List<String> =
+            stored?.split(SEPARATOR)?.filter { it.isNotEmpty() } ?: emptyList()
     }
 }

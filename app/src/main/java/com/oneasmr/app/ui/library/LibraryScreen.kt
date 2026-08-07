@@ -22,6 +22,8 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
@@ -72,12 +74,12 @@ import androidx.paging.PagingSource
 import androidx.paging.cachedIn
 import androidx.paging.compose.LazyPagingItems
 import androidx.paging.compose.collectAsLazyPagingItems
-import androidx.paging.compose.itemKey
 import com.oneasmr.app.data.local.OneAsmrDatabase
 import com.oneasmr.app.data.local.ProgressState
 import com.oneasmr.app.data.local.ScrapeStatus
 import com.oneasmr.app.data.local.WorkDao
 import com.oneasmr.app.data.local.WorkListItem
+import com.oneasmr.app.data.local.WorkOrder
 import com.oneasmr.app.data.local.WorkPagingSourceFactory
 import com.oneasmr.app.data.local.settings.LibraryViewMode
 import com.oneasmr.app.data.local.settings.SettingsStore
@@ -101,10 +103,13 @@ import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.components.SingletonComponent
 import javax.inject.Inject
+import kotlin.random.Random
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -126,6 +131,8 @@ fun LibraryScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val scrapeState by scrapeViewModel.uiState.collectAsStateWithLifecycle()
     val viewMode by viewModel.libraryViewMode.collectAsStateWithLifecycle()
+    val sortOrder by viewModel.sortOrder.collectAsStateWithLifecycle()
+    val sortDescending by viewModel.sortDescending.collectAsStateWithLifecycle()
     var removeCandidate by remember { mutableStateOf<WorkListItem?>(null) }
     var forceRescrapeCandidate by remember { mutableStateOf<WorkListItem?>(null) }
     var showBatchMenu by remember { mutableStateOf(false) }
@@ -166,6 +173,13 @@ fun LibraryScreen(
                 viewMode = viewMode,
                 onSelect = viewModel::setLibraryViewMode,
             )
+            if (state.workCount > 0) {
+                SortMenu(
+                    order = sortOrder,
+                    descending = sortDescending,
+                    onSelect = viewModel::setSort,
+                )
+            }
             if (state.hasRoots && state.progress.phase != ScanPhase.SCANNING) {
                 TextButton(onClick = viewModel::startScan) {
                     Icon(Icons.Filled.Refresh, contentDescription = null)
@@ -484,7 +498,7 @@ private fun LibraryContent(
             ) {
                 items(
                     count = items.itemCount,
-                    key = items.itemKey { it.id },
+                    key = items.safeItemKey { it.id },
                 ) { index ->
                     val item = items[index]
                     if (item != null) {
@@ -503,7 +517,7 @@ private fun LibraryContent(
             LazyColumn(Modifier.fillMaxSize()) {
                 items(
                     count = items.itemCount,
-                    key = items.itemKey { it.id },
+                    key = items.safeItemKey { it.id },
                 ) { index ->
                     val item = items[index]
                     if (item != null) {
@@ -863,7 +877,7 @@ interface LibraryCoverEntryPoint {
 }
 
 @Composable
-private fun rememberCoverStore(): CoverStore {
+internal fun rememberCoverStore(): CoverStore {
     val context = LocalContext.current
     return remember {
         EntryPointAccessors.fromApplication(
@@ -897,15 +911,112 @@ data class LibraryUiState(
     }
 }
 
+/** Task 13 library sort menu label for an order mode. */
+internal fun WorkOrder.label(): String = when (this) {
+    WorkOrder.ID -> "编号"
+    WorkOrder.RELEASE_DATE -> "发售日期"
+    WorkOrder.RATING -> "评分"
+    WorkOrder.DL_COUNT -> "销量"
+    WorkOrder.REVIEW_COUNT -> "评论数"
+    WorkOrder.PRICE -> "价格"
+    WorkOrder.RATE_AVERAGE_2DP -> "均价"
+    WorkOrder.TITLE_SORT_KEY -> "标题"
+    WorkOrder.RANDOM -> "随机"
+}
+
 /**
- * Task 12 library ViewModel: paged works ([pagingDataFlow], Paging 3 over
- * Room's built-in PagingSource — LIMIT/OFFSET, never the whole table) plus
- * the header state and the persisted grid/list preference.
+ * Bounds-safe replacement for [androidx.paging.compose.itemKey]: Paging 3.5's
+ * built-in itemKey peeks the snapshot WITHOUT a bounds check, so a list that
+ * still holds old items while the new PagingData arrives (query clear, sort
+ * change shrinking the page, work removal) crashes with
+ * "Illegal attempt to access index N in ItemSnapshotList of size M" — caught
+ * on device, Task 13 (Robolectric never renders the composition). Fall back
+ * to the raw index for out-of-range keys; such keys are only ever consulted
+ * during the disposal of stale items.
+ */
+internal fun <T : Any> LazyPagingItems<T>.safeItemKey(key: (T) -> Any): (Int) -> Any = { index ->
+    if (index in 0 until itemCount) {
+        val item = get(index)
+        if (item != null) key(item) else index
+    } else {
+        index
+    }
+}
+
+/**
+ * Task 13 sort menu: pick an order field (or the seeded random order) and
+ * toggle the direction (ascending/descending; direction is irrelevant for
+ * [WorkOrder.RANDOM]). The selection persists via the DataStore-backed
+ * ViewModel and is shared with the search page.
+ */
+@Composable
+internal fun SortMenu(
+    order: WorkOrder,
+    descending: Boolean,
+    onSelect: (WorkOrder, Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box(modifier) {
+        TextButton(onClick = { expanded = true }) {
+            Text(
+                order.label() + if (order == WorkOrder.RANDOM) {
+                    ""
+                } else {
+                    if (descending) " ↓" else " ↑"
+                },
+            )
+            Icon(Icons.Filled.ArrowDropDown, contentDescription = null)
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            WorkOrder.entries.forEach { entry ->
+                DropdownMenuItem(
+                    text = { Text(entry.label()) },
+                    trailingIcon = if (entry == order) {
+                        { Icon(Icons.Filled.Check, contentDescription = null) }
+                    } else {
+                        null
+                    },
+                    onClick = {
+                        expanded = false
+                        // Picking a different field starts ascending; picking
+                        // the current field toggles the direction.
+                        val nextDescending = if (entry == order) {
+                            if (entry == WorkOrder.RANDOM) false else !descending
+                        } else {
+                            false
+                        }
+                        onSelect(entry, nextDescending)
+                    },
+                )
+            }
+            HorizontalDivider()
+            DropdownMenuItem(
+                text = { Text(if (descending) "降序（点击改为升序）" else "升序（点击改为降序）") },
+                enabled = order != WorkOrder.RANDOM,
+                onClick = {
+                    expanded = false
+                    onSelect(order, !descending)
+                },
+            )
+        }
+    }
+}
+
+/**
+ * Task 12/13 library ViewModel: paged works ([pagingDataFlow], Paging 3 over
+ * Room's built-in PagingSource — LIMIT/OFFSET, never the whole table; ordered
+ * by the persisted sort selection, recreated on change) plus the header state
+ * and the persisted grid/list + sort preferences.
  *
  * [pagingSourceFactory] is injected (Hilt provides the DAO-backed source) so
  * unit tests substitute a fake source and the Pager runs entirely on the
  * test's virtual scheduler — the repo flake convention, no real-time waits.
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class LibraryViewModel @Inject constructor(
     private val workDao: WorkDao,
@@ -931,12 +1042,33 @@ class LibraryViewModel @Inject constructor(
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), LibraryUiState.EMPTY)
 
-    /** Paged works for the grid/list; cached for the ViewModel's lifetime. */
+    /** Persisted sort selection (Task 13); shared with the search page. */
+    val sortOrder: StateFlow<WorkOrder> =
+        settingsStore.librarySortOrder.stateIn(viewModelScope, SharingStarted.Eagerly, WorkOrder.ID)
+
+    val sortDescending: StateFlow<Boolean> =
+        settingsStore.librarySortDescending.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    /**
+     * Session-stable random seed: generated once per ViewModel (= per process,
+     * plan: 随机排序同一会话内稳定). Never persisted — a new session may get a
+     * new random order; within the session every page shares the seed so the
+     * order is coherent while scrolling.
+     */
+    private val randomSeed: Long = Random.nextLong()
+
+    /** Paged works for the grid/list; recreated when the sort selection changes. */
     val pagingDataFlow: Flow<PagingData<WorkListItem>> =
-        Pager(
-            config = PagingConfig(pageSize = PAGE_SIZE),
-            pagingSourceFactory = pagingSourceFactory::create,
-        ).flow.cachedIn(viewModelScope)
+        combine(sortOrder, sortDescending) { order, descending -> order to descending }
+            .flatMapLatest { (order, descending) ->
+                Pager(
+                    config = PagingConfig(pageSize = PAGE_SIZE),
+                    pagingSourceFactory = {
+                        pagingSourceFactory.create(order, descending, keyword = null, randomSeed = randomSeed)
+                    },
+                ).flow
+            }
+            .cachedIn(viewModelScope)
 
     /** Persisted grid/list preference (Task 12); survives process restarts. */
     val libraryViewMode: StateFlow<LibraryViewMode> =
@@ -945,6 +1077,10 @@ class LibraryViewModel @Inject constructor(
 
     fun setLibraryViewMode(mode: LibraryViewMode) {
         viewModelScope.launch { settingsStore.setLibraryViewMode(mode) }
+    }
+
+    fun setSort(order: WorkOrder, descending: Boolean) {
+        viewModelScope.launch { settingsStore.setLibrarySort(order, descending) }
     }
 
     /**

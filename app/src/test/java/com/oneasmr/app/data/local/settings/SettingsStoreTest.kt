@@ -109,4 +109,73 @@ class SettingsStoreTest {
         assertTrue(ThemeMode.DARK.resolveDarkTheme(false))
         assertTrue(ThemeMode.DARK.resolveDarkTheme(true))
     }
+
+    // ---------- Task 13: recent searches + library sort ----------
+
+    @Test
+    fun `recent searches default to empty`() = runTest {
+        val store = storeIn(file("recent-default").open())
+        assertEquals(emptyList<String>(), store.recentSearches.first())
+    }
+
+    @Test
+    fun `recent searches persist newest first deduped and capped`() = runTest {
+        val tf = file("recent")
+        val store = storeIn(tf.open())
+        store.addRecentSearch("催眠音")
+        store.addRecentSearch("夜晚助眠")
+        store.addRecentSearch("催眠音")
+        assertEquals(listOf("催眠音", "夜晚助眠"), store.recentSearches.first())
+
+        // Cap at 10: adding 11 distinct terms keeps the newest 10.
+        for (i in 1..11) store.addRecentSearch("term$i")
+        val capped = store.recentSearches.first()
+        assertEquals(SettingsStore.MAX_RECENT_SEARCHES, capped.size)
+        assertEquals("term11", capped.first())
+        assertTrue("催眠音" !in capped)
+    }
+
+    @Test
+    fun `recent searches survive a store restart and can be cleared`() = runTest {
+        val tf = file("recent-persist")
+        storeIn(tf.open()).addRecentSearch("おやすみ")
+        val restarted = storeIn(tf.restart())
+        assertEquals(listOf("おやすみ"), restarted.recentSearches.first())
+
+        restarted.clearRecentSearches()
+        assertEquals(emptyList<String>(), storeIn(tf.restart()).recentSearches.first())
+    }
+
+    @Test
+    fun `blank terms and separator characters are never stored`() = runTest {
+        val store = storeIn(file("recent-blank").open())
+        store.addRecentSearch("   ")
+        store.addRecentSearch("")
+        store.addRecentSearch("bad\u001Fterm")
+        assertEquals(listOf("badterm"), store.recentSearches.first())
+    }
+
+    @Test
+    fun `library sort defaults to id ascending`() = runTest {
+        val store = storeIn(file("sort-default").open())
+        assertEquals(com.oneasmr.app.data.local.WorkOrder.ID, store.librarySortOrder.first())
+        assertEquals(false, store.librarySortDescending.first())
+    }
+
+    @Test
+    fun `library sort round trips across store instances`() = runTest {
+        val tf = file("sort")
+        storeIn(tf.open()).setLibrarySort(com.oneasmr.app.data.local.WorkOrder.TITLE_SORT_KEY, descending = true)
+        val restarted = storeIn(tf.restart())
+        assertEquals(com.oneasmr.app.data.local.WorkOrder.TITLE_SORT_KEY, restarted.librarySortOrder.first())
+        assertEquals(true, restarted.librarySortDescending.first())
+    }
+
+    @Test
+    fun `corrupt persisted sort order falls back to id`() = runTest {
+        val tf = file("sort-corrupt")
+        val dataStore = tf.open()
+        dataStore.edit { it[stringPreferencesKey("library_sort_order")] = "BY_MOON" }
+        assertEquals(com.oneasmr.app.data.local.WorkOrder.ID, storeIn(dataStore).librarySortOrder.first())
+    }
 }

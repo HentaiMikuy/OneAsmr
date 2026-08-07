@@ -2,6 +2,7 @@ package com.oneasmr.app.data.local
 
 import android.util.Log
 import androidx.paging.PagingSource
+import androidx.paging.PagingState
 import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
@@ -16,7 +17,14 @@ import kotlinx.coroutines.flow.Flow
  * Supported work ordering modes. The DAO layer never inlines these column
  * expressions anywhere else — paging queries are built from this enum.
  *
- * `rating` maps to `rateAverage2dp` (kikoeru "rating" == rate_average_2dp).
+ * `rating` maps to `rateAverage2dp` (kikoeru "rating" == rate_average_2dp);
+ * the library menu exposes both "评分" and "均价" as separate entries over the
+ * same column (kikoeru order-parameter parity).
+ *
+ * Every deterministic order gets a `work.id` tiebreaker appended by the DAO:
+ * rows whose sort field is NULL (e.g. unscraped works have no releaseDate)
+ * group deterministically and fall back to id order — the plan's "排序字段
+ * 不存在时回退编号排序", guaranteed at the SQL level, never a crash.
  */
 enum class WorkOrder(val sql: String) {
     ID("work.id"),
@@ -29,6 +37,17 @@ enum class WorkOrder(val sql: String) {
     TITLE_SORT_KEY("work.titleSortKey"),
     /** Nondeterministic per page; task 13 layers a seeded session-stable order on top. */
     RANDOM("RANDOM()"),
+    ;
+
+    companion object {
+        /**
+         * Reads a persisted order name; unknown/missing values fall back to
+         * [ID] — a corrupt or stale preference must never crash or mis-sort
+         * the library (plan failure path: "排序字段不存在时回退编号排序").
+         */
+        fun fromStored(value: String?): WorkOrder =
+            entries.firstOrNull { it.name == value } ?: ID
+    }
 }
 
 /** One search hit: a work id plus the dimension (title/circle/tag/va) it matched in. */
@@ -56,12 +75,19 @@ data class WorkListItem(
 }
 
 /**
- * Task 12: creates a fresh [PagingSource] per Pager generation. Hilt provides
- * the Room-backed instance; unit tests inject a fake source over a plain list
- * so Pager runs on the test's virtual scheduler (no real IO threads).
+ * Task 12/13: creates a fresh [PagingSource] per Pager generation with the
+ * full sort + search parameters (order field, direction, keyword, random
+ * seed). Hilt provides the Room-backed instance; unit tests inject a fake
+ * source over a plain list so Pager runs on the test's virtual scheduler (no
+ * real IO threads).
  */
 fun interface WorkPagingSourceFactory {
-    fun create(): PagingSource<Int, WorkListItem>
+    fun create(
+        order: WorkOrder,
+        descending: Boolean,
+        keyword: String?,
+        randomSeed: Long,
+    ): PagingSource<Int, WorkListItem>
 }
 
 /**
@@ -110,6 +136,41 @@ private const val LIKE_SEARCH_SQL = """
 """
 
 private const val SEARCH_LOG_TAG = "OneAsmrSearch"
+
+/**
+ * Deterministic, seed-dependent pseudo-random key per work id — the "random"
+ * order's session-stable core (Task 13). SQLite's RANDOM() is unseedable, so
+ * the key is a seeded hash of the id: sum over characters of
+ * (position * salt mod 97) * code point, reduced mod 2^31-1. Same seed -> the
+ * SAME total order across every page of a session (paging stays coherent);
+ * different seeds -> different orders. Ties fall to the id tiebreaker.
+ *
+ * The per-position weight is taken mod 97 (a prime above the 64 supported
+ * positions): a bare `position * salt` factor only SCALES the hash linearly
+ * (key = salt * K(id)), so ids with narrow K ranges rank identically for
+ * every seed — the mod introduces seed-dependent wrap points that genuinely
+ * re-rank the works (this exact bug was caught by the DAO test asserting
+ * seed 42 != seed 43). Salt is clamped to (0, 100003) so a zero salt can
+ * never degenerate the hash; all arithmetic stays within int64 (max ~6.9e9,
+ * no float promotion, deterministic on every SQLite build).
+ *
+ * The number table is a recursive CTE because `FROM (VALUES ...)` is a syntax
+ * error on the Android framework SQLite used by Robolectric (verified
+ * on-device-JVM, Task 13). The CTE prefixes the whole statement (see
+ * [WorkDao.buildLibrarySql]) and is visible inside the correlated ORDER BY
+ * subquery.
+ */
+private const val MAX_HASH_CHARS = 64
+private const val HASH_WEIGHT_MOD = 97
+
+private const val NUMBERS_CTE =
+    "WITH RECURSIVE nums(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM nums WHERE n < $MAX_HASH_CHARS)"
+
+private fun seededRandomKey(seed: Long): String {
+    val salt = (((seed % 100003L) + 100003L) % 100003L).let { if (it == 0L) 1L else it }
+    return "(SELECT (sum( ((t.n * $salt) % $HASH_WEIGHT_MOD) * unicode(substr(w.id, t.n, 1)) ) % 2147483647) " +
+        "FROM nums t WHERE t.n <= length(w.id))"
+}
 
 /**
  * Minimal [SupportSQLiteQuery] for dynamic SQL (paging order / FTS MATCH).
@@ -175,13 +236,12 @@ interface WorkDao {
     fun countFlow(): Flow<Int>
 
     /**
-     * Paged library source (Task 12): work + circle name + user progress in
-     * ONE indexed query. Room's built-in PagingSource (LimitOffsetDataSource)
+     * Paged library source (Task 12/13): work + circle name + user progress in
+     * ONE indexed query. Room's built-in PagingSource (LimitOffsetPagingSource)
      * translates this into `SELECT ... LIMIT ? OFFSET ?` — a single statement
-     * per page, never the whole library (plan Must NOT). ORDER BY id (PK
-     * index, deterministic pages); Task 13 layers sorting on top. Invalidates
-     * automatically on work/circle/review table changes (scrape, remove,
-     * review edits) via Room's invalidation tracker.
+     * per page, never the whole library (plan Must NOT). Invalidates
+     * automatically on work/circle/review/tag/va table changes via Room's
+     * invalidation tracker.
      */
     @Query(
         "SELECT w.id AS id, w.title AS title, c.name AS circleName, " +
@@ -193,7 +253,111 @@ interface WorkDao {
             "LEFT JOIN review r ON r.workId = w.id " +
             "ORDER BY w.id",
     )
-    fun pagingSource(): PagingSource<Int, WorkListItem>
+    fun pagingSourceById(): PagingSource<Int, WorkListItem>
+
+    @RawQuery(observedEntities = [Work::class, Circle::class, Review::class, Tag::class, Va::class])
+    fun pagingSourceRaw(query: SupportSQLiteQuery): PagingSource<Int, WorkListItem>
+
+    /**
+     * Task 13 sort + search composition, implemented as DAO-level query
+     * parameters (order field + direction + keyword) — never in-memory
+     * filtering of a loaded list. The keyword (when non-null) restricts rows
+     * to the FTS5-trigram search hits (LIKE fallback when the FTS index is
+     * unavailable), UNIONed across the four dimensions exactly like
+     * [search]; the order is applied by the database.
+     *
+     * Ordering rules:
+     * - every deterministic order appends `work.id` as tiebreaker, so works
+     *   whose sort field is NULL (unscraped metadata) deterministically fall
+     *   back to id order — "排序字段不存在时回退编号排序" without a crash.
+     * - [WorkOrder.RANDOM] ignores [descending] and uses the seeded key from
+     *   [seededRandomKey] — stable within a session for a fixed [randomSeed].
+     *
+     * FTS MATCH can throw at load time on user-typed syntax (punctuation,
+     * operators); the returned source then degrades to the LIKE variant once,
+     * mirroring [search]'s degrade-on-exception contract.
+     */
+    fun pagingSource(
+        order: WorkOrder,
+        descending: Boolean,
+        keyword: String?,
+        randomSeed: Long,
+    ): PagingSource<Int, WorkListItem> {
+        val (sql, args) = buildLibrarySql(order, descending, keyword, randomSeed)
+        val primary = pagingSourceRaw(SimpleSupportQuery(sql, args))
+        val degraded = if (keyword != null && FtsStatus.available) {
+            val (likeSql, likeArgs) = buildLibrarySql(order, descending, keyword, randomSeed, forceLike = true)
+            pagingSourceRaw(SimpleSupportQuery(likeSql, likeArgs))
+        } else {
+            null
+        }
+        return if (degraded == null) primary else DegradingPagingSource(primary, degraded)
+    }
+
+    /** Single row of the library list shape by id (search direct-lookup hit). */
+    @Query(
+        "SELECT w.id AS id, w.title AS title, c.name AS circleName, " +
+            "w.rateAverage2dp AS rateAverage2dp, w.missing AS missing, " +
+            "w.scrapeStatus AS scrapeStatus, r.progress AS progress, " +
+            "w.rootFolderUri AS rootFolderUri, w.relativeDir AS relativeDir " +
+            "FROM work w " +
+            "LEFT JOIN circle c ON c.id = w.circleId " +
+            "LEFT JOIN review r ON r.workId = w.id " +
+            "WHERE w.id = :id",
+    )
+    suspend fun getListItemById(id: String): WorkListItem?
+
+    /**
+     * Work-list SQL for the library and search pages: the Task 12 join shape
+     * plus an optional search-hit restriction and the requested ordering.
+     * Returns (sql, bindArgs): the only bindable parameter is the keyword's
+     * `:query` (the search UNIONs already use that exact name), the order
+     * expression is inlined (enum-owned columns + a clamped numeric seed —
+     * never user input), and Room's LimitOffsetPagingSource appends its own
+     * `LIMIT ? OFFSET ?` positionally after it.
+     */
+    private fun buildLibrarySql(
+        order: WorkOrder,
+        descending: Boolean,
+        keyword: String?,
+        randomSeed: Long,
+        forceLike: Boolean = false,
+    ): Pair<String, List<Any?>> {
+        val searchSql = when {
+            keyword == null -> null
+            forceLike || !FtsStatus.available -> LIKE_SEARCH_SQL
+            else -> FTS_SEARCH_SQL
+        }
+        val args = mutableListOf<Any?>()
+        val join = if (searchSql != null) {
+            args += keyword
+            " JOIN (SELECT DISTINCT workId FROM ($searchSql)) search_hits ON search_hits.workId = w.id"
+        } else {
+            ""
+        }
+        val orderBy = when (order) {
+            WorkOrder.RANDOM -> "${seededRandomKey(randomSeed)} ASC, w.id ASC"
+            else -> {
+                // The FROM alias is `w`; SQLite hides the real table name for
+                // qualified references once aliased (work.id would fail).
+                val column = order.sql.substringAfter('.')
+                val direction = if (descending) " DESC" else " ASC"
+                "w.$column$direction, w.id ASC"
+            }
+        }
+        val ctePrefix = if (order == WorkOrder.RANDOM) "$NUMBERS_CTE " else ""
+        val sql = ctePrefix +
+            "SELECT w.id AS id, w.title AS title, c.name AS circleName, " +
+            "w.rateAverage2dp AS rateAverage2dp, w.missing AS missing, " +
+            "w.scrapeStatus AS scrapeStatus, r.progress AS progress, " +
+            "w.rootFolderUri AS rootFolderUri, w.relativeDir AS relativeDir " +
+            "FROM work w " +
+            "LEFT JOIN circle c ON c.id = w.circleId " +
+            "LEFT JOIN review r ON r.workId = w.id" +
+            join +
+            " ORDER BY $orderBy"
+        return sql to args
+    }
 
     /**
      * Marks the given works as missing (Task 7 diff). Empty [ids] is a no-op —
@@ -394,4 +558,28 @@ interface PlaybackStateDao {
      */
     @Query("DELETE FROM playback_state WHERE trackKey LIKE :prefix || '%'")
     suspend fun deleteForWorkPrefix(prefix: String)
+}
+
+/**
+ * Task 13: wraps the FTS-backed paging source so a MATCH syntax error at load
+ * time (user-typed punctuation/operators trip FTS5 syntax) retries the LIKE
+ * variant once — the paging equivalent of [WorkDao.search]'s
+ * degrade-on-exception contract (documented degraded fallback, Task 4).
+ * The LIKE source is pre-built (not per page) so the degrade is a single
+ * catch + one extra load.
+ */
+private class DegradingPagingSource(
+    private val fts: PagingSource<Int, WorkListItem>,
+    private val like: PagingSource<Int, WorkListItem>,
+) : PagingSource<Int, WorkListItem>() {
+    override fun getRefreshKey(state: PagingState<Int, WorkListItem>): Int? =
+        fts.getRefreshKey(state)
+
+    override suspend fun load(params: LoadParams<Int>): LoadResult<Int, WorkListItem> =
+        try {
+            fts.load(params)
+        } catch (e: Exception) {
+            Log.w(SEARCH_LOG_TAG, "FTS paging MATCH failed (${e.message}); degraded to LIKE", e)
+            like.load(params)
+        }
 }

@@ -25,6 +25,7 @@ import java.io.File
 import kotlinx.coroutines.CompletableDeferred
 import androidx.paging.PagingSource
 import com.oneasmr.app.data.local.WorkListItem
+import com.oneasmr.app.data.local.WorkOrder
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
@@ -115,8 +116,17 @@ class ScrapeRepositoryTest {
         override suspend fun getAll(): List<Work> = rows.values.toList()
         override fun getAllFlow(): Flow<List<Work>> = MutableStateFlow(rows.values.toList())
         override fun countFlow(): Flow<Int> = MutableStateFlow(rows.size)
-        override fun pagingSource(): PagingSource<Int, WorkListItem> =
+        override fun pagingSourceById(): PagingSource<Int, WorkListItem> =
             throw UnsupportedOperationException("not used by ScrapeRepository")
+        override fun pagingSourceRaw(query: SupportSQLiteQuery): PagingSource<Int, WorkListItem> =
+            throw UnsupportedOperationException("not used by ScrapeRepository")
+        override fun pagingSource(
+            order: WorkOrder,
+            descending: Boolean,
+            keyword: String?,
+            randomSeed: Long,
+        ): PagingSource<Int, WorkListItem> = throw UnsupportedOperationException("not used by ScrapeRepository")
+        override suspend fun getListItemById(id: String): WorkListItem? = null
         override suspend fun markMissingInternal(ids: List<String>, now: Long) = Unit
         override suspend fun getPageRaw(query: SupportSQLiteQuery): List<Work> = emptyList()
         override suspend fun searchRaw(query: SupportSQLiteQuery): List<WorkSearchHit> = emptyList()
