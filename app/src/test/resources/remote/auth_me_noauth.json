@@ -1,0 +1,4 @@
+{
+  "user": { "name": "admin", "group": "administrator" },
+  "auth": false
+}

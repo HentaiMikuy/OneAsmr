@@ -1,0 +1,48 @@
+[
+  {
+    "type": "folder",
+    "title": "本編",
+    "children": [
+      {
+        "type": "audio",
+        "hash": "6/0",
+        "title": "01.mp3",
+        "workTitle": "【CV：かの仔】秘密のバイト体験",
+        "mediaStreamUrl": "/api/media/stream/6/0",
+        "mediaDownloadUrl": "/api/media/download/6/0"
+      },
+      {
+        "type": "audio",
+        "hash": "6/1",
+        "title": "02.mp3",
+        "workTitle": "【CV：かの仔】秘密のバイト体験",
+        "mediaStreamUrl": "/api/media/stream/6/1",
+        "mediaDownloadUrl": "/api/media/download/6/1"
+      }
+    ]
+  },
+  {
+    "type": "audio",
+    "hash": "6/2",
+    "title": "03_sleep.mp3",
+    "workTitle": "【CV：かの仔】秘密のバイト体験",
+    "mediaStreamUrl": "/api/media/stream/6/2",
+    "mediaDownloadUrl": "/api/media/download/6/2"
+  },
+  {
+    "type": "text",
+    "hash": "6/3",
+    "title": "紹介.txt",
+    "workTitle": "【CV：かの仔】秘密のバイト体験",
+    "mediaStreamUrl": "/api/media/stream/6/3",
+    "mediaDownloadUrl": "/api/media/download/6/3"
+  },
+  {
+    "type": "image",
+    "hash": "6/4",
+    "title": "cover.jpg",
+    "workTitle": "【CV：かの仔】秘密のバイト体験",
+    "mediaStreamUrl": "/api/media/stream/6/4",
+    "mediaDownloadUrl": "/api/media/download/6/4"
+  }
+]
