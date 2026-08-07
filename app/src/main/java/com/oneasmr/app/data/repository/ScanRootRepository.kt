@@ -134,15 +134,21 @@ class ScanRootsStore @Inject constructor(
  * Every grant/release/validation round is logged under "OneAsmrScanRoots"
  * with the full persisted-URI list — this logcat dump is the acceptance
  * evidence channel (persisted grants are not readable via adb).
+ *
+ * The [scope] backing the eager [entries] collector is injectable so tests
+ * can drive it with a test scheduler (deterministic, no real-time waits) and
+ * cancel it at teardown (no leaked coroutines polluting later test classes).
+ * Production keeps the same `SupervisorJob() + Dispatchers.Default` default —
+ * the Hilt module builds the repository without a scope, so runtime semantics
+ * are unchanged.
  */
 @Singleton
 class ScanRootRepository @Inject constructor(
     private val permissionStore: ScanRootPermissionStore,
     private val rootsStore: ScanRootsStore,
     private val displayNameResolver: RootDisplayNameResolver,
+    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
 ) {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-
     /** Snapshot of the system's current persisted tree URIs, kept in sync by mutations + refresh. */
     private val persistedUris = MutableStateFlow(permissionStore.persistedTreeUris())
 
