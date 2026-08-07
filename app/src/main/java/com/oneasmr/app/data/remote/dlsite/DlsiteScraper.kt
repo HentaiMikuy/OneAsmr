@@ -9,6 +9,21 @@ import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 /**
+ * Minimal scrape surface for Task 11's batch/single entry points: tests fake
+ * this interface (call log + injected clock), production provides the real
+ * [DlsiteScraper] through [com.oneasmr.app.data.repository.ScrapeModule].
+ */
+interface DlsiteScraperApi {
+    /** Scrapes [code]'s metadata; throws [DlsiteScrapeException] on failure. */
+    suspend fun scrape(code: RjCode): ScrapedWork
+
+    companion object {
+        /** Production DLsite endpoint; [com.oneasmr.app.data.repository.ScrapeModule] overrides for QA. */
+        const val DEFAULT_BASE_URL = "https://www.dlsite.com"
+    }
+}
+
+/**
  * DLsite metadata scraper (plan Task 9).
  *
  * TWO requests per work, verified against kikoeru-express scraper/dlsite.js
@@ -51,12 +66,12 @@ import java.util.concurrent.TimeUnit
  * @param backoffMillis base backoff; doubles per attempt
  */
 class DlsiteScraper(
-    baseUrl: String = "https://www.dlsite.com",
+    baseUrl: String = DlsiteScraperApi.DEFAULT_BASE_URL,
     private val language: DlsiteLanguage = DlsiteLanguage.ZH_CN,
     private val maxAttempts: Int = 3,
     private val backoffMillis: Long = 500L,
     client: OkHttpClient = defaultClient(),
-) {
+) : DlsiteScraperApi {
     private val baseUrl = baseUrl.trimEnd('/')
     private val client = client
 
@@ -94,7 +109,7 @@ class DlsiteScraper(
      * Scrapes [code]'s metadata. Throws [DlsiteScrapeException] with a
      * structured kind on any failure (see [DlsiteScrapeException.Kind]).
      */
-    suspend fun scrape(code: RjCode): ScrapedWork {
+    override suspend fun scrape(code: RjCode): ScrapedWork {
         val pageBody = fetchWithBackoff(pageUrl(code), headersFor(code, referer = false))
         val static = DlsitePageParser.parseWorkPage(pageBody, language)
         val ajaxBody = fetchWithBackoff(ajaxUrl(code), headersFor(code, referer = true))

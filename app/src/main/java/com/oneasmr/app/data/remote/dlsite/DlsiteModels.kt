@@ -1,5 +1,7 @@
 package com.oneasmr.app.data.remote.dlsite
 
+import kotlinx.serialization.Serializable
+
 /**
  * DLsite scrape result models (plan Task 9).
  *
@@ -46,6 +48,7 @@ data class AjaxFields(
     val rateAverage2dp: Double?,
     val rateCountDetail: List<RateCountDetail>,
 ) {
+    @Serializable
     data class RateCountDetail(
         val reviewPoint: Int,
         val count: Int,

@@ -77,6 +77,16 @@ class SettingsStore @Inject constructor(
     val cacheSizeCapMb: Flow<Int> =
         dataStore.data.map { it[KEY_CACHE_CAP_MB] ?: DEFAULT_CACHE_CAP_MB }
 
+    /**
+     * Debug-only DLsite base-url override (Task 11 device QA: the emulator
+     * reaches the host proxy through 10.0.2.2). Blank = production
+     * [com.oneasmr.app.data.remote.dlsite.DlsiteScraper.DEFAULT_BASE_URL].
+     * The UI that writes it is gated behind FLAG_DEBUGGABLE; release builds
+     * can never set it (no UI surface, no secret intent).
+     */
+    val scraperBaseUrlOverride: Flow<String> =
+        dataStore.data.map { it[KEY_SCRAPER_BASE_URL_OVERRIDE] ?: "" }
+
     suspend fun setThemeMode(mode: ThemeMode) {
         dataStore.edit { it[KEY_THEME_MODE] = mode.name }
     }
@@ -87,6 +97,11 @@ class SettingsStore @Inject constructor(
 
     suspend fun setScrapingLanguage(language: ScrapingLanguage) {
         dataStore.edit { it[KEY_SCRAPING_LANGUAGE] = language.code }
+    }
+
+    /** Sets the debug scraper base-url override; blank restores production. */
+    suspend fun setScraperBaseUrlOverride(url: String) {
+        dataStore.edit { it[KEY_SCRAPER_BASE_URL_OVERRIDE] = url.trim() }
     }
 
     /** Cache size cap in MB, clamped to [1, 100_000] (Task 10 CoverStore enforces it). */
@@ -100,6 +115,7 @@ class SettingsStore @Inject constructor(
         private val KEY_THEME_MODE = stringPreferencesKey("theme_mode")
         private val KEY_SERVER_ADDRESS = stringPreferencesKey("server_address")
         private val KEY_SCRAPING_LANGUAGE = stringPreferencesKey("scraping_language")
+        private val KEY_SCRAPER_BASE_URL_OVERRIDE = stringPreferencesKey("scraper_base_url_override")
         private val KEY_CACHE_CAP_MB = intPreferencesKey("cache_cap_mb")
     }
 }

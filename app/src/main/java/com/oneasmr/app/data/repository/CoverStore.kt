@@ -110,6 +110,9 @@ class CoverStore(
     private suspend fun downloadOne(rjCode: String, type: CoverType, url: String?, workCode: String): File? {
         if (url.isNullOrBlank()) return null
         return lock.withLock {
+            // First download creates the covers dir (device QA found the dir
+            // never existing: Task 10 covered filenames/LRU but not mkdirs).
+            if (!coversDir.isDirectory && !coversDir.mkdirs()) return null
             val target = File(coversDir, coverFileName(rjCode, type))
             val tmp = File(coversDir, target.name + PART_SUFFIX)
             val result = downloader.download(url, dlsiteRefererFor(workCode), tmp)

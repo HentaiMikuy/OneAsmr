@@ -134,6 +134,20 @@ class CoverStoreTest {
         }
     }
 
+    @Test
+    fun `first download creates the covers directory`() = runBlocking {
+        // Regression: device QA (Task 11) found covers/ never created — the
+        // store must mkdirs on first download, not silently drop the file.
+        val missingDir = File(tmp.root, "not-yet-created-covers")
+        val store = CoverStore(missingDir, FakeDownloader(), FakeLocator(), { Long.MAX_VALUE }, FakeClock())
+
+        val file = store.downloadCover("RJ111111", CoverType.MAIN, "u1")
+
+        assertTrue(missingDir.isDirectory)
+        assertTrue(file!!.isFile)
+        assertTrue(File(missingDir, "RJ111111_img_main.jpg").exists())
+    }
+
     // ---- LRU eviction ----------------------------------------------------
 
     @Test
