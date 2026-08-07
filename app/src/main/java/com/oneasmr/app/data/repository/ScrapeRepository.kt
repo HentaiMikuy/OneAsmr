@@ -110,7 +110,7 @@ class ScrapeRepository @Inject constructor(
     private val paceDelay: suspend (Long) -> Unit = { delay(it) },
     private val maxConcurrency: Int = 2,
     private val minRequestIntervalMillis: Long = 1_000L,
-) {
+) : SingleWorkScraper {
     private val paceMutex = Mutex()
     private var lastRequestStart = Long.MIN_VALUE / 2
 
@@ -119,7 +119,7 @@ class ScrapeRepository @Inject constructor(
      * FAILED — never throws (except [CancellationException], rethrown so the
      * caller's job state stays honest).
      */
-    suspend fun scrapeOne(workId: String): ScrapeOutcome {
+    override suspend fun scrapeOne(workId: String): ScrapeOutcome {
         val scraper = scraperFactory()
         return withContext(ioDispatcher) {
             runScrape(workId, scraper)

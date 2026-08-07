@@ -27,6 +27,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import androidx.navigation.navDeepLink
+import com.oneasmr.app.ui.browse.BrowsePlaceholderScreen
 import com.oneasmr.app.ui.library.LibraryScreen
 import com.oneasmr.app.ui.library.SearchScreen
 import com.oneasmr.app.ui.player.PlayerScreen
@@ -34,6 +35,8 @@ import com.oneasmr.app.ui.player.VideoPlayerScreen
 import com.oneasmr.app.ui.settings.ScanRootsScreen
 import com.oneasmr.app.ui.settings.ServerLoginScreen
 import com.oneasmr.app.ui.settings.SettingsScreen
+import com.oneasmr.app.ui.work.ImageFileScreen
+import com.oneasmr.app.ui.work.TextFileScreen
 import com.oneasmr.app.ui.work.WorkDetailScreen
 
 /** Route constants for the single-activity navigation graph. */
@@ -41,15 +44,40 @@ object Routes {
     const val LIBRARY = "library"
     const val SEARCH = "search"
     const val WORK_DETAIL = "work/{workId}"
-    const val PLAYER = "player"
-    const val VIDEO_PLAYER = "video_player"
+    const val PLAYER = "player/{workId}/{trackIndex}"
+    const val VIDEO_PLAYER = "video_player/{workId}/{trackIndex}"
+    const val TEXT_VIEWER = "text/{workId}/{documentUri}"
+    const val IMAGE_VIEWER = "image/{workId}/{documentUri}"
+    const val BROWSE = "browse/{dimension}/{id}"
     const val SETTINGS = "settings"
     const val SERVER_LOGIN = "server_login"
     const val SCAN_ROOTS = "scan_roots"
 
     const val WORK_DETAIL_ARG = "workId"
+    const val TRACK_INDEX_ARG = "trackIndex"
+    const val TEXT_VIEWER_ARG_URI = "documentUri"
+    const val BROWSE_ARG_DIMENSION = "dimension"
+    const val BROWSE_ARG_ID = "id"
 
     fun workDetail(workId: String): String = "work/$workId"
+
+    /** Audio player stub route (Task 17/21 wire the real player). */
+    fun player(workId: String, trackIndex: Int): String = "player/$workId/$trackIndex"
+
+    /** Video player stub route (Task 22 wires the real player). */
+    fun videoPlayer(workId: String, trackIndex: Int): String = "video_player/$workId/$trackIndex"
+
+    /** Built-in text viewer; the SAF document uri is URL-encoded for safe routing. */
+    fun textViewer(workId: String, documentUri: String): String =
+        "text/$workId/${android.net.Uri.encode(documentUri)}"
+
+    /** Built-in image viewer; the SAF document uri is URL-encoded for safe routing. */
+    fun imageViewer(workId: String, documentUri: String): String =
+        "image/$workId/${android.net.Uri.encode(documentUri)}"
+
+    /** Dimension browse stub route (Task 16 fills the destination). */
+    fun browse(dimension: String, id: String): String =
+        "browse/${android.net.Uri.encode(dimension)}/${android.net.Uri.encode(id)}"
 }
 
 /**
@@ -122,19 +150,85 @@ fun OneAsmrNavHost(
                     navDeepLink { uriPattern = "oneasmr://work/{workId}" },
                 ),
             ) {
-                WorkDetailScreen()
+                WorkDetailScreen(
+                    onOpenPlayer = { workId, trackIndex ->
+                        navController.navigate(Routes.player(workId, trackIndex))
+                    },
+                    onOpenVideoPlayer = { workId, trackIndex ->
+                        navController.navigate(Routes.videoPlayer(workId, trackIndex))
+                    },
+                    onOpenText = { workId, documentUri ->
+                        navController.navigate(Routes.textViewer(workId, documentUri))
+                    },
+                    onOpenImage = { workId, documentUri ->
+                        navController.navigate(Routes.imageViewer(workId, documentUri))
+                    },
+                    onOpenBrowse = { dimension, id ->
+                        navController.navigate(Routes.browse(dimension, id))
+                    },
+                )
             }
             composable(
                 route = Routes.PLAYER,
-                deepLinks = listOf(navDeepLink { uriPattern = "oneasmr://player" }),
+                arguments = listOf(
+                    navArgument(Routes.WORK_DETAIL_ARG) { type = NavType.StringType },
+                    navArgument(Routes.TRACK_INDEX_ARG) { type = NavType.IntType },
+                ),
+                deepLinks = listOf(
+                    navDeepLink { uriPattern = "oneasmr://player/{workId}/{trackIndex}" },
+                ),
             ) {
                 PlayerScreen()
             }
             composable(
                 route = Routes.VIDEO_PLAYER,
-                deepLinks = listOf(navDeepLink { uriPattern = "oneasmr://video_player" }),
+                arguments = listOf(
+                    navArgument(Routes.WORK_DETAIL_ARG) { type = NavType.StringType },
+                    navArgument(Routes.TRACK_INDEX_ARG) { type = NavType.IntType },
+                ),
+                deepLinks = listOf(
+                    navDeepLink { uriPattern = "oneasmr://video_player/{workId}/{trackIndex}" },
+                ),
             ) {
                 VideoPlayerScreen()
+            }
+            composable(
+                route = Routes.TEXT_VIEWER,
+                arguments = listOf(
+                    navArgument(Routes.WORK_DETAIL_ARG) { type = NavType.StringType },
+                    navArgument(Routes.TEXT_VIEWER_ARG_URI) { type = NavType.StringType },
+                ),
+                deepLinks = listOf(
+                    navDeepLink { uriPattern = "oneasmr://text/{workId}/{documentUri}" },
+                ),
+            ) {
+                TextFileScreen()
+            }
+            composable(
+                route = Routes.IMAGE_VIEWER,
+                arguments = listOf(
+                    navArgument(Routes.WORK_DETAIL_ARG) { type = NavType.StringType },
+                    navArgument(Routes.TEXT_VIEWER_ARG_URI) { type = NavType.StringType },
+                ),
+                deepLinks = listOf(
+                    navDeepLink { uriPattern = "oneasmr://image/{workId}/{documentUri}" },
+                ),
+            ) {
+                val entry = it
+                val documentUri = entry.arguments?.getString(Routes.TEXT_VIEWER_ARG_URI).orEmpty()
+                ImageFileScreen(documentUri = documentUri, onBack = { navController.popBackStack() })
+            }
+            composable(
+                route = Routes.BROWSE,
+                arguments = listOf(
+                    navArgument(Routes.BROWSE_ARG_DIMENSION) { type = NavType.StringType },
+                    navArgument(Routes.BROWSE_ARG_ID) { type = NavType.StringType },
+                ),
+                deepLinks = listOf(
+                    navDeepLink { uriPattern = "oneasmr://browse/{dimension}/{id}" },
+                ),
+            ) {
+                BrowsePlaceholderScreen(it)
             }
             composable(
                 route = Routes.SETTINGS,

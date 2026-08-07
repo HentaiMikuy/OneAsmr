@@ -217,6 +217,10 @@ interface WorkDao {
     @Query("SELECT * FROM work WHERE id = :id")
     suspend fun getById(id: String): Work?
 
+    /** Live single-work row (Task 14 detail page: metadata refreshes after scrape/rescan). */
+    @Query("SELECT * FROM work WHERE id = :id")
+    fun getByIdFlow(id: String): Flow<Work?>
+
     @Query("DELETE FROM work WHERE id = :id")
     suspend fun deleteById(id: String)
 

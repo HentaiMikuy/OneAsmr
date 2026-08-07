@@ -109,6 +109,8 @@ class ScrapeRepositoryTest {
             rows[work.id] = work
         }
         override suspend fun getById(id: String): Work? = rows[id]
+        override fun getByIdFlow(id: String): Flow<Work?> =
+            MutableStateFlow(rows[id])
         override suspend fun deleteById(id: String) {
             rows.remove(id)
         }
