@@ -53,6 +53,12 @@ android {
     }
 }
 
+ksp {
+    // Room schema export: app/schemas/<db>/<version>.json is the migration
+    // baseline and is committed to the repository.
+    arg("room.schemaLocation", "$projectDir/schemas")
+}
+
 kotlin {
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
@@ -116,4 +122,12 @@ dependencies {
     testImplementation(libs.robolectric)
     testImplementation(libs.androidx.room.testing)
     testImplementation(libs.kotlinx.coroutines.test)
+
+    // Instrumented test stack for the device-side FTS5 trigram probe
+    // (Task 4: BundledSQLiteDriver + trigram MATCH can only be verified on a
+    // real Android runtime — Robolectric/JVM cannot load the bundled native lib).
+    androidTestImplementation("androidx.test.ext:junit:1.3.0")
+    androidTestImplementation("androidx.test:core:1.7.0")
+    androidTestImplementation("androidx.test:runner:1.7.0")
+    androidTestImplementation(libs.androidx.room.testing)
 }
