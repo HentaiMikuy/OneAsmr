@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Stylized sound-wave mark: three vertical bars. -->
+    <path
+        android:fillColor="#E8DEF8"
+        android:pathData="M30,44h6v20h-6z" />
+    <path
+        android:fillColor="#E8DEF8"
+        android:pathData="M51,34h6v40h-6z" />
+    <path
+        android:fillColor="#E8DEF8"
+        android:pathData="M72,48h6v12h-6z" />
+</vector>
