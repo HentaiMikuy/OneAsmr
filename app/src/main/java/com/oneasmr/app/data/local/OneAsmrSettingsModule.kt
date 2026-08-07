@@ -15,6 +15,7 @@ import com.oneasmr.app.data.repository.RootDisplayNameResolver
 import com.oneasmr.app.data.repository.ScanRootPermissionStore
 import com.oneasmr.app.data.repository.ScanRootRepository
 import com.oneasmr.app.data.repository.ScanRootsStore
+import com.oneasmr.app.data.scanner.ScanBookkeepingStore
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -53,6 +54,18 @@ object OneAsmrSettingsModule {
     @Named("secure")
     fun provideSecureDataStore(@ApplicationContext context: Context): DataStore<Preferences> =
         PreferenceDataStoreFactory.create(produceFile = { context.preferencesDataStoreFile("secure") })
+
+    @Provides
+    @Singleton
+    @Named("scan_bookkeeping")
+    fun provideScanBookkeepingDataStore(@ApplicationContext context: Context): DataStore<Preferences> =
+        PreferenceDataStoreFactory.create(produceFile = { context.preferencesDataStoreFile("scan_bookkeeping") })
+
+    @Provides
+    @Singleton
+    fun provideScanBookkeepingStore(
+        @Named("scan_bookkeeping") dataStore: DataStore<Preferences>,
+    ): ScanBookkeepingStore = ScanBookkeepingStore(dataStore)
 
     @Provides
     @Singleton
