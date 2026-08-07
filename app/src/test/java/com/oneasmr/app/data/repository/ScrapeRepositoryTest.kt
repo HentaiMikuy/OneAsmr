@@ -3,6 +3,7 @@ package com.oneasmr.app.data.repository
 import androidx.sqlite.db.SupportSQLiteQuery
 import com.oneasmr.app.data.local.Circle
 import com.oneasmr.app.data.local.CircleDao
+import com.oneasmr.app.data.local.DimensionListItem
 import com.oneasmr.app.data.local.ScrapeStatus
 import com.oneasmr.app.data.local.Tag
 import com.oneasmr.app.data.local.TagDao
@@ -136,6 +137,12 @@ class ScrapeRepositoryTest {
         override suspend fun getWorksByCircle(circleId: String): List<Work> = emptyList()
         override suspend fun getWorksByTag(tagId: String): List<Work> = emptyList()
         override suspend fun getWorksByVa(vaId: String): List<Work> = emptyList()
+        override fun pagingSourceByCircle(circleId: String): PagingSource<Int, WorkListItem> =
+            throw UnsupportedOperationException("not used by ScrapeRepository")
+        override fun pagingSourceByTag(tagId: String): PagingSource<Int, WorkListItem> =
+            throw UnsupportedOperationException("not used by ScrapeRepository")
+        override fun pagingSourceByVa(vaId: String): PagingSource<Int, WorkListItem> =
+            throw UnsupportedOperationException("not used by ScrapeRepository")
     }
 
     private class FakeCircleDao : CircleDao {
@@ -143,6 +150,7 @@ class ScrapeRepositoryTest {
         override suspend fun upsertAll(circles: List<Circle>) = circles.forEach { rows[it.id] = it }
         override suspend fun getById(id: String): Circle? = rows[id]
         override suspend fun getAll(): List<Circle> = rows.values.toList()
+        override fun getAllWithCountsFlow(): Flow<List<DimensionListItem>> = MutableStateFlow(emptyList())
     }
 
     private class FakeTagDao : TagDao {
@@ -150,6 +158,7 @@ class ScrapeRepositoryTest {
         override suspend fun upsertAll(tags: List<Tag>) = tags.forEach { rows[it.id] = it }
         override suspend fun getById(id: String): Tag? = rows[id]
         override suspend fun getAll(): List<Tag> = rows.values.toList()
+        override fun getAllWithCountsFlow(): Flow<List<DimensionListItem>> = MutableStateFlow(emptyList())
     }
 
     private class FakeVaDao : VaDao {
@@ -157,6 +166,7 @@ class ScrapeRepositoryTest {
         override suspend fun upsertAll(vas: List<Va>) = vas.forEach { rows[it.id] = it }
         override suspend fun getById(id: String): Va? = rows[id]
         override suspend fun getAll(): List<Va> = rows.values.toList()
+        override fun getAllWithCountsFlow(): Flow<List<DimensionListItem>> = MutableStateFlow(emptyList())
     }
 
     private class FakeWorkTagDao : WorkTagDao {

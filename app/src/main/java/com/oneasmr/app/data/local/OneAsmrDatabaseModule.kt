@@ -42,6 +42,24 @@ object OneAsmrDatabaseModule {
     @Provides
     fun provideCircleDao(db: OneAsmrDatabase): CircleDao = db.circleDao()
 
+    /**
+     * Task 16 dimension-works paging: dimension strings ("circle"/"tag"/"va",
+     * the same literals the detail chips and library menu navigate with) map
+     * to their Room paging sources; anything else degrades to
+     * [EmptyDimensionPagingSource] — an unknown/typo'd dimension renders an
+     * empty page, never a crash.
+     */
+    @Provides
+    fun provideDimensionWorksPagingSourceFactory(workDao: WorkDao): DimensionWorksPagingSourceFactory =
+        DimensionWorksPagingSourceFactory { dimension, id ->
+            when (dimension) {
+                "circle" -> workDao.pagingSourceByCircle(id)
+                "tag" -> workDao.pagingSourceByTag(id)
+                "va" -> workDao.pagingSourceByVa(id)
+                else -> EmptyDimensionPagingSource
+            }
+        }
+
     @Provides
     fun provideTagDao(db: OneAsmrDatabase): TagDao = db.tagDao()
 

@@ -27,7 +27,8 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import androidx.navigation.navDeepLink
-import com.oneasmr.app.ui.browse.BrowsePlaceholderScreen
+import com.oneasmr.app.ui.browse.BrowseDimensionScreen
+import com.oneasmr.app.ui.browse.DimensionWorksScreen
 import com.oneasmr.app.ui.library.LibraryScreen
 import com.oneasmr.app.ui.library.SearchScreen
 import com.oneasmr.app.ui.player.PlayerScreen
@@ -49,6 +50,7 @@ object Routes {
     const val VIDEO_PLAYER = "video_player/{workId}/{trackIndex}"
     const val TEXT_VIEWER = "text/{workId}/{documentUri}"
     const val IMAGE_VIEWER = "image/{workId}/{documentUri}"
+    const val BROWSE_DIMENSION = "browse/{dimension}"
     const val BROWSE = "browse/{dimension}/{id}"
     const val REVIEWS = "reviews"
     const val SETTINGS = "settings"
@@ -77,9 +79,13 @@ object Routes {
     fun imageViewer(workId: String, documentUri: String): String =
         "image/$workId/${android.net.Uri.encode(documentUri)}"
 
-    /** Dimension browse stub route (Task 16 fills the destination). */
+    /** Task 16 dimension-works route: one circle/tag/CV's paged works. */
     fun browse(dimension: String, id: String): String =
         "browse/${android.net.Uri.encode(dimension)}/${android.net.Uri.encode(id)}"
+
+    /** Task 16 dimension LIST route: one segment, e.g. browse/circle. */
+    fun browseDimension(dimension: String): String =
+        "browse/${android.net.Uri.encode(dimension)}"
 
     /** Task 15 "我标记的作品" review list. */
     fun reviews(): String = "reviews"
@@ -137,6 +143,9 @@ fun OneAsmrNavHost(
                     onOpenRootFolders = { navController.navigate(Routes.SCAN_ROOTS) },
                     onOpenWork = { workId -> navController.navigate(Routes.workDetail(workId)) },
                     onOpenReviews = { navController.navigate(Routes.reviews()) },
+                    onOpenBrowse = { dimension ->
+                        navController.navigate(Routes.browseDimension(dimension))
+                    },
                 )
             }
             composable(
@@ -233,6 +242,22 @@ fun OneAsmrNavHost(
                 ImageFileScreen(documentUri = documentUri, onBack = { navController.popBackStack() })
             }
             composable(
+                route = Routes.BROWSE_DIMENSION,
+                arguments = listOf(
+                    navArgument(Routes.BROWSE_ARG_DIMENSION) { type = NavType.StringType },
+                ),
+                deepLinks = listOf(
+                    navDeepLink { uriPattern = "oneasmr://browse/{dimension}" },
+                ),
+            ) {
+                BrowseDimensionScreen(
+                    onOpenDimension = { dimension, id ->
+                        navController.navigate(Routes.browse(dimension, id))
+                    },
+                    onBack = { navController.popBackStack() },
+                )
+            }
+            composable(
                 route = Routes.BROWSE,
                 arguments = listOf(
                     navArgument(Routes.BROWSE_ARG_DIMENSION) { type = NavType.StringType },
@@ -242,7 +267,10 @@ fun OneAsmrNavHost(
                     navDeepLink { uriPattern = "oneasmr://browse/{dimension}/{id}" },
                 ),
             ) {
-                BrowsePlaceholderScreen(it)
+                DimensionWorksScreen(
+                    onOpenWork = { workId -> navController.navigate(Routes.workDetail(workId)) },
+                    onBack = { navController.popBackStack() },
+                )
             }
             composable(
                 route = Routes.SETTINGS,

@@ -97,6 +97,7 @@ import com.oneasmr.app.data.scanner.ScanProgressStore
 import com.oneasmr.app.data.scanner.removeWork
 import com.oneasmr.app.ui.common.CoverImage
 import com.oneasmr.app.ui.common.formatScanSummary
+import com.oneasmr.app.ui.common.progressLabel
 import com.oneasmr.app.ui.common.uiLabel
 import com.oneasmr.app.worker.ScanController
 import dagger.hilt.EntryPoint
@@ -130,6 +131,7 @@ fun LibraryScreen(
     onOpenRootFolders: () -> Unit = {},
     onOpenWork: (String) -> Unit = {},
     onOpenReviews: () -> Unit = {},
+    onOpenBrowse: (String) -> Unit = {},
     viewModel: LibraryViewModel = hiltViewModel(),
     scrapeViewModel: ScrapeViewModel = hiltViewModel(),
 ) {
@@ -215,6 +217,28 @@ fun LibraryScreen(
                         onClick = {
                             showBatchMenu = false
                             onOpenReviews()
+                        },
+                    )
+                    HorizontalDivider()
+                    DropdownMenuItem(
+                        text = { Text("浏览社团") },
+                        onClick = {
+                            showBatchMenu = false
+                            onOpenBrowse(com.oneasmr.app.ui.browse.BrowseDimensions.CIRCLE)
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("浏览标签") },
+                        onClick = {
+                            showBatchMenu = false
+                            onOpenBrowse(com.oneasmr.app.ui.browse.BrowseDimensions.TAG)
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("浏览CV") },
+                        onClick = {
+                            showBatchMenu = false
+                            onOpenBrowse(com.oneasmr.app.ui.browse.BrowseDimensions.VA)
                         },
                     )
                     HorizontalDivider()
@@ -701,7 +725,7 @@ private fun StatusBadge(
     }
 }
 
-/** Task 12 list row (Task 8 style preserved): cover thumb + text + badges/actions. */
+/** Task 12 list row — delegates to the shared row (browse pages reuse it too). */
 @Composable
 private fun WorkListRow(
     item: WorkListItem,
@@ -711,130 +735,14 @@ private fun WorkListRow(
     onScrape: (WorkListItem) -> Unit,
     scrapingWorkId: String?,
 ) {
-    val greyed = item.missing
-    val contentColor = if (greyed) {
-        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-    } else {
-        MaterialTheme.colorScheme.onSurface
-    }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        CoverImage(
-            coverStore = coverStore,
-            rjCode = item.rjCode,
-            type = CoverType.THUMB_240,
-            rootFolderUri = item.rootFolderUri,
-            relativeDir = item.relativeDir,
-            modifier = Modifier
-                .size(width = 56.dp, height = 56.dp)
-                .clip(RoundedCornerShape(6.dp)),
-        )
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            Text(
-                text = item.title,
-                style = MaterialTheme.typography.bodyLarge,
-                color = contentColor,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = item.rjCode,
-                style = MaterialTheme.typography.bodySmall,
-                fontFamily = FontFamily.Monospace,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            if (item.circleName != null) {
-                Text(
-                    text = item.circleName,
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                item.rateAverage2dp?.let {
-                    Text(
-                        "★ ${String.format(java.util.Locale.US, "%.2f", it)}",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.tertiary,
-                    )
-                }
-                if (item.progress != null && item.progress != ProgressState.none) {
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        progressLabel(item.progress),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                }
-            }
-        }
-        if (greyed) {
-            AssistChip(
-                onClick = {},
-                label = {
-                    Text("已失效", style = MaterialTheme.typography.labelMedium)
-                },
-                colors = AssistChipDefaults.assistChipColors(
-                    containerColor = MaterialTheme.colorScheme.errorContainer,
-                ),
-            )
-            Spacer(Modifier.width(4.dp))
-            TextButton(onClick = onRemove) { Text("移除") }
-        } else {
-            ScrapeRowActions(
-                item = item,
-                scrapingWorkId = scrapingWorkId,
-                onScrape = onScrape,
-            )
-        }
-    }
-}
-
-/** Task 11 per-row scrape actions: status chip + 刮削/重试/重新刮削 button. */
-@Composable
-private fun ScrapeRowActions(
-    item: WorkListItem,
-    scrapingWorkId: String?,
-    onScrape: (WorkListItem) -> Unit,
-) {
-    val busy = scrapingWorkId == item.id
-    val buttonLabel = when (item.scrapeStatus) {
-        ScrapeStatus.OK -> "重新刮削"
-        ScrapeStatus.FAILED -> "重试"
-        ScrapeStatus.NOT_SCRAPED -> "刮削"
-    }
-    when (item.scrapeStatus) {
-        ScrapeStatus.OK -> Unit
-        ScrapeStatus.NOT_SCRAPED -> {
-            AssistChip(onClick = {}, label = { Text("未刮削", style = MaterialTheme.typography.labelMedium) })
-            Spacer(Modifier.width(4.dp))
-        }
-        ScrapeStatus.FAILED -> {
-            AssistChip(
-                onClick = {},
-                label = { Text("刮削失败", style = MaterialTheme.typography.labelMedium) },
-                colors = AssistChipDefaults.assistChipColors(
-                    containerColor = MaterialTheme.colorScheme.errorContainer,
-                ),
-            )
-            Spacer(Modifier.width(4.dp))
-        }
-    }
-    TextButton(onClick = { onScrape(item) }, enabled = !busy) {
-        if (busy) {
-            CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
-        } else {
-            Text(buttonLabel)
-        }
-    }
+    com.oneasmr.app.ui.common.WorkListRow(
+        item = item,
+        coverStore = coverStore,
+        onClick = onClick,
+        onRemove = { onRemove() },
+        onScrape = onScrape,
+        scrapingWorkId = scrapingWorkId,
+    )
 }
 
 /** Compact card-form scrape button (grid mode). */
@@ -853,9 +761,6 @@ private fun ScrapeButton(item: WorkListItem, scraping: Boolean, onScrape: () -> 
         }
     }
 }
-
-/** Chinese label for the six listening states (aligned with kikoeru semantics). */
-private fun progressLabel(state: ProgressState): String = state.uiLabel()
 
 /** Grid/list toggle; the selection persists via the DataStore-backed ViewModel. */
 @OptIn(ExperimentalMaterial3Api::class)

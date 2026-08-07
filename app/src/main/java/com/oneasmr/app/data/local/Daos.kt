@@ -107,6 +107,37 @@ fun interface WorkPagingSourceFactory {
 }
 
 /**
+ * One dimension-list row (Task 16 browse): a circle / tag / VA with the count
+ * of library works referencing it. Counts come from a DAO-level GROUP BY —
+ * never computed in memory.
+ */
+data class DimensionListItem(
+    val id: String,
+    val name: String,
+    val workCount: Int,
+)
+
+/**
+ * Task 16 dimension-works paging: creates a fresh [PagingSource] per Pager
+ * generation for `browse/{dimension}/{id}`. Hilt provides the Room-backed
+ * instance (unknown dimensions degrade to [EmptyDimensionPagingSource] — the
+ * failure path, never a crash); unit tests inject a fake source over a plain
+ * list so the Pager runs on the test's virtual scheduler (repo flake
+ * convention — no real IO threads, no real-time waits).
+ */
+fun interface DimensionWorksPagingSourceFactory {
+    fun create(dimension: String, id: String): PagingSource<Int, WorkListItem>
+}
+
+/** Always-empty source for unknown browse dimensions (Task 16 failure path). */
+object EmptyDimensionPagingSource : PagingSource<Int, WorkListItem>() {
+    override fun getRefreshKey(state: PagingState<Int, WorkListItem>): Int? = null
+
+    override suspend fun load(params: LoadParams<Int>): LoadResult<Int, WorkListItem> =
+        LoadResult.Page(emptyList(), prevKey = null, nextKey = null)
+}
+
+/**
  * FTS5 trigram search across the four indexed dimensions, UNIONed like the
  * LIKE fallback so both paths return the same shape.
  */
@@ -469,17 +500,63 @@ interface WorkDao {
     @Query("SELECT w.* FROM work w WHERE w.circleId = :circleId ORDER BY w.id")
     suspend fun getWorksByCircle(circleId: String): List<Work>
 
+    /**
+     * Task 16 circle-works paging: the Task 12 [WorkListItem] join shape
+     * restricted to one circle, ordered by id (kikoeru circle-works
+     * semantics). Room's LimitOffsetPagingSource pages it; invalidates on
+     * work/circle/review changes.
+     */
+    @Query(
+        "SELECT w.id AS id, w.title AS title, c.name AS circleName, " +
+            "w.rateAverage2dp AS rateAverage2dp, w.missing AS missing, " +
+            "w.scrapeStatus AS scrapeStatus, r.progress AS progress, " +
+            "w.rootFolderUri AS rootFolderUri, w.relativeDir AS relativeDir " +
+            "FROM work w " +
+            "LEFT JOIN circle c ON c.id = w.circleId " +
+            "LEFT JOIN review r ON r.workId = w.id " +
+            "WHERE w.circleId = :circleId ORDER BY w.id",
+    )
+    fun pagingSourceByCircle(circleId: String): PagingSource<Int, WorkListItem>
+
     @Query(
         "SELECT w.* FROM work w JOIN work_tag wt ON w.id = wt.workId " +
             "WHERE wt.tagId = :tagId ORDER BY w.id",
     )
     suspend fun getWorksByTag(tagId: String): List<Work>
 
+    /** Task 16 tag-works paging (same shape as [pagingSourceByCircle]). */
+    @Query(
+        "SELECT w.id AS id, w.title AS title, c.name AS circleName, " +
+            "w.rateAverage2dp AS rateAverage2dp, w.missing AS missing, " +
+            "w.scrapeStatus AS scrapeStatus, r.progress AS progress, " +
+            "w.rootFolderUri AS rootFolderUri, w.relativeDir AS relativeDir " +
+            "FROM work w " +
+            "LEFT JOIN circle c ON c.id = w.circleId " +
+            "LEFT JOIN review r ON r.workId = w.id " +
+            "JOIN work_tag wt ON w.id = wt.workId " +
+            "WHERE wt.tagId = :tagId ORDER BY w.id",
+    )
+    fun pagingSourceByTag(tagId: String): PagingSource<Int, WorkListItem>
+
     @Query(
         "SELECT w.* FROM work w JOIN work_va wv ON w.id = wv.workId " +
             "WHERE wv.vaId = :vaId ORDER BY w.id",
     )
     suspend fun getWorksByVa(vaId: String): List<Work>
+
+    /** Task 16 VA-works paging (same shape as [pagingSourceByCircle]). */
+    @Query(
+        "SELECT w.id AS id, w.title AS title, c.name AS circleName, " +
+            "w.rateAverage2dp AS rateAverage2dp, w.missing AS missing, " +
+            "w.scrapeStatus AS scrapeStatus, r.progress AS progress, " +
+            "w.rootFolderUri AS rootFolderUri, w.relativeDir AS relativeDir " +
+            "FROM work w " +
+            "LEFT JOIN circle c ON c.id = w.circleId " +
+            "LEFT JOIN review r ON r.workId = w.id " +
+            "JOIN work_va wv ON w.id = wv.workId " +
+            "WHERE wv.vaId = :vaId ORDER BY w.id",
+    )
+    fun pagingSourceByVa(vaId: String): PagingSource<Int, WorkListItem>
 }
 
 @Dao
@@ -492,6 +569,20 @@ interface CircleDao {
 
     @Query("SELECT * FROM circle ORDER BY nameSortKey")
     suspend fun getAll(): List<Circle>
+
+    /**
+     * Task 16 circle browse list: every circle with its library work count,
+     * work count DESC (plan: "社团列表（作品数排序）"). The LEFT JOIN keeps
+     * zero-work circles visible at count 0; the count is a GROUP BY aggregate
+     * — never computed in memory.
+     */
+    @Query(
+        "SELECT c.id AS id, c.name AS name, COUNT(w.id) AS workCount " +
+            "FROM circle c LEFT JOIN work w ON w.circleId = c.id " +
+            "GROUP BY c.id, c.name " +
+            "ORDER BY workCount DESC, c.name",
+    )
+    fun getAllWithCountsFlow(): Flow<List<DimensionListItem>>
 }
 
 @Dao
@@ -504,6 +595,16 @@ interface TagDao {
 
     @Query("SELECT * FROM tag ORDER BY name")
     suspend fun getAll(): List<Tag>
+
+    /** Task 16 tag browse list: work count DESC (see [CircleDao.getAllWithCountsFlow]). */
+    @Query(
+        "SELECT t.id AS id, t.name AS name, COUNT(w.id) AS workCount " +
+            "FROM tag t LEFT JOIN work_tag wt ON wt.tagId = t.id " +
+            "LEFT JOIN work w ON w.id = wt.workId " +
+            "GROUP BY t.id, t.name " +
+            "ORDER BY workCount DESC, t.name",
+    )
+    fun getAllWithCountsFlow(): Flow<List<DimensionListItem>>
 }
 
 @Dao
@@ -516,6 +617,16 @@ interface VaDao {
 
     @Query("SELECT * FROM va ORDER BY nameSortKey")
     suspend fun getAll(): List<Va>
+
+    /** Task 16 CV browse list: work count DESC (see [CircleDao.getAllWithCountsFlow]). */
+    @Query(
+        "SELECT v.id AS id, v.name AS name, COUNT(w.id) AS workCount " +
+            "FROM va v LEFT JOIN work_va wv ON wv.vaId = v.id " +
+            "LEFT JOIN work w ON w.id = wv.workId " +
+            "GROUP BY v.id, v.name " +
+            "ORDER BY workCount DESC, v.name",
+    )
+    fun getAllWithCountsFlow(): Flow<List<DimensionListItem>>
 }
 
 @Dao

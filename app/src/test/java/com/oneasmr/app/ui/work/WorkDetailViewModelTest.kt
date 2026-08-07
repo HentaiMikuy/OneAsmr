@@ -565,7 +565,10 @@ class WorkDetailViewModelTest {
         seedReview(rating = 4, progress = ProgressState.postponed, text = "文件没了但标记还在")
         scheduler.advanceUntilIdle()
 
-        val state = viewModel.uiState.first { it.review != null && it.reviewInitialized }
+        // The work and review flows emit from separate Room collectors that
+        // race under full-suite load; wait for BOTH before deriving `invalid`
+        // (the review emission alone can land while loading is still true).
+        val state = viewModel.uiState.first { it.review != null && it.reviewInitialized && it.work?.missing == true }
         assertEquals(InvalidReason.MissingWork, state.invalid)
         assertEquals(4, state.review?.rating)
 
