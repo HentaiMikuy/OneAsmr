@@ -1,30 +1,166 @@
 package com.oneasmr.app.ui.settings
 
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.oneasmr.app.ui.common.PlaceholderScreen
-import com.oneasmr.app.ui.common.PlaceholderUiState
+import androidx.lifecycle.viewModelScope
+import com.oneasmr.app.data.local.settings.SettingsStore
+import com.oneasmr.app.data.local.settings.ThemeMode
+import com.oneasmr.app.data.repository.RootGrantStatus
+import com.oneasmr.app.data.repository.ScanRootEntry
+import com.oneasmr.app.data.repository.ScanRootRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 
+/**
+ * Settings first version (plan Task 5): theme switcher (system/light/dark),
+ * the root-folder management entry and the in-app "authorized root folders"
+ * list — the visible evidence channel for persisted SAF grants.
+ */
 @Composable
-fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
-    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    PlaceholderScreen(title = uiState.title, message = uiState.message)
+fun SettingsScreen(
+    onOpenRootFolders: () -> Unit = {},
+    viewModel: SettingsViewModel = hiltViewModel(),
+) {
+    val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
+    val rootEntries by viewModel.rootEntries.collectAsStateWithLifecycle()
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .safeDrawingPadding()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp),
+    ) {
+        Text("设置", style = MaterialTheme.typography.headlineSmall)
+        Spacer(Modifier.height(16.dp))
+
+        Text("主题", style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(8.dp))
+        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+            ThemeMode.entries.forEachIndexed { index, mode ->
+                SegmentedButton(
+                    selected = themeMode == mode,
+                    onClick = { viewModel.setThemeMode(mode) },
+                    shape = SegmentedButtonDefaults.itemShape(index = index, count = ThemeMode.entries.size),
+                ) {
+                    Text(mode.displayLabel())
+                }
+            }
+        }
+        Spacer(Modifier.height(24.dp))
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onOpenRootFolders)
+                .padding(vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("根文件夹管理", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            Text(
+                if (rootEntries.isEmpty()) "未添加" else "${rootEntries.size} 个",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        HorizontalDivider()
+        Spacer(Modifier.height(16.dp))
+
+        Text("已授权根文件夹", style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(4.dp))
+        if (rootEntries.isEmpty()) {
+            Text(
+                "无 — 添加根文件夹后，这里会显示系统授权状态。",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            rootEntries.forEach { entry ->
+                AuthorizedRootRow(entry)
+                HorizontalDivider()
+            }
+        }
+    }
 }
 
-/** Skeleton ViewModel for settings; full settings page lands in Tasks 5 and 27. */
+@Composable
+private fun AuthorizedRootRow(entry: ScanRootEntry) {
+    val revoked = entry.status == RootGrantStatus.REVOKED
+    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = entry.root.displayName,
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = if (revoked) "已失效" else "已授权",
+                style = MaterialTheme.typography.labelMedium,
+                color = if (revoked) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+            )
+        }
+        Text(
+            text = entry.root.treeUri,
+            style = MaterialTheme.typography.bodySmall,
+            fontFamily = FontFamily.Monospace,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+private fun ThemeMode.displayLabel(): String = when (this) {
+    ThemeMode.SYSTEM -> "跟随系统"
+    ThemeMode.LIGHT -> "浅色"
+    ThemeMode.DARK -> "深色"
+}
+
+/** ViewModel for [SettingsScreen]: theme mode from [SettingsStore], roots from [ScanRootRepository]. */
 @HiltViewModel
-class SettingsViewModel @Inject constructor() : ViewModel() {
-    val uiState: StateFlow<PlaceholderUiState> = MutableStateFlow(
-        PlaceholderUiState(
-            title = "Settings",
-            message = "设置占位页 — 主题/服务器/缓存管理在任务 5、27 接入",
-        ),
-    )
+class SettingsViewModel @Inject constructor(
+    private val settingsStore: SettingsStore,
+    private val scanRootRepository: ScanRootRepository,
+) : ViewModel() {
+    val themeMode: StateFlow<ThemeMode> = settingsStore.themeMode
+        .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, ThemeMode.SYSTEM)
+    val rootEntries: StateFlow<List<ScanRootEntry>> = scanRootRepository.entries
+
+    init {
+        viewModelScope.launch { scanRootRepository.refreshValidation() }
+    }
+
+    fun setThemeMode(mode: ThemeMode) {
+        viewModelScope.launch { settingsStore.setThemeMode(mode) }
+    }
 }

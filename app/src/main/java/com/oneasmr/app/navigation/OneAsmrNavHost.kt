@@ -135,7 +135,7 @@ fun OneAsmrNavHost(
                 route = Routes.SETTINGS,
                 deepLinks = listOf(navDeepLink { uriPattern = "oneasmr://settings" }),
             ) {
-                SettingsScreen()
+                SettingsScreen(onOpenRootFolders = { navController.navigate(Routes.SCAN_ROOTS) })
             }
             composable(
                 route = Routes.SERVER_LOGIN,
