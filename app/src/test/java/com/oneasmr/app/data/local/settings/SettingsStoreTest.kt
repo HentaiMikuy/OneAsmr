@@ -79,6 +79,28 @@ class SettingsStoreTest {
     }
 
     @Test
+    fun `library view mode defaults to GRID`() = runTest {
+        val store = storeIn(file("viewmode-default").open())
+        assertEquals(LibraryViewMode.GRID, store.libraryViewMode.first())
+    }
+
+    @Test
+    fun `library view mode round trips across store instances`() = runTest {
+        val tf = file("viewmode")
+        storeIn(tf.open()).setLibraryViewMode(LibraryViewMode.LIST)
+        // New instance over the same file == cold restart.
+        assertEquals(LibraryViewMode.LIST, storeIn(tf.restart()).libraryViewMode.first())
+    }
+
+    @Test
+    fun `corrupt persisted view mode falls back to GRID`() = runTest {
+        val tf = file("viewmode-corrupt")
+        val dataStore = tf.open()
+        dataStore.edit { it[stringPreferencesKey("library_view_mode")] = "CAROUSEL" }
+        assertEquals(LibraryViewMode.GRID, storeIn(dataStore).libraryViewMode.first())
+    }
+
+    @Test
     fun `theme resolution against system setting`() {
         assertTrue(ThemeMode.SYSTEM.resolveDarkTheme(true))
         assertFalse(ThemeMode.SYSTEM.resolveDarkTheme(false))

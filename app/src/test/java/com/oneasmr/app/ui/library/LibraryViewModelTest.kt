@@ -1,12 +1,21 @@
 package com.oneasmr.app.ui.library
 
 import androidx.lifecycle.viewModelScope
+import androidx.paging.ExperimentalPagingApi
+import androidx.paging.PagingSource
+import androidx.paging.PagingState
+import androidx.paging.asItemSnapshotListFlow
 import androidx.room.Room
 import com.oneasmr.app.data.local.OneAsmrDatabase
 import com.oneasmr.app.data.local.PlaybackState
 import com.oneasmr.app.data.local.ProgressState
 import com.oneasmr.app.data.local.Review
+import com.oneasmr.app.data.local.ScrapeStatus
 import com.oneasmr.app.data.local.TestDataStoreFile
+import com.oneasmr.app.data.local.WorkListItem
+import com.oneasmr.app.data.local.WorkPagingSourceFactory
+import com.oneasmr.app.data.local.settings.LibraryViewMode
+import com.oneasmr.app.data.local.settings.SettingsStore
 import com.oneasmr.app.data.repository.RootDisplayNameResolver
 import com.oneasmr.app.data.repository.ScanRootPermissionStore
 import com.oneasmr.app.data.repository.ScanRootRepository
@@ -18,6 +27,7 @@ import com.oneasmr.app.data.scanner.WorkCandidate
 import com.oneasmr.app.worker.ScanController
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestDispatcher
@@ -39,16 +49,15 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
 /**
- * Task 8 LibraryViewModel over REAL Room + REAL DataStore stores (fakes only
- * for the Android-only bits: permission store, name resolver, scan scheduler):
- * empty-library onboarding gate, live works list, progress + completion
- * summary mapping, and manual-remove with actual-row assertions (no
- * misleading "removed" signal — the DB is checked).
- *
- * Deterministic per repo convention: the ViewModel's scope runs on the test
- * Main dispatcher (same scheduler as runTest), all awaits are suspension-based
- * (`state.first { predicate }`), no real-time waits.
+ * Task 12 LibraryViewModel over REAL Room + REAL DataStore stores (fakes only
+ * for the Android-only bits: permission store, name resolver, scan scheduler)
+ * with an INJECTED fake PagingSource so the Pager runs entirely on the test's
+ * virtual scheduler — deterministic, no real-time waits (repo flake
+ * convention). Page contents come from the fake list; DB-backed signals
+ * (workCount, removeWork, scan state) are asserted against the real database,
+ * never from UI claims.
  */
+@OptIn(ExperimentalPagingApi::class)
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class LibraryViewModelTest {
@@ -59,6 +68,8 @@ class LibraryViewModelTest {
     private lateinit var db: OneAsmrDatabase
     private lateinit var rootsStore: TestDataStoreFile
     private lateinit var bookkeepingStore: TestDataStoreFile
+    private lateinit var settingsStore: TestDataStoreFile
+    private lateinit var settings: SettingsStore
     private lateinit var bookkeeping: ScanBookkeepingStore
     private lateinit var rootRepository: ScanRootRepository
     private lateinit var controller: FakeScanController
@@ -77,6 +88,8 @@ class LibraryViewModelTest {
         ).build()
         rootsStore = TestDataStoreFile(tmp.newFile("roots.preferences_pb"))
         bookkeepingStore = TestDataStoreFile(tmp.newFile("bookkeeping.preferences_pb"))
+        settingsStore = TestDataStoreFile(tmp.newFile("settings.preferences_pb"))
+        settings = SettingsStore(settingsStore.open())
         bookkeeping = ScanBookkeepingStore(bookkeepingStore.open())
         rootRepository = ScanRootRepository(
             permissionStore = FakePermissionStore(),
@@ -85,20 +98,41 @@ class LibraryViewModelTest {
         )
         controller = FakeScanController()
         ScanProgressStore.reset()
+        newViewModel(sampleItems = emptyList())
+    }
+
+    /** Constructs a fresh VM; the old scope (if any) is cancelled + joined first. */
+    private fun newViewModel(sampleItems: List<WorkListItem>) {
+        cancelScope()
         viewModel = LibraryViewModel(
             workDao = db.workDao(),
             db = db,
             rootRepository = rootRepository,
             bookkeeping = bookkeeping,
             scanController = controller,
+            settingsStore = settings,
+            pagingSourceFactory = WorkPagingSourceFactory { FakePagingSource(sampleItems) },
         )
+    }
+
+    private fun cancelScope() {
+        if (!::viewModel.isInitialized) return
+        val job = viewModel.viewModelScope.coroutineContext[Job]
+        job?.cancel()
+        // The VM's collectors (cachedIn paging cache, Eagerly view-mode) run on
+        // the virtual Main dispatcher: a runBlocking join from the test body
+        // would deadlock (cancellation continuations queue on the virtual
+        // clock, which cannot advance while the thread is blocked). Draining
+        // the scheduler lets the cancelled children unwind deterministically.
+        scheduler.advanceUntilIdle()
     }
 
     @After
     fun tearDown() {
-        viewModel.viewModelScope.cancel()
+        cancelScope()
         rootsStore.restart()
         bookkeepingStore.restart()
+        settingsStore.restart()
         ScanProgressStore.reset()
         db.close()
         Dispatchers.resetMain()
@@ -128,10 +162,50 @@ class LibraryViewModelTest {
         }
     }
 
-    private suspend fun awaitState(predicate: (LibraryUiState) -> Boolean): LibraryUiState {
-        val state = viewModel.uiState.first { predicate(it) }
-        return state
+    /** Pure suspend paging source over a fixed list — fully virtual-time friendly. */
+    private class FakePagingSource(
+        private val items: List<WorkListItem>,
+    ) : PagingSource<Int, WorkListItem>() {
+        override fun getRefreshKey(state: PagingState<Int, WorkListItem>): Int? = null
+
+        override suspend fun load(params: LoadParams<Int>): PagingSource.LoadResult<Int, WorkListItem> {
+            val key = params.key ?: 0
+            val from = key * params.loadSize
+            if (from >= items.size) {
+                return PagingSource.LoadResult.Page(emptyList(), prevKey = null, nextKey = null)
+            }
+            val to = minOf(from + params.loadSize, items.size)
+            return PagingSource.LoadResult.Page(
+                data = items.subList(from, to),
+                prevKey = if (key == 0) null else key - 1,
+                nextKey = if (to >= items.size) null else key + 1,
+            )
+        }
     }
+
+    private fun sampleItems(count: Int): List<WorkListItem> = (1..count).map { i ->
+        WorkListItem(
+            id = "local:RJ${100000 + i}",
+            title = "作品 $i",
+            circleName = "社团$i",
+            rateAverage2dp = if (i % 2 == 0) 4.5 else null,
+            missing = false,
+            scrapeStatus = ScrapeStatus.NOT_SCRAPED,
+            progress = if (i % 3 == 0) ProgressState.listening else null,
+            rootFolderUri = "content://tree/primary%3AAsmrLib",
+            relativeDir = "RJ${100000 + i}",
+        )
+    }
+
+    private suspend fun awaitState(predicate: (LibraryUiState) -> Boolean): LibraryUiState =
+        viewModel.uiState.first { predicate(it) }
+
+    /** Suspends until the pager has presented at least [minItems] loaded rows. */
+    private suspend fun awaitPagedItems(minItems: Int): List<WorkListItem> =
+        viewModel.pagingDataFlow
+            .asItemSnapshotListFlow()
+            .first { it.filterNotNull().size >= minItems }
+            .filterNotNull()
 
     private fun commitWork(rjCode: String, rootUri: String = "content://tree/rootA") {
         kotlinx.coroutines.runBlocking {
@@ -150,7 +224,7 @@ class LibraryViewModelTest {
         val state = awaitState { true }
         assertTrue(state.showOnboarding)
         assertFalse(state.hasRoots)
-        assertTrue(state.works.isEmpty())
+        assertEquals(0, state.workCount)
     }
 
     @Test
@@ -159,17 +233,29 @@ class LibraryViewModelTest {
         addRoot("content://tree/primary%3AAsmrLib")
         val state = awaitState { it.hasRoots }
         assertFalse(state.showOnboarding)
-        assertTrue(state.works.isEmpty())
+        assertEquals(0, state.workCount)
     }
 
     @Test
-    fun `works appear in the list with titles from folder names`() = runTest(scheduler) {
-        addRoot("content://tree/primary%3AAsmrLib")
-        commitWork("RJ111111", "content://tree/primary%3AAsmrLib")
-        commitWork("RJ222222", "content://tree/primary%3AAsmrLib")
-        val state = awaitState { it.works.size == 2 }
-        assertEquals(setOf("RJ111111", "RJ222222"), state.works.map { it.title }.toSet())
-        assertEquals(setOf("local:RJ111111", "local:RJ222222"), state.works.map { it.id }.toSet())
+    fun `paged items stream from the injected source in id order`() = runTest(scheduler) {
+        newViewModel(sampleItems(100))
+        // PagingConfig default initialLoadSize = pageSize * 3 = 90.
+        val items = awaitPagedItems(90)
+        assertEquals(90, items.size)
+        assertEquals("local:RJ100001", items.first().id)
+        assertEquals("local:RJ100090", items.last().id)
+        assertEquals("社团1", items.first().circleName)
+        assertEquals(4.5, items[1].rateAverage2dp)
+        assertEquals(ProgressState.listening, items[2].progress)
+    }
+
+    @Test
+    fun `paging source with fewer rows than the initial page still presents them`() = runTest(scheduler) {
+        newViewModel(sampleItems(5))
+        val items = awaitPagedItems(5)
+        assertEquals(5, items.size)
+        assertEquals("local:RJ100001", items.first().id)
+        assertEquals("local:RJ100005", items.last().id)
     }
 
     @Test
@@ -210,11 +296,11 @@ class LibraryViewModelTest {
             db.reviewDao().upsert(Review(id, rating = 5, reviewText = "nice", progress = ProgressState.none, updatedAt = 1L))
             db.playbackStateDao().upsert(PlaybackState("$id:3", 500L, 1_000L, 1L))
         }
-        val state = awaitState { it.works.size == 1 }
-        assertEquals(1, state.works.size)
+        val state = awaitState { it.workCount == 1 }
+        assertEquals(1, state.workCount)
 
         viewModel.removeWork(id)
-        awaitState { it.works.isEmpty() }
+        awaitState { it.workCount == 0 }
 
         val after = kotlinx.coroutines.runBlocking {
             Triple(db.workDao().getAll(), db.reviewDao().getByWorkId(id), db.playbackStateDao().get("$id:3"))
@@ -225,16 +311,16 @@ class LibraryViewModelTest {
     }
 
     @Test
-    fun `rescan after mutation reflects the new row set`() = runTest(scheduler) {
+    fun `rescan after mutation reflects the new row count`() = runTest(scheduler) {
         addRoot("content://tree/primary%3AAsmrLib")
         commitWork("RJ111111")
         commitWork("RJ222222")
-        val before = awaitState { it.works.size == 2 }
-        assertEquals(2, before.works.size)
+        val before = awaitState { it.workCount == 2 }
+        assertEquals(2, before.workCount)
 
         commitWork("RJ333333")
-        val after = awaitState { it.works.size == 3 }
-        assertTrue(after.works.any { it.id == "local:RJ333333" })
+        val after = awaitState { it.workCount == 3 }
+        assertEquals(3, after.workCount)
     }
 
     @Test
@@ -247,5 +333,40 @@ class LibraryViewModelTest {
         ScanProgressStore.reset()
         val idle = awaitState { it.progress.phase == com.oneasmr.app.data.scanner.ScanPhase.IDLE }
         assertEquals(com.oneasmr.app.data.scanner.ScanPhase.IDLE, idle.progress.phase)
+    }
+
+    @Test
+    fun `view mode defaults to GRID`() = runTest(scheduler) {
+        assertEquals(LibraryViewMode.GRID, viewModel.libraryViewMode.value)
+    }
+
+    @Test
+    fun `view mode selection persists across view model restarts`() = runTest(scheduler) {
+        viewModel.setLibraryViewMode(LibraryViewMode.LIST)
+        // Await the DataStore write itself (the VM's setter is fire-and-forget
+        // on the virtual scheduler); suspension lets the write land.
+        settings.libraryViewMode.first { it == LibraryViewMode.LIST }
+        // New store over the same DataStore file == cold restart; the old VM's
+        // Eagerly collector must unwind first or the file is locked.
+        cancelScope()
+        val restarted = SettingsStore(settingsStore.restart())
+        val newVm = LibraryViewModel(
+            workDao = db.workDao(),
+            db = db,
+            rootRepository = rootRepository,
+            bookkeeping = bookkeeping,
+            scanController = controller,
+            settingsStore = restarted,
+            pagingSourceFactory = WorkPagingSourceFactory { FakePagingSource(emptyList()) },
+        )
+        assertEquals(LibraryViewMode.LIST, newVm.libraryViewMode.first { it == LibraryViewMode.LIST })
+        newVm.viewModelScope.cancel()
+    }
+
+    @Test
+    fun `pull refresh stub is a safe no-op`() = runTest(scheduler) {
+        viewModel.onPullRefresh()
+        val state = awaitState { true }
+        assertEquals(0, state.workCount)
     }
 }

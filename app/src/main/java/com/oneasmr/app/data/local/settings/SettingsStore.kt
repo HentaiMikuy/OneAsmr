@@ -49,6 +49,19 @@ enum class ScrapingLanguage(val code: String) {
     }
 }
 
+/** Library home layout (Task 12): cover grid vs list rows, persisted. */
+enum class LibraryViewMode {
+    GRID,
+    LIST,
+    ;
+
+    companion object {
+        /** Read the persisted value; unknown/missing values fall back to [GRID]. */
+        fun fromStored(value: String?): LibraryViewMode =
+            entries.firstOrNull { it.name == value } ?: GRID
+    }
+}
+
 /**
  * App-wide settings persisted in a DataStore Preferences file ("settings").
  *
@@ -76,6 +89,10 @@ class SettingsStore @Inject constructor(
 
     val cacheSizeCapMb: Flow<Int> =
         dataStore.data.map { it[KEY_CACHE_CAP_MB] ?: DEFAULT_CACHE_CAP_MB }
+
+    /** Library home layout preference (Task 12), defaults to the cover grid. */
+    val libraryViewMode: Flow<LibraryViewMode> =
+        dataStore.data.map { LibraryViewMode.fromStored(it[KEY_LIBRARY_VIEW_MODE]) }
 
     /**
      * Debug-only DLsite base-url override (Task 11 device QA: the emulator
@@ -109,6 +126,10 @@ class SettingsStore @Inject constructor(
         dataStore.edit { it[KEY_CACHE_CAP_MB] = mb.coerceIn(1, 100_000) }
     }
 
+    suspend fun setLibraryViewMode(mode: LibraryViewMode) {
+        dataStore.edit { it[KEY_LIBRARY_VIEW_MODE] = mode.name }
+    }
+
     companion object {
         const val DEFAULT_CACHE_CAP_MB = 500
 
@@ -117,5 +138,6 @@ class SettingsStore @Inject constructor(
         private val KEY_SCRAPING_LANGUAGE = stringPreferencesKey("scraping_language")
         private val KEY_SCRAPER_BASE_URL_OVERRIDE = stringPreferencesKey("scraper_base_url_override")
         private val KEY_CACHE_CAP_MB = intPreferencesKey("cache_cap_mb")
+        private val KEY_LIBRARY_VIEW_MODE = stringPreferencesKey("library_view_mode")
     }
 }

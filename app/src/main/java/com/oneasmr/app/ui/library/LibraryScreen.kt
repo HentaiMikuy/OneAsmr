@@ -1,11 +1,14 @@
 package com.oneasmr.app.ui.library
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -14,27 +17,36 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -43,6 +55,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -50,13 +65,26 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
-import com.oneasmr.app.data.local.KeySpec
+import androidx.paging.Pager
+import androidx.paging.PagingConfig
+import androidx.paging.PagingData
+import androidx.paging.PagingSource
+import androidx.paging.cachedIn
+import androidx.paging.compose.LazyPagingItems
+import androidx.paging.compose.collectAsLazyPagingItems
+import androidx.paging.compose.itemKey
 import com.oneasmr.app.data.local.OneAsmrDatabase
+import com.oneasmr.app.data.local.ProgressState
 import com.oneasmr.app.data.local.ScrapeStatus
-import com.oneasmr.app.data.local.Work
 import com.oneasmr.app.data.local.WorkDao
+import com.oneasmr.app.data.local.WorkListItem
+import com.oneasmr.app.data.local.WorkPagingSourceFactory
+import com.oneasmr.app.data.local.settings.LibraryViewMode
+import com.oneasmr.app.data.local.settings.SettingsStore
 import com.oneasmr.app.data.repository.BatchPhase
 import com.oneasmr.app.data.repository.BatchScrapeState
+import com.oneasmr.app.data.repository.CoverStore
+import com.oneasmr.app.data.repository.CoverType
 import com.oneasmr.app.data.repository.ScanRootRepository
 import com.oneasmr.app.data.scanner.RescanSummary
 import com.oneasmr.app.data.scanner.ScanBookkeepingStore
@@ -64,10 +92,16 @@ import com.oneasmr.app.data.scanner.ScanPhase
 import com.oneasmr.app.data.scanner.ScanProgress
 import com.oneasmr.app.data.scanner.ScanProgressStore
 import com.oneasmr.app.data.scanner.removeWork
+import com.oneasmr.app.ui.common.CoverImage
 import com.oneasmr.app.ui.common.formatScanSummary
 import com.oneasmr.app.worker.ScanController
+import dagger.hilt.EntryPoint
+import dagger.hilt.InstallIn
+import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.components.SingletonComponent
 import javax.inject.Inject
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -76,10 +110,11 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 /**
- * Task 8 library home: empty-library onboarding (no roots + no works), the
- * scan trigger + live progress + completion summary, and the MINIMAL work
- * list (title / RJ / missing state) so the missing-grey-out and manual-remove
- * flows are real. Task 12 replaces the list with the full grid/paging UI.
+ * Task 12 library home: empty-library onboarding (no roots + no works), the
+ * scan trigger + live progress + completion summary, and the PAGED cover
+ * grid / list (grid-list preference persisted, pull-to-refresh affordance).
+ * Task 8's minimal list is replaced by the paged UI; the missing-grey-out,
+ * manual-remove and Task 11 scrape flows carry over.
  */
 @Composable
 fun LibraryScreen(
@@ -90,11 +125,13 @@ fun LibraryScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val scrapeState by scrapeViewModel.uiState.collectAsStateWithLifecycle()
-    var removeCandidate by remember { mutableStateOf<Work?>(null) }
-    var forceRescrapeCandidate by remember { mutableStateOf<Work?>(null) }
+    val viewMode by viewModel.libraryViewMode.collectAsStateWithLifecycle()
+    var removeCandidate by remember { mutableStateOf<WorkListItem?>(null) }
+    var forceRescrapeCandidate by remember { mutableStateOf<WorkListItem?>(null) }
     var showBatchMenu by remember { mutableStateOf(false) }
     var showDebugUrlDialog by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
+    val coverStore = rememberCoverStore()
 
     LaunchedEffect(scrapeState.singleMessage) {
         scrapeState.singleMessage?.let {
@@ -125,6 +162,10 @@ fun LibraryScreen(
                 style = MaterialTheme.typography.headlineSmall,
                 modifier = Modifier.weight(1f),
             )
+            LibraryViewModeToggle(
+                viewMode = viewMode,
+                onSelect = viewModel::setLibraryViewMode,
+            )
             if (state.hasRoots && state.progress.phase != ScanPhase.SCANNING) {
                 TextButton(onClick = viewModel::startScan) {
                     Icon(Icons.Filled.Refresh, contentDescription = null)
@@ -135,7 +176,7 @@ fun LibraryScreen(
             Box {
                 IconButton(
                     onClick = { showBatchMenu = true },
-                    enabled = state.works.isNotEmpty() && scrapeState.batch.phase != BatchPhase.RUNNING,
+                    enabled = state.workCount > 0 && scrapeState.batch.phase != BatchPhase.RUNNING,
                 ) {
                     Icon(Icons.Filled.MoreVert, contentDescription = "更多操作")
                 }
@@ -183,7 +224,7 @@ fun LibraryScreen(
 
         when {
             state.showOnboarding -> EmptyLibrary(onOpenRootFolders = onOpenRootFolders)
-            state.works.isEmpty() -> ScanPrompt(onScan = viewModel::startScan)
+            state.workCount == 0 -> ScanPrompt(onScan = viewModel::startScan)
             else -> {
                 val lastSummary = state.lastSummary
                 if (lastSummary != null) {
@@ -194,14 +235,17 @@ fun LibraryScreen(
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                     )
                 }
-                WorkList(
-                    works = state.works,
+                LibraryContent(
+                    items = viewModel.pagingDataFlow.collectAsLazyPagingItems(),
+                    coverStore = coverStore,
+                    viewMode = viewMode,
                     onOpenWork = onOpenWork,
                     onRemove = { removeCandidate = it },
                     onScrape = { work ->
                         if (work.scrapeStatus == ScrapeStatus.OK) forceRescrapeCandidate = work
                         else scrapeViewModel.scrapeSingle(work.id)
                     },
+                    onRefresh = viewModel::onPullRefresh,
                     scrapingWorkId = scrapeState.scrapingWorkId,
                 )
             }
@@ -407,45 +451,233 @@ private fun ScanPrompt(onScan: () -> Unit) {
 }
 
 /**
- * Minimal Task 8 work list: title + RJ code + missing state. Missing rows are
- * greyed, still tappable (to the Task 14 detail stub) and carry a manual
- * remove action. Task 12 replaces this with the full grid.
- *
- * Task 11 adds the scrape affordance: a status chip (未刮削/刮削失败) plus a
- * per-row 刮削/重试/重新刮削 button (force-rescrape confirm lives in the
- * screen, OK rows only).
+ * Task 12 paged library content: cover grid or list rows (persisted user
+ * preference) driven by [LazyPagingItems] — only the pages around the
+ * viewport are ever loaded (plan Must NOT: 一次性加载全库). Wrapped in the
+ * pull-to-refresh affordance; [onRefresh] is a stub until Task 11 wires the
+ * per-work metadata refresh.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun WorkList(
-    works: List<Work>,
+private fun LibraryContent(
+    items: LazyPagingItems<WorkListItem>,
+    coverStore: CoverStore,
+    viewMode: LibraryViewMode,
     onOpenWork: (String) -> Unit,
-    onRemove: (Work) -> Unit,
-    onScrape: (Work) -> Unit,
+    onRemove: (WorkListItem) -> Unit,
+    onScrape: (WorkListItem) -> Unit,
+    onRefresh: () -> Unit,
     scrapingWorkId: String?,
 ) {
-    LazyColumn(Modifier.fillMaxSize()) {
-        items(works, key = { it.id }) { work ->
-            WorkRow(
-                work = work,
-                onClick = { onOpenWork(work.id) },
-                onRemove = { onRemove(work) },
-                onScrape = { onScrape(work) },
-                scrapingWorkId = scrapingWorkId,
-            )
-            HorizontalDivider()
+    PullToRefreshBox(
+        isRefreshing = false,
+        onRefresh = onRefresh,
+        modifier = Modifier.fillMaxSize(),
+    ) {
+        if (viewMode == LibraryViewMode.GRID) {
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(minSize = 136.dp),
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                items(
+                    count = items.itemCount,
+                    key = items.itemKey { it.id },
+                ) { index ->
+                    val item = items[index]
+                    if (item != null) {
+                        WorkGridCard(
+                            item = item,
+                            coverStore = coverStore,
+                            onClick = { onOpenWork(item.id) },
+                            onRemove = { onRemove(item) },
+                            onScrape = { onScrape(item) },
+                            scraping = scrapingWorkId == item.id,
+                        )
+                    }
+                }
+            }
+        } else {
+            LazyColumn(Modifier.fillMaxSize()) {
+                items(
+                    count = items.itemCount,
+                    key = items.itemKey { it.id },
+                ) { index ->
+                    val item = items[index]
+                    if (item != null) {
+                        WorkListRow(
+                            item = item,
+                            coverStore = coverStore,
+                            onClick = { onOpenWork(item.id) },
+                            onRemove = { onRemove(item) },
+                            onScrape = onScrape,
+                            scrapingWorkId = scrapingWorkId,
+                        )
+                        HorizontalDivider()
+                    }
+                }
+            }
         }
     }
 }
 
+/**
+ * Task 12 grid card: cover with progress badge (top-start) and scrape-status
+ * badge (top-end), title / RJ / circle / rating below. Missing works keep the
+ * Task 8 grey-out (dimmed cover + 已失效 chip) and a manual remove action.
+ */
 @Composable
-private fun WorkRow(
-    work: Work,
+private fun WorkGridCard(
+    item: WorkListItem,
+    coverStore: CoverStore,
     onClick: () -> Unit,
     onRemove: () -> Unit,
-    onScrape: (Work) -> Unit,
+    onScrape: () -> Unit,
+    scraping: Boolean,
+) {
+    val greyed = item.missing
+    val textColor = if (greyed) {
+        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+    } else {
+        MaterialTheme.colorScheme.onSurface
+    }
+    Column(
+        modifier = Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick),
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .aspectRatio(1f),
+        ) {
+            CoverImage(
+                coverStore = coverStore,
+                rjCode = item.rjCode,
+                type = CoverType.THUMB_240,
+                rootFolderUri = item.rootFolderUri,
+                relativeDir = item.relativeDir,
+                modifier = Modifier.fillMaxSize(),
+            )
+            if (item.progress != null && item.progress != ProgressState.none) {
+                Surface(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(4.dp),
+                    shape = RoundedCornerShape(6.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                ) {
+                    Text(
+                        progressLabel(item.progress),
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
+                    )
+                }
+            }
+            when (item.scrapeStatus) {
+                ScrapeStatus.NOT_SCRAPED -> StatusBadge(
+                    label = "未刮削",
+                    modifier = Modifier.align(Alignment.TopEnd).padding(4.dp),
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                )
+                ScrapeStatus.FAILED -> StatusBadge(
+                    label = "刮削失败",
+                    modifier = Modifier.align(Alignment.TopEnd).padding(4.dp),
+                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                )
+                ScrapeStatus.OK -> Unit
+            }
+            if (greyed) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)),
+                )
+                AssistChip(
+                    onClick = {},
+                    label = { Text("已失效", style = MaterialTheme.typography.labelMedium) },
+                    modifier = Modifier.align(Alignment.Center),
+                    colors = AssistChipDefaults.assistChipColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                    ),
+                )
+            }
+        }
+        Column(Modifier.padding(horizontal = 6.dp, vertical = 4.dp)) {
+            Text(
+                text = item.title,
+                style = MaterialTheme.typography.bodyMedium,
+                color = textColor,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = item.rjCode,
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (item.circleName != null) {
+                Text(
+                    text = item.circleName,
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                item.rateAverage2dp?.let {
+                    Text(
+                        "★ ${String.format(java.util.Locale.US, "%.2f", it)}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.tertiary,
+                    )
+                }
+                Spacer(Modifier.weight(1f))
+                if (greyed) {
+                    TextButton(onClick = onRemove) { Text("移除") }
+                } else {
+                    ScrapeButton(item = item, scraping = scraping, onScrape = onScrape)
+                }
+            }
+        }
+    }
+}
+
+/** Small corner chip for cover overlays (scrape status). */
+@Composable
+private fun StatusBadge(
+    label: String,
+    modifier: Modifier,
+    containerColor: Color,
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(6.dp),
+        color = containerColor,
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
+        )
+    }
+}
+
+/** Task 12 list row (Task 8 style preserved): cover thumb + text + badges/actions. */
+@Composable
+private fun WorkListRow(
+    item: WorkListItem,
+    coverStore: CoverStore,
+    onClick: () -> Unit,
+    onRemove: () -> Unit,
+    onScrape: (WorkListItem) -> Unit,
     scrapingWorkId: String?,
 ) {
-    val greyed = work.missing
+    val greyed = item.missing
     val contentColor = if (greyed) {
         MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
     } else {
@@ -455,23 +687,60 @@ private fun WorkRow(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        CoverImage(
+            coverStore = coverStore,
+            rjCode = item.rjCode,
+            type = CoverType.THUMB_240,
+            rootFolderUri = item.rootFolderUri,
+            relativeDir = item.relativeDir,
+            modifier = Modifier
+                .size(width = 56.dp, height = 56.dp)
+                .clip(RoundedCornerShape(6.dp)),
+        )
+        Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(
-                text = work.title,
+                text = item.title,
                 style = MaterialTheme.typography.bodyLarge,
                 color = contentColor,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = KeySpec.parseWorkId(work.id)?.rjCode ?: work.id,
+                text = item.rjCode,
                 style = MaterialTheme.typography.bodySmall,
                 fontFamily = FontFamily.Monospace,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (item.circleName != null) {
+                Text(
+                    text = item.circleName,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                item.rateAverage2dp?.let {
+                    Text(
+                        "★ ${String.format(java.util.Locale.US, "%.2f", it)}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.tertiary,
+                    )
+                }
+                if (item.progress != null && item.progress != ProgressState.none) {
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        progressLabel(item.progress),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
         }
         if (greyed) {
             AssistChip(
@@ -479,7 +748,7 @@ private fun WorkRow(
                 label = {
                     Text("已失效", style = MaterialTheme.typography.labelMedium)
                 },
-                colors = androidx.compose.material3.AssistChipDefaults.assistChipColors(
+                colors = AssistChipDefaults.assistChipColors(
                     containerColor = MaterialTheme.colorScheme.errorContainer,
                 ),
             )
@@ -487,7 +756,7 @@ private fun WorkRow(
             TextButton(onClick = onRemove) { Text("移除") }
         } else {
             ScrapeRowActions(
-                work = work,
+                item = item,
                 scrapingWorkId = scrapingWorkId,
                 onScrape = onScrape,
             )
@@ -498,17 +767,17 @@ private fun WorkRow(
 /** Task 11 per-row scrape actions: status chip + 刮削/重试/重新刮削 button. */
 @Composable
 private fun ScrapeRowActions(
-    work: Work,
+    item: WorkListItem,
     scrapingWorkId: String?,
-    onScrape: (Work) -> Unit,
+    onScrape: (WorkListItem) -> Unit,
 ) {
-    val busy = scrapingWorkId == work.id
-    val buttonLabel = when (work.scrapeStatus) {
+    val busy = scrapingWorkId == item.id
+    val buttonLabel = when (item.scrapeStatus) {
         ScrapeStatus.OK -> "重新刮削"
         ScrapeStatus.FAILED -> "重试"
         ScrapeStatus.NOT_SCRAPED -> "刮削"
     }
-    when (work.scrapeStatus) {
+    when (item.scrapeStatus) {
         ScrapeStatus.OK -> Unit
         ScrapeStatus.NOT_SCRAPED -> {
             AssistChip(onClick = {}, label = { Text("未刮削", style = MaterialTheme.typography.labelMedium) })
@@ -518,14 +787,14 @@ private fun ScrapeRowActions(
             AssistChip(
                 onClick = {},
                 label = { Text("刮削失败", style = MaterialTheme.typography.labelMedium) },
-                colors = androidx.compose.material3.AssistChipDefaults.assistChipColors(
+                colors = AssistChipDefaults.assistChipColors(
                     containerColor = MaterialTheme.colorScheme.errorContainer,
                 ),
             )
             Spacer(Modifier.width(4.dp))
         }
     }
-    TextButton(onClick = { onScrape(work) }, enabled = !busy) {
+    TextButton(onClick = { onScrape(item) }, enabled = !busy) {
         if (busy) {
             CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
         } else {
@@ -534,26 +803,109 @@ private fun ScrapeRowActions(
     }
 }
 
-/** Task 8 library home state; [showOnboarding] gates the empty-library CTA. */
+/** Compact card-form scrape button (grid mode). */
+@Composable
+private fun ScrapeButton(item: WorkListItem, scraping: Boolean, onScrape: () -> Unit) {
+    val label = when (item.scrapeStatus) {
+        ScrapeStatus.OK -> "重新刮削"
+        ScrapeStatus.FAILED -> "重试"
+        ScrapeStatus.NOT_SCRAPED -> "刮削"
+    }
+    TextButton(onClick = onScrape, enabled = !scraping) {
+        if (scraping) {
+            CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+        } else {
+            Text(label)
+        }
+    }
+}
+
+/** Chinese label for the six listening states (aligned with kikoeru semantics). */
+private fun progressLabel(state: ProgressState): String = when (state) {
+    ProgressState.none -> ""
+    ProgressState.marked -> "已标记"
+    ProgressState.listening -> "收听中"
+    ProgressState.listened -> "已听完"
+    ProgressState.replay -> "重听中"
+    ProgressState.postponed -> "搁置"
+}
+
+/** Grid/list toggle; the selection persists via the DataStore-backed ViewModel. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun LibraryViewModeToggle(
+    viewMode: LibraryViewMode,
+    onSelect: (LibraryViewMode) -> Unit,
+) {
+    SingleChoiceSegmentedButtonRow(Modifier.padding(end = 8.dp)) {
+        SegmentedButton(
+            selected = viewMode == LibraryViewMode.GRID,
+            onClick = { onSelect(LibraryViewMode.GRID) },
+            shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+        ) { Text("网格") }
+        SegmentedButton(
+            selected = viewMode == LibraryViewMode.LIST,
+            onClick = { onSelect(LibraryViewMode.LIST) },
+            shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+        ) { Text("列表") }
+    }
+}
+
+/**
+ * Hilt singleton access for [CoverStore] inside composables (EntryPoint
+ * pattern, same as ScanLibraryWorker). CoverImage's contract says the calling
+ * screen supplies the store; remember{} keeps one instance per composition.
+ */
+@EntryPoint
+@InstallIn(SingletonComponent::class)
+interface LibraryCoverEntryPoint {
+    fun coverStore(): CoverStore
+}
+
+@Composable
+private fun rememberCoverStore(): CoverStore {
+    val context = LocalContext.current
+    return remember {
+        EntryPointAccessors.fromApplication(
+            context.applicationContext,
+            LibraryCoverEntryPoint::class.java,
+        ).coverStore()
+    }
+}
+
+/**
+ * Task 12 library home state: header/empty-state data (roots, live count,
+ * scan progress, last summary). The actual works live in the separately
+ * collected paged flow ([LibraryViewModel.pagingDataFlow]) — never a full
+ * in-memory list (plan Must NOT: 一次性加载全库).
+ */
 data class LibraryUiState(
-    val works: List<Work>,
     val hasRoots: Boolean,
     val showOnboarding: Boolean,
     val progress: ScanProgress,
     val lastSummary: RescanSummary?,
+    val workCount: Int,
 ) {
     companion object {
         val EMPTY = LibraryUiState(
-            works = emptyList(),
             hasRoots = false,
             showOnboarding = true,
             progress = ScanProgress.IDLE,
             lastSummary = null,
+            workCount = 0,
         )
     }
 }
 
-/** Task 8 library ViewModel: combines works/roots/progress/summary into [uiState]. */
+/**
+ * Task 12 library ViewModel: paged works ([pagingDataFlow], Paging 3 over
+ * Room's built-in PagingSource — LIMIT/OFFSET, never the whole table) plus
+ * the header state and the persisted grid/list preference.
+ *
+ * [pagingSourceFactory] is injected (Hilt provides the DAO-backed source) so
+ * unit tests substitute a fake source and the Pager runs entirely on the
+ * test's virtual scheduler — the repo flake convention, no real-time waits.
+ */
 @HiltViewModel
 class LibraryViewModel @Inject constructor(
     private val workDao: WorkDao,
@@ -561,21 +913,47 @@ class LibraryViewModel @Inject constructor(
     rootRepository: ScanRootRepository,
     bookkeeping: ScanBookkeepingStore,
     private val scanController: ScanController,
+    private val settingsStore: SettingsStore,
+    pagingSourceFactory: WorkPagingSourceFactory,
 ) : ViewModel() {
     val uiState: StateFlow<LibraryUiState> = combine(
-        workDao.getAllFlow(),
         rootRepository.entries.map { it.isNotEmpty() },
+        workDao.countFlow(),
         ScanProgressStore.state,
         bookkeeping.lastSummary,
-    ) { works, hasRoots, progress, lastSummary ->
+    ) { hasRoots, count, progress, lastSummary ->
         LibraryUiState(
-            works = works,
             hasRoots = hasRoots,
-            showOnboarding = !hasRoots && works.isEmpty(),
+            showOnboarding = !hasRoots && count == 0,
             progress = progress,
             lastSummary = lastSummary,
+            workCount = count,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), LibraryUiState.EMPTY)
+
+    /** Paged works for the grid/list; cached for the ViewModel's lifetime. */
+    val pagingDataFlow: Flow<PagingData<WorkListItem>> =
+        Pager(
+            config = PagingConfig(pageSize = PAGE_SIZE),
+            pagingSourceFactory = pagingSourceFactory::create,
+        ).flow.cachedIn(viewModelScope)
+
+    /** Persisted grid/list preference (Task 12); survives process restarts. */
+    val libraryViewMode: StateFlow<LibraryViewMode> =
+        settingsStore.libraryViewMode
+            .stateIn(viewModelScope, SharingStarted.Eagerly, LibraryViewMode.GRID)
+
+    fun setLibraryViewMode(mode: LibraryViewMode) {
+        viewModelScope.launch { settingsStore.setLibraryViewMode(mode) }
+    }
+
+    /**
+     * Pull-to-refresh STUB (plan Task 12: "下拉刷新触发单作品元数据刷新占位"):
+     * the pull affordance is real, the handler is intentionally a no-op —
+     * per-work metadata refresh lands with Task 11's scrape wiring (ScrapeViewModel),
+     * which must not be duplicated here.
+     */
+    fun onPullRefresh() = Unit
 
     fun startScan() {
         scanController.startScan()
@@ -588,5 +966,9 @@ class LibraryViewModel @Inject constructor(
     /** Manual removal of a missing work (Task 7 API): row + review + playback, one transaction. */
     fun removeWork(workId: String) {
         viewModelScope.launch { removeWork(db, workId) }
+    }
+
+    companion object {
+        const val PAGE_SIZE = 30
     }
 }

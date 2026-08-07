@@ -15,6 +15,8 @@ room = "2.8.4"
 # androidx.sqlite bundled driver: ships SQLite >= 3.42 with FTS5 + trigram,
 # required because the Android framework SQLite has no FTS5 compiled in.
 sqlite-bundled = "2.7.0"
+# Paging 3 (Task 12 library grid/list): Room PagingSource + Compose integration.
+paging = "3.5.0"
 media3 = "1.10.1"
 # NOTE: media3-decoder-flac / media3-decoder-opus are NOT published to any Maven
 # repo by Google (native-code modules, source-build only, see media3 README).
@@ -65,7 +67,11 @@ androidx-room-runtime = { group = "androidx.room", name = "room-runtime", versio
 androidx-room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
 androidx-room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
 androidx-room-testing = { group = "androidx.room", name = "room-testing", version.ref = "room" }
+androidx-room-paging = { group = "androidx.room", name = "room-paging", version.ref = "room" }
 androidx-sqlite-bundled = { group = "androidx.sqlite", name = "sqlite-bundled", version.ref = "sqlite-bundled" }
+
+androidx-paging-runtime = { group = "androidx.paging", name = "paging-runtime", version.ref = "paging" }
+androidx-paging-compose = { group = "androidx.paging", name = "paging-compose", version.ref = "paging" }
 
 androidx-media3-exoplayer = { group = "androidx.media3", name = "media3-exoplayer", version.ref = "media3" }
 androidx-media3-ui = { group = "androidx.media3", name = "media3-ui", version.ref = "media3" }

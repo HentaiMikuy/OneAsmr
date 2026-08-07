@@ -1,6 +1,7 @@
 package com.oneasmr.app.data.local
 
 import android.util.Log
+import androidx.paging.PagingSource
 import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
@@ -32,6 +33,36 @@ enum class WorkOrder(val sql: String) {
 
 /** One search hit: a work id plus the dimension (title/circle/tag/va) it matched in. */
 data class WorkSearchHit(val workId: String, val matchedIn: String)
+
+/** One library card/row (Task 12): the work joined with its circle name and
+ * user progress so the grid/list renders everything from a single paged query
+ * — no per-item lookups during scrolling (the "no IO in item recomposition"
+ * rule).
+ */
+data class WorkListItem(
+    val id: String,
+    val title: String,
+    val circleName: String?,
+    val rateAverage2dp: Double?,
+    val missing: Boolean,
+    val scrapeStatus: ScrapeStatus,
+    /** null when the user has no review row yet (LEFT JOIN). */
+    val progress: ProgressState?,
+    val rootFolderUri: String,
+    val relativeDir: String,
+) {
+    /** Bare RJ/BJ/VJ code (KeySpec); falls back to the raw id for safety. */
+    val rjCode: String get() = KeySpec.parseWorkId(id)?.rjCode ?: id
+}
+
+/**
+ * Task 12: creates a fresh [PagingSource] per Pager generation. Hilt provides
+ * the Room-backed instance; unit tests inject a fake source over a plain list
+ * so Pager runs on the test's virtual scheduler (no real IO threads).
+ */
+fun interface WorkPagingSourceFactory {
+    fun create(): PagingSource<Int, WorkListItem>
+}
 
 /**
  * FTS5 trigram search across the four indexed dimensions, UNIONed like the
@@ -138,6 +169,31 @@ interface WorkDao {
     /** Live stream of every local work row (Task 8 library list + empty-state decision). */
     @Query("SELECT * FROM work")
     fun getAllFlow(): Flow<List<Work>>
+
+    /** Live total work count (Task 12 empty-state + batch-menu gates). */
+    @Query("SELECT COUNT(*) FROM work")
+    fun countFlow(): Flow<Int>
+
+    /**
+     * Paged library source (Task 12): work + circle name + user progress in
+     * ONE indexed query. Room's built-in PagingSource (LimitOffsetDataSource)
+     * translates this into `SELECT ... LIMIT ? OFFSET ?` — a single statement
+     * per page, never the whole library (plan Must NOT). ORDER BY id (PK
+     * index, deterministic pages); Task 13 layers sorting on top. Invalidates
+     * automatically on work/circle/review table changes (scrape, remove,
+     * review edits) via Room's invalidation tracker.
+     */
+    @Query(
+        "SELECT w.id AS id, w.title AS title, c.name AS circleName, " +
+            "w.rateAverage2dp AS rateAverage2dp, w.missing AS missing, " +
+            "w.scrapeStatus AS scrapeStatus, r.progress AS progress, " +
+            "w.rootFolderUri AS rootFolderUri, w.relativeDir AS relativeDir " +
+            "FROM work w " +
+            "LEFT JOIN circle c ON c.id = w.circleId " +
+            "LEFT JOIN review r ON r.workId = w.id " +
+            "ORDER BY w.id",
+    )
+    fun pagingSource(): PagingSource<Int, WorkListItem>
 
     /**
      * Marks the given works as missing (Task 7 diff). Empty [ids] is a no-op —

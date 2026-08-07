@@ -1,6 +1,7 @@
 package com.oneasmr.app.data.local
 
 import android.content.Context
+import androidx.paging.PagingSource
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -23,6 +24,15 @@ object OneAsmrDatabaseModule {
 
     @Provides
     fun provideWorkDao(db: OneAsmrDatabase): WorkDao = db.workDao()
+
+    /**
+     * Task 12 library paging: a fresh [PagingSource] per Pager generation.
+     * Factory injection keeps LibraryViewModel unit-testable with a fake
+     * source while production always pages through Room's LimitOffsetPagingSource.
+     */
+    @Provides
+    fun provideWorkPagingSourceFactory(workDao: WorkDao): WorkPagingSourceFactory =
+        WorkPagingSourceFactory { workDao.pagingSource() }
 
     @Provides
     fun provideCircleDao(db: OneAsmrDatabase): CircleDao = db.circleDao()
