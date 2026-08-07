@@ -1,4 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">OneAsmr</string>
+
+    <!-- Player notification (plan Task 17). -->
+    <string name="playback_channel_name">播放</string>
+    <string name="player_action_sleep_timer">睡眠定时</string>
+    <string name="player_action_progress">标记进度</string>
+    <string name="player_action_progress_fmt">标记进度：%1$s</string>
 </resources>

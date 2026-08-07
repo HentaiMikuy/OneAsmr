@@ -1,6 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!--
+        Player foreground-service plumbing (plan Task 17, the task that OWNS
+        the manifest player-service wiring):
+        - FOREGROUND_SERVICE + FOREGROUND_SERVICE_MEDIA_PLAYBACK: targetSdk 34+
+          requires the specialized mediaPlayback permission alongside the
+          generic one for a mediaPlayback-type foreground service.
+        - POST_NOTIFICATIONS: runtime-requested from the player screen
+          (Android 13+). Media-session notifications are EXEMPT from it
+          (developer.android.com notification-permission media-session
+          exemption), so playback still works with the permission denied —
+          the QA failure path.
+        - WAKE_LOCK: ExoPlayer WAKE_MODE_LOCAL (screen-off playback stability).
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
     <application
         android:name=".OneAsmrApp"
         android:allowBackup="true"
@@ -27,6 +45,34 @@
                 <data android:scheme="oneasmr" />
             </intent-filter>
         </activity>
+
+        <!--
+            Playback core (plan Task 17): MediaSessionService hosting the
+            single ExoPlayer. exported=true is REQUIRED for media-button
+            routing (API 26-32 via MediaButtonReceiver, API 33+ via the
+            platform session). foregroundServiceType="mediaPlayback" + the
+            FOREGROUND_SERVICE_MEDIA_PLAYBACK permission make startForeground
+            legal on targetSdk 34+.
+        -->
+        <service
+            android:name=".player.PlaybackService"
+            android:exported="true"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaSessionService" />
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </service>
+
+        <!-- Bluetooth/wired-headset media-button routing on API 26-32;
+             API 33+ media buttons go through the platform session. -->
+        <receiver
+            android:name="androidx.media3.session.MediaButtonReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>
