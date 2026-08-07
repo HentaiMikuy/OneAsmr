@@ -75,11 +75,26 @@ data class WorkListItem(
 }
 
 /**
- * Task 12/13: creates a fresh [PagingSource] per Pager generation with the
- * full sort + search parameters (order field, direction, keyword, random
- * seed). Hilt provides the Room-backed instance; unit tests inject a fake
- * source over a plain list so Pager runs on the test's virtual scheduler (no
- * real IO threads).
+ * Task 15 library filter dimension, enforced at the DAO level (extended into
+ * the paging query — never in-memory filtering of a loaded page). Mirrors the
+ * kikoeru `GET /api/review?filter=` semantics: a review-joined predicate.
+ *
+ * - [Rated]: works the user rated (review row with a 1-5 rating).
+ * - [Progress]: works whose progress state equals [state]. `none` matches
+ *   BOTH explicit `progress = 'none'` rows and works without any review row
+ *   (a no-review work is trivially "no progress yet" — kikoeru's default).
+ */
+sealed interface WorkFilter {
+    data object Rated : WorkFilter
+    data class Progress(val state: ProgressState) : WorkFilter
+}
+
+/**
+ * Task 12/13/15: creates a fresh [PagingSource] per Pager generation with the
+ * full sort + search + filter parameters (order field, direction, keyword,
+ * random seed, filter). Hilt provides the Room-backed instance; unit tests
+ * inject a fake source over a plain list so Pager runs on the test's virtual
+ * scheduler (no real IO threads).
  */
 fun interface WorkPagingSourceFactory {
     fun create(
@@ -87,6 +102,7 @@ fun interface WorkPagingSourceFactory {
         descending: Boolean,
         keyword: String?,
         randomSeed: Long,
+        filter: WorkFilter?,
     ): PagingSource<Int, WorkListItem>
 }
 
@@ -268,7 +284,9 @@ interface WorkDao {
      * filtering of a loaded list. The keyword (when non-null) restricts rows
      * to the FTS5-trigram search hits (LIKE fallback when the FTS index is
      * unavailable), UNIONed across the four dimensions exactly like
-     * [search]; the order is applied by the database.
+     * [search]; the order is applied by the database. Task 15 adds the
+     * review-join [filter] predicate (progress state / rated-only) as a
+     * third composition axis — all three combine in one SQL statement.
      *
      * Ordering rules:
      * - every deterministic order appends `work.id` as tiebreaker, so works
@@ -286,11 +304,12 @@ interface WorkDao {
         descending: Boolean,
         keyword: String?,
         randomSeed: Long,
+        filter: WorkFilter? = null,
     ): PagingSource<Int, WorkListItem> {
-        val (sql, args) = buildLibrarySql(order, descending, keyword, randomSeed)
+        val (sql, args) = buildLibrarySql(order, descending, keyword, randomSeed, filter)
         val primary = pagingSourceRaw(SimpleSupportQuery(sql, args))
         val degraded = if (keyword != null && FtsStatus.available) {
-            val (likeSql, likeArgs) = buildLibrarySql(order, descending, keyword, randomSeed, forceLike = true)
+            val (likeSql, likeArgs) = buildLibrarySql(order, descending, keyword, randomSeed, filter, forceLike = true)
             pagingSourceRaw(SimpleSupportQuery(likeSql, likeArgs))
         } else {
             null
@@ -325,6 +344,7 @@ interface WorkDao {
         descending: Boolean,
         keyword: String?,
         randomSeed: Long,
+        filter: WorkFilter?,
         forceLike: Boolean = false,
     ): Pair<String, List<Any?>> {
         val searchSql = when {
@@ -338,6 +358,21 @@ interface WorkDao {
             " JOIN (SELECT DISTINCT workId FROM ($searchSql)) search_hits ON search_hits.workId = w.id"
         } else {
             ""
+        }
+        // Task 15 review filter over the already-LEFT-JOINed `r` alias.
+        // `none` also matches review-less works (r.progress IS NULL).
+        // Bind order: :stateName lands textually AFTER the search
+        // subquery's :query, matching the args appended below.
+        val whereClause = when (filter) {
+            null -> ""
+            WorkFilter.Rated -> " WHERE r.rating IS NOT NULL"
+            is WorkFilter.Progress ->
+                if (filter.state == ProgressState.none) {
+                    " WHERE (r.progress IS NULL OR r.progress = 'none')"
+                } else {
+                    args += filter.state.name
+                    " WHERE r.progress = :stateName"
+                }
         }
         val orderBy = when (order) {
             WorkOrder.RANDOM -> "${seededRandomKey(randomSeed)} ASC, w.id ASC"
@@ -359,6 +394,7 @@ interface WorkDao {
             "LEFT JOIN circle c ON c.id = w.circleId " +
             "LEFT JOIN review r ON r.workId = w.id" +
             join +
+            whereClause +
             " ORDER BY $orderBy"
         return sql to args
     }
@@ -513,9 +549,33 @@ interface WorkVaDao {
 }
 
 /**
+ * One review-list row (Task 15 "我标记的作品"): the review joined with its
+ * work's display data. The work join is LEFT so a review survives even when
+ * the work row is gone (or missing-flagged) — the list can always show the
+ * code and navigate to the detail page's review section.
+ */
+data class ReviewListItem(
+    val workId: String,
+    val rating: Int?,
+    val reviewText: String?,
+    val progress: ProgressState,
+    val updatedAt: Long,
+    /** Null when the work row is absent (review-only orphan). */
+    val title: String?,
+    val missing: Boolean,
+    val rootFolderUri: String?,
+    val relativeDir: String?,
+) {
+    /** Bare RJ/BJ/VJ code (KeySpec); falls back to the raw id for safety. */
+    val rjCode: String get() = KeySpec.parseWorkId(workId)?.rjCode ?: workId
+}
+
+/**
  * Reviews (rating/progress/review text). Ratings are validated here:
  * null or 1..5 only — 0 and 6 are rejected with [IllegalArgumentException]
  * (plan QA failure path: "rating 插入 0 或 6 时 DAO 层校验拒绝并抛预期异常").
+ * This DAO is the SINGLE enforcement point for the rating range; the UI
+ * only ever offers 1-5 stars.
  */
 @Dao
 interface ReviewDao {
@@ -535,8 +595,26 @@ interface ReviewDao {
     @Query("SELECT * FROM review WHERE workId = :workId")
     suspend fun getByWorkId(workId: String): Review?
 
+    /** Live single-review row (Task 15 detail page review section). */
+    @Query("SELECT * FROM review WHERE workId = :workId")
+    fun getByWorkIdFlow(workId: String): Flow<Review?>
+
     @Query("SELECT * FROM review ORDER BY updatedAt DESC")
     suspend fun getAll(): List<Review>
+
+    /**
+     * Live "我标记的作品" list, newest update first (kikoeru review-list
+     * semantics). LEFT JOIN keeps reviews of missing/removed works visible.
+     */
+    @Query(
+        "SELECT r.workId AS workId, r.rating AS rating, r.reviewText AS reviewText, " +
+            "r.progress AS progress, r.updatedAt AS updatedAt, " +
+            "w.title AS title, w.missing AS missing, " +
+            "w.rootFolderUri AS rootFolderUri, w.relativeDir AS relativeDir " +
+            "FROM review r LEFT JOIN work w ON w.id = r.workId " +
+            "ORDER BY r.updatedAt DESC",
+    )
+    fun getAllJoinedFlow(): Flow<List<ReviewListItem>>
 
     @Query("DELETE FROM review WHERE workId = :workId")
     suspend fun deleteByWorkId(workId: String)

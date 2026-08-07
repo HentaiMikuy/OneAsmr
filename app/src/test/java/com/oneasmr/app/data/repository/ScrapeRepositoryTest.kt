@@ -127,6 +127,7 @@ class ScrapeRepositoryTest {
             descending: Boolean,
             keyword: String?,
             randomSeed: Long,
+            filter: com.oneasmr.app.data.local.WorkFilter?,
         ): PagingSource<Int, WorkListItem> = throw UnsupportedOperationException("not used by ScrapeRepository")
         override suspend fun getListItemById(id: String): WorkListItem? = null
         override suspend fun markMissingInternal(ids: List<String>, now: Long) = Unit

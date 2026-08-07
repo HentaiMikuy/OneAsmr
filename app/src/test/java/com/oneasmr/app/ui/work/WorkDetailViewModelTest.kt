@@ -5,6 +5,8 @@ import androidx.lifecycle.viewModelScope
 import androidx.room.Room
 import com.oneasmr.app.data.local.Circle
 import com.oneasmr.app.data.local.OneAsmrDatabase
+import com.oneasmr.app.data.local.ProgressState
+import com.oneasmr.app.data.local.Review
 import com.oneasmr.app.data.local.ScrapeStatus
 import com.oneasmr.app.data.local.Tag
 import com.oneasmr.app.data.local.TestDataStoreFile
@@ -98,6 +100,7 @@ class WorkDetailViewModelTest {
             vaDao = db.vaDao(),
             workTagDao = db.workTagDao(),
             workVaDao = db.workVaDao(),
+            reviewDao = db.reviewDao(),
             rootRepository = rootRepository,
             scraper = scraper,
             fsFactory = DocumentFsFactory { fs },
@@ -432,6 +435,144 @@ class WorkDetailViewModelTest {
         // No seed: workId never appears in the DB.
         val state = viewModel.uiState.first { !it.loading && it.work == null }
         assertNull(state.work)
+    }
+
+    private fun seedReview(rating: Int? = null, progress: ProgressState = ProgressState.none, text: String? = null, updatedAt: Long = 100L) {
+        kotlinx.coroutines.runBlocking {
+            db.reviewDao().upsert(Review(workId, rating, text, progress, updatedAt))
+        }
+    }
+
+    @Test
+    fun `existing review loads into the detail state with the draft initialized`() = runTest(scheduler) {
+        seedWork()
+        seedReview(rating = 4, progress = ProgressState.listening, text = "很好听", updatedAt = 500L)
+        scheduler.advanceUntilIdle()
+
+        val state = viewModel.uiState.first { it.review != null && it.reviewInitialized }
+        assertEquals(4, state.review?.rating)
+        assertEquals(ProgressState.listening, state.review?.progress)
+        assertEquals("很好听", state.review?.reviewText)
+        assertEquals("很好听", state.reviewText)
+    }
+
+    @Test
+    fun `setRating persists the rating through the dao`() = runTest(scheduler) {
+        seedWork()
+        scheduler.advanceUntilIdle()
+        viewModel.uiState.first { it.reviewInitialized }
+
+        viewModel.setRating(5)
+        val state = viewModel.uiState.first { it.review?.rating == 5 }
+        assertEquals(1_000_000L, state.review?.updatedAt) // injectable clock
+        val row = kotlinx.coroutines.runBlocking { db.reviewDao().getByWorkId(workId)!! }
+        assertEquals(5, row.rating)
+        assertEquals(ProgressState.none, row.progress)
+    }
+
+    @Test
+    fun `setRating keeps an existing rating and progress`() = runTest(scheduler) {
+        seedWork()
+        seedReview(rating = 3, progress = ProgressState.replay, text = "老评语")
+        scheduler.advanceUntilIdle()
+        viewModel.uiState.first { it.review != null && it.reviewInitialized }
+
+        viewModel.setRating(4)
+        viewModel.uiState.first { it.review?.rating == 4 }
+        val row = kotlinx.coroutines.runBlocking { db.reviewDao().getByWorkId(workId)!! }
+        assertEquals(4, row.rating)
+        assertEquals(ProgressState.replay, row.progress)
+        assertEquals("老评语", row.reviewText)
+    }
+
+    @Test
+    fun `setProgress persists the state and preserves rating and text`() = runTest(scheduler) {
+        seedWork()
+        seedReview(rating = 2, text = "还行")
+        scheduler.advanceUntilIdle()
+        viewModel.uiState.first { it.review != null && it.reviewInitialized }
+
+        viewModel.setProgress(ProgressState.listened)
+        viewModel.uiState.first { it.review?.progress == ProgressState.listened }
+        val row = kotlinx.coroutines.runBlocking { db.reviewDao().getByWorkId(workId)!! }
+        assertEquals(ProgressState.listened, row.progress)
+        assertEquals(2, row.rating)
+        assertEquals("还行", row.reviewText)
+    }
+
+    @Test
+    fun `typing a draft and saving persists the text`() = runTest(scheduler) {
+        seedWork()
+        scheduler.advanceUntilIdle()
+        viewModel.uiState.first { it.reviewInitialized }
+
+        viewModel.onReviewTextChange("夜里听很助眠")
+        viewModel.saveReviewText()
+        viewModel.uiState.first { it.review?.reviewText == "夜里听很助眠" }
+        val row = kotlinx.coroutines.runBlocking { db.reviewDao().getByWorkId(workId)!! }
+        assertEquals("夜里听很助眠", row.reviewText)
+        assertEquals(1_000_000L, row.updatedAt)
+    }
+
+    @Test
+    fun `rating tap persists the current draft text as well`() = runTest(scheduler) {
+        seedWork()
+        scheduler.advanceUntilIdle()
+        viewModel.uiState.first { it.reviewInitialized }
+
+        viewModel.onReviewTextChange("草稿还没点保存")
+        viewModel.setRating(4)
+        viewModel.uiState.first { it.review?.rating == 4 }
+        val row = kotlinx.coroutines.runBlocking { db.reviewDao().getByWorkId(workId)!! }
+        assertEquals(4, row.rating)
+        assertEquals("草稿还没点保存", row.reviewText)
+    }
+
+    @Test
+    fun `draft initializes once and later db writes never clobber typing`() = runTest(scheduler) {
+        seedWork()
+        seedReview(text = "旧评语")
+        scheduler.advanceUntilIdle()
+        val state = viewModel.uiState.first { it.reviewInitialized }
+        assertEquals("旧评语", state.reviewText)
+
+        // A direct DB write (e.g. another screen) updates state.review but
+        // must NOT reset the user's in-progress draft.
+        kotlinx.coroutines.runBlocking {
+            db.reviewDao().upsert(Review(workId, rating = 1, reviewText = "别处改的", progress = ProgressState.none, updatedAt = 999L))
+        }
+        val after = viewModel.uiState.first { it.review?.updatedAt == 999L }
+        assertEquals("别处改的", after.review?.reviewText)
+        assertEquals("旧评语", after.reviewText)
+    }
+
+    @Test
+    fun `clearReview deletes the row and resets the draft`() = runTest(scheduler) {
+        seedWork()
+        seedReview(rating = 5, progress = ProgressState.marked, text = "删我")
+        scheduler.advanceUntilIdle()
+        viewModel.uiState.first { it.review != null && it.reviewInitialized }
+
+        viewModel.clearReview()
+        val state = viewModel.uiState.first { it.review == null }
+        assertNull(kotlinx.coroutines.runBlocking { db.reviewDao().getByWorkId(workId) })
+        assertEquals("", state.reviewText)
+    }
+
+    @Test
+    fun `missing work keeps its review viewable and clearable`() = runTest(scheduler) {
+        seedWork(missing = true)
+        seedReview(rating = 4, progress = ProgressState.postponed, text = "文件没了但标记还在")
+        scheduler.advanceUntilIdle()
+
+        val state = viewModel.uiState.first { it.review != null && it.reviewInitialized }
+        assertEquals(InvalidReason.MissingWork, state.invalid)
+        assertEquals(4, state.review?.rating)
+
+        viewModel.clearReview()
+        viewModel.uiState.first { it.review == null }
+        assertNull(kotlinx.coroutines.runBlocking { db.reviewDao().getByWorkId(workId) })
+        assertEquals(InvalidReason.MissingWork, viewModel.uiState.value.invalid)
     }
 
     private class FakePermissionStore : ScanRootPermissionStore {

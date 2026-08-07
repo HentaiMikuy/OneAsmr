@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.oneasmr.app.data.local.KeySpec
+import com.oneasmr.app.data.local.ProgressState
 import com.oneasmr.app.data.local.ScrapeStatus
 import com.oneasmr.app.data.local.Tag
 import com.oneasmr.app.data.local.Va
@@ -102,6 +103,16 @@ fun WorkDetailScreen(
             invalid = state.invalid!!,
             refreshing = state.refreshing,
             onRescan = viewModel::refreshWork,
+            reviewSection = {
+                ReviewEditorSection(
+                    state = state,
+                    onRating = viewModel::setRating,
+                    onProgress = viewModel::setProgress,
+                    onTextChange = viewModel::onReviewTextChange,
+                    onSaveText = viewModel::saveReviewText,
+                    onClear = viewModel::clearReview,
+                )
+            },
         )
         else -> DetailContent(
             state = state,
@@ -116,6 +127,11 @@ fun WorkDetailScreen(
             onOpenText = onOpenText,
             onOpenImage = onOpenImage,
             onOpenBrowse = onOpenBrowse,
+            onReviewRating = viewModel::setRating,
+            onReviewProgress = viewModel::setProgress,
+            onReviewTextChange = viewModel::onReviewTextChange,
+            onReviewSaveText = viewModel::saveReviewText,
+            onReviewClear = viewModel::clearReview,
         )
     }
 
@@ -157,6 +173,7 @@ private fun InvalidWorkState(
     invalid: InvalidReason,
     refreshing: Boolean,
     onRescan: () -> Unit,
+    reviewSection: @Composable () -> Unit,
 ) {
     Column(
         Modifier
@@ -212,6 +229,8 @@ private fun InvalidWorkState(
             }
             Text(if (refreshing) "正在重新扫描…" else "重新扫描此作品")
         }
+        Spacer(Modifier.height(8.dp))
+        reviewSection()
     }
 }
 
@@ -226,6 +245,11 @@ private fun DetailContent(
     onOpenText: (String, String) -> Unit,
     onOpenImage: (String, String) -> Unit,
     onOpenBrowse: (String, String) -> Unit,
+    onReviewRating: (Int?) -> Unit,
+    onReviewProgress: (ProgressState) -> Unit,
+    onReviewTextChange: (String) -> Unit,
+    onReviewSaveText: () -> Unit,
+    onReviewClear: () -> Unit,
 ) {
     val work = state.work!!
     val treeRows = remember(state.tree) {
@@ -243,7 +267,14 @@ private fun DetailContent(
             TagChips(tags = state.tags, onOpenBrowse = onOpenBrowse)
         }
         item(key = "review_slot") {
-            ReviewSlot()
+            ReviewEditorSection(
+                state = state,
+                onRating = onReviewRating,
+                onProgress = onReviewProgress,
+                onTextChange = onReviewTextChange,
+                onSaveText = onReviewSaveText,
+                onClear = onReviewClear,
+            )
         }
         item(key = "tree_header") {
             TreeHeader(state = state)
@@ -445,27 +476,6 @@ private fun DimensionChip(label: String, onClick: () -> Unit) {
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSecondaryContainer,
         )
-    }
-}
-
-@Composable
-private fun ReviewSlot() {
-    Surface(
-        shape = MaterialTheme.shapes.medium,
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-    ) {
-        Column(Modifier.padding(12.dp)) {
-            Text("评分与进度", style = MaterialTheme.typography.titleSmall)
-            Spacer(Modifier.height(2.dp))
-            Text(
-                "评分、收听进度与评语将在后续版本提供（任务 15 接入）",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
     }
 }
 

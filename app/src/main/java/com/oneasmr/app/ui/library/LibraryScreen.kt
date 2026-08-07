@@ -78,6 +78,7 @@ import com.oneasmr.app.data.local.OneAsmrDatabase
 import com.oneasmr.app.data.local.ProgressState
 import com.oneasmr.app.data.local.ScrapeStatus
 import com.oneasmr.app.data.local.WorkDao
+import com.oneasmr.app.data.local.WorkFilter
 import com.oneasmr.app.data.local.WorkListItem
 import com.oneasmr.app.data.local.WorkOrder
 import com.oneasmr.app.data.local.WorkPagingSourceFactory
@@ -96,6 +97,7 @@ import com.oneasmr.app.data.scanner.ScanProgressStore
 import com.oneasmr.app.data.scanner.removeWork
 import com.oneasmr.app.ui.common.CoverImage
 import com.oneasmr.app.ui.common.formatScanSummary
+import com.oneasmr.app.ui.common.uiLabel
 import com.oneasmr.app.worker.ScanController
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
@@ -106,8 +108,10 @@ import javax.inject.Inject
 import kotlin.random.Random
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
@@ -125,6 +129,7 @@ import kotlinx.coroutines.launch
 fun LibraryScreen(
     onOpenRootFolders: () -> Unit = {},
     onOpenWork: (String) -> Unit = {},
+    onOpenReviews: () -> Unit = {},
     viewModel: LibraryViewModel = hiltViewModel(),
     scrapeViewModel: ScrapeViewModel = hiltViewModel(),
 ) {
@@ -133,6 +138,7 @@ fun LibraryScreen(
     val viewMode by viewModel.libraryViewMode.collectAsStateWithLifecycle()
     val sortOrder by viewModel.sortOrder.collectAsStateWithLifecycle()
     val sortDescending by viewModel.sortDescending.collectAsStateWithLifecycle()
+    val libraryFilter by viewModel.libraryFilter.collectAsStateWithLifecycle()
     var removeCandidate by remember { mutableStateOf<WorkListItem?>(null) }
     var forceRescrapeCandidate by remember { mutableStateOf<WorkListItem?>(null) }
     var showBatchMenu by remember { mutableStateOf(false) }
@@ -180,6 +186,12 @@ fun LibraryScreen(
                     onSelect = viewModel::setSort,
                 )
             }
+            if (state.workCount > 0) {
+                FilterMenu(
+                    filter = libraryFilter,
+                    onSelect = viewModel::setFilter,
+                )
+            }
             if (state.hasRoots && state.progress.phase != ScanPhase.SCANNING) {
                 TextButton(onClick = viewModel::startScan) {
                     Icon(Icons.Filled.Refresh, contentDescription = null)
@@ -198,6 +210,14 @@ fun LibraryScreen(
                     expanded = showBatchMenu,
                     onDismissRequest = { showBatchMenu = false },
                 ) {
+                    DropdownMenuItem(
+                        text = { Text("我标记的作品") },
+                        onClick = {
+                            showBatchMenu = false
+                            onOpenReviews()
+                        },
+                    )
+                    HorizontalDivider()
                     DropdownMenuItem(
                         text = { Text("批量刮削未刮削作品") },
                         onClick = {
@@ -835,14 +855,7 @@ private fun ScrapeButton(item: WorkListItem, scraping: Boolean, onScrape: () -> 
 }
 
 /** Chinese label for the six listening states (aligned with kikoeru semantics). */
-private fun progressLabel(state: ProgressState): String = when (state) {
-    ProgressState.none -> ""
-    ProgressState.marked -> "已标记"
-    ProgressState.listening -> "收听中"
-    ProgressState.listened -> "已听完"
-    ProgressState.replay -> "重听中"
-    ProgressState.postponed -> "搁置"
-}
+private fun progressLabel(state: ProgressState): String = state.uiLabel()
 
 /** Grid/list toggle; the selection persists via the DataStore-backed ViewModel. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1007,6 +1020,77 @@ internal fun SortMenu(
 }
 
 /**
+ * Task 15 library filter menu: no filter ("全部") / rated-only ("已评分") /
+ * one entry per progress state. The selection is DAO-level (a WHERE predicate
+ * in the paging query, see [WorkDao.pagingSource]) — never in-memory.
+ */
+@Composable
+internal fun FilterMenu(
+    filter: WorkFilter?,
+    onSelect: (WorkFilter?) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box(modifier) {
+        TextButton(onClick = { expanded = true }) {
+            Text(filterLabel(filter))
+            Icon(Icons.Filled.ArrowDropDown, contentDescription = null)
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            DropdownMenuItem(
+                text = { Text("全部") },
+                trailingIcon = if (filter == null) {
+                    { Icon(Icons.Filled.Check, contentDescription = null) }
+                } else {
+                    null
+                },
+                onClick = {
+                    expanded = false
+                    onSelect(null)
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("已评分") },
+                trailingIcon = if (filter == WorkFilter.Rated) {
+                    { Icon(Icons.Filled.Check, contentDescription = null) }
+                } else {
+                    null
+                },
+                onClick = {
+                    expanded = false
+                    onSelect(WorkFilter.Rated)
+                },
+            )
+            HorizontalDivider()
+            ProgressState.entries.forEach { state ->
+                DropdownMenuItem(
+                    text = { Text("进度：${state.uiLabel()}") },
+                    trailingIcon = if (filter == WorkFilter.Progress(state)) {
+                        { Icon(Icons.Filled.Check, contentDescription = null) }
+                    } else {
+                        null
+                    },
+                    onClick = {
+                        expanded = false
+                        onSelect(WorkFilter.Progress(state))
+                    },
+                )
+            }
+        }
+    }
+}
+
+/** FilterMenu button label. */
+internal fun filterLabel(filter: WorkFilter?): String = when (filter) {
+    null -> "筛选"
+    WorkFilter.Rated -> "已评分"
+    is WorkFilter.Progress -> "进度：${filter.state.uiLabel()}"
+}
+
+/**
  * Task 12/13 library ViewModel: paged works ([pagingDataFlow], Paging 3 over
  * Room's built-in PagingSource — LIMIT/OFFSET, never the whole table; ordered
  * by the persisted sort selection, recreated on change) plus the header state
@@ -1057,14 +1141,22 @@ class LibraryViewModel @Inject constructor(
      */
     private val randomSeed: Long = Random.nextLong()
 
-    /** Paged works for the grid/list; recreated when the sort selection changes. */
+    /** Task 15 review filter selection; session state (default: no filter). */
+    private val filter = MutableStateFlow<WorkFilter?>(null)
+    val libraryFilter: StateFlow<WorkFilter?> = filter.asStateFlow()
+
+    fun setFilter(value: WorkFilter?) {
+        filter.value = value
+    }
+
+    /** Paged works for the grid/list; recreated when sort or filter changes. */
     val pagingDataFlow: Flow<PagingData<WorkListItem>> =
-        combine(sortOrder, sortDescending) { order, descending -> order to descending }
-            .flatMapLatest { (order, descending) ->
+        combine(sortOrder, sortDescending, filter) { order, descending, filter -> Triple(order, descending, filter) }
+            .flatMapLatest { (order, descending, filter) ->
                 Pager(
                     config = PagingConfig(pageSize = PAGE_SIZE),
                     pagingSourceFactory = {
-                        pagingSourceFactory.create(order, descending, keyword = null, randomSeed = randomSeed)
+                        pagingSourceFactory.create(order, descending, keyword = null, randomSeed = randomSeed, filter = filter)
                     },
                 ).flow
             }

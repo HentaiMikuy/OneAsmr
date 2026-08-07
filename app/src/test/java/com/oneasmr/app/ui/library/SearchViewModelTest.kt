@@ -94,7 +94,7 @@ class SearchViewModelTest {
         viewModel = SearchViewModel(
             workDao = db.workDao(),
             settingsStore = settings,
-            pagingSourceFactory = WorkPagingSourceFactory { order, descending, keyword, randomSeed ->
+            pagingSourceFactory = WorkPagingSourceFactory { order, descending, keyword, randomSeed, _ ->
                 db.workDao().pagingSource(order, descending, keyword, randomSeed)
             },
         )
@@ -474,7 +474,7 @@ class SearchViewModelTest {
         val restarted = SearchViewModel(
             workDao = db.workDao(),
             settingsStore = restartedStore,
-            pagingSourceFactory = WorkPagingSourceFactory { o, d, k, s ->
+            pagingSourceFactory = WorkPagingSourceFactory { o, d, k, s, _ ->
                 db.workDao().pagingSource(o, d, k, s)
             },
         )

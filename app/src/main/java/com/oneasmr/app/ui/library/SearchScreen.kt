@@ -175,7 +175,7 @@ class SearchViewModel @Inject constructor(
                 Pager(
                     config = PagingConfig(pageSize = PAGE_SIZE),
                     pagingSourceFactory = {
-                        pagingSourceFactory.create(order, descending, meta.term, randomSeed)
+                        pagingSourceFactory.create(order, descending, meta.term, randomSeed, filter = null)
                     },
                 ).flow.map { meta.term to it }
             } else {

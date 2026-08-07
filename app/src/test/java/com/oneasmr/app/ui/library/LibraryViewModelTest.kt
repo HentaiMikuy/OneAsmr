@@ -12,6 +12,7 @@ import com.oneasmr.app.data.local.ProgressState
 import com.oneasmr.app.data.local.Review
 import com.oneasmr.app.data.local.ScrapeStatus
 import com.oneasmr.app.data.local.TestDataStoreFile
+import com.oneasmr.app.data.local.WorkFilter
 import com.oneasmr.app.data.local.WorkListItem
 import com.oneasmr.app.data.local.WorkOrder
 import com.oneasmr.app.data.local.WorkPagingSourceFactory
@@ -77,6 +78,7 @@ class LibraryViewModelTest {
     private lateinit var viewModel: LibraryViewModel
     private lateinit var scheduler: kotlinx.coroutines.test.TestCoroutineScheduler
     private lateinit var dispatcher: TestDispatcher
+    private var lastFactoryFilter: WorkFilter? = null
 
     @Before
     fun setUp() {
@@ -112,7 +114,10 @@ class LibraryViewModelTest {
             bookkeeping = bookkeeping,
             scanController = controller,
             settingsStore = settings,
-            pagingSourceFactory = WorkPagingSourceFactory { _, _, _, _ -> FakePagingSource(sampleItems) },
+            pagingSourceFactory = WorkPagingSourceFactory { _, _, _, _, filter ->
+                lastFactoryFilter = filter
+                FakePagingSource(sampleItems)
+            },
         )
     }
 
@@ -358,7 +363,7 @@ class LibraryViewModelTest {
             bookkeeping = bookkeeping,
             scanController = controller,
             settingsStore = restarted,
-            pagingSourceFactory = WorkPagingSourceFactory { _, _, _, _ -> FakePagingSource(emptyList()) },
+            pagingSourceFactory = WorkPagingSourceFactory { _, _, _, _, _ -> FakePagingSource(emptyList()) },
         )
         assertEquals(LibraryViewMode.LIST, newVm.libraryViewMode.first { it == LibraryViewMode.LIST })
         newVm.viewModelScope.cancel()
@@ -392,7 +397,7 @@ class LibraryViewModelTest {
             bookkeeping = bookkeeping,
             scanController = controller,
             settingsStore = restarted,
-            pagingSourceFactory = WorkPagingSourceFactory { _, _, _, _ -> FakePagingSource(emptyList()) },
+            pagingSourceFactory = WorkPagingSourceFactory { _, _, _, _, _ -> FakePagingSource(emptyList()) },
         )
         assertEquals(WorkOrder.TITLE_SORT_KEY, newVm.sortOrder.first { it == WorkOrder.TITLE_SORT_KEY })
         assertEquals(true, newVm.sortDescending.first { it })
@@ -415,5 +420,41 @@ class LibraryViewModelTest {
         // pager takes over — assert data flows, not an exact page size.
         val after = awaitPagedItems(30)
         assertTrue(after.size >= 30)
+    }
+
+    @Test
+    fun `filter defaults to no filter`() = runTest(scheduler) {
+        assertEquals(null, viewModel.libraryFilter.value)
+    }
+
+    @Test
+    fun `setFilter forwards the selection to the paging source factory`() = runTest(scheduler) {
+        newViewModel(sampleItems(30))
+        awaitPagedItems(30)
+        assertEquals(null, lastFactoryFilter)
+
+        viewModel.setFilter(WorkFilter.Rated)
+        scheduler.advanceUntilIdle()
+        // The pager restarts with a fresh source carrying the filter — assert
+        // the FACTORY received it (the fake source ignores it), and paging
+        // still flows after the switch.
+        assertEquals(WorkFilter.Rated, lastFactoryFilter)
+        assertTrue(awaitPagedItems(30).isNotEmpty())
+    }
+
+    @Test
+    fun `progress filter forwards the state and still pages`() = runTest(scheduler) {
+        newViewModel(sampleItems(30))
+        awaitPagedItems(30)
+
+        viewModel.setFilter(WorkFilter.Progress(ProgressState.listening))
+        scheduler.advanceUntilIdle()
+
+        assertEquals(WorkFilter.Progress(ProgressState.listening), lastFactoryFilter)
+        assertTrue(awaitPagedItems(30).isNotEmpty())
+
+        viewModel.setFilter(null)
+        scheduler.advanceUntilIdle()
+        assertEquals(null, lastFactoryFilter)
     }
 }

@@ -32,6 +32,7 @@ import com.oneasmr.app.ui.library.LibraryScreen
 import com.oneasmr.app.ui.library.SearchScreen
 import com.oneasmr.app.ui.player.PlayerScreen
 import com.oneasmr.app.ui.player.VideoPlayerScreen
+import com.oneasmr.app.ui.reviews.ReviewListScreen
 import com.oneasmr.app.ui.settings.ScanRootsScreen
 import com.oneasmr.app.ui.settings.ServerLoginScreen
 import com.oneasmr.app.ui.settings.SettingsScreen
@@ -49,6 +50,7 @@ object Routes {
     const val TEXT_VIEWER = "text/{workId}/{documentUri}"
     const val IMAGE_VIEWER = "image/{workId}/{documentUri}"
     const val BROWSE = "browse/{dimension}/{id}"
+    const val REVIEWS = "reviews"
     const val SETTINGS = "settings"
     const val SERVER_LOGIN = "server_login"
     const val SCAN_ROOTS = "scan_roots"
@@ -78,6 +80,9 @@ object Routes {
     /** Dimension browse stub route (Task 16 fills the destination). */
     fun browse(dimension: String, id: String): String =
         "browse/${android.net.Uri.encode(dimension)}/${android.net.Uri.encode(id)}"
+
+    /** Task 15 "我标记的作品" review list. */
+    fun reviews(): String = "reviews"
 }
 
 /**
@@ -130,6 +135,15 @@ fun OneAsmrNavHost(
             ) {
                 LibraryScreen(
                     onOpenRootFolders = { navController.navigate(Routes.SCAN_ROOTS) },
+                    onOpenWork = { workId -> navController.navigate(Routes.workDetail(workId)) },
+                    onOpenReviews = { navController.navigate(Routes.reviews()) },
+                )
+            }
+            composable(
+                route = Routes.REVIEWS,
+                deepLinks = listOf(navDeepLink { uriPattern = "oneasmr://reviews" }),
+            ) {
+                ReviewListScreen(
                     onOpenWork = { workId -> navController.navigate(Routes.workDetail(workId)) },
                 )
             }

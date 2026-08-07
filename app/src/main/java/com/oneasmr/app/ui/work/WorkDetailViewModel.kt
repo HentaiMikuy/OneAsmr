@@ -6,6 +6,9 @@ import androidx.lifecycle.viewModelScope
 import com.oneasmr.app.data.local.CircleDao
 import com.oneasmr.app.data.local.KeySpec
 import com.oneasmr.app.data.local.OneAsmrDatabase
+import com.oneasmr.app.data.local.ProgressState
+import com.oneasmr.app.data.local.Review
+import com.oneasmr.app.data.local.ReviewDao
 import com.oneasmr.app.data.local.Tag
 import com.oneasmr.app.data.local.TagDao
 import com.oneasmr.app.data.local.Va
@@ -74,6 +77,12 @@ data class WorkDetailUiState(
     val scrapeMessage: String? = null,
     val refreshing: Boolean = false,
     val rescanMessage: String? = null,
+    /** Live review row (Task 15); null = no review yet. */
+    val review: Review? = null,
+    /** Editable review-text draft (user-owned once initialized; see VM init). */
+    val reviewText: String = "",
+    /** The draft was seeded from the stored review — never clobber typing again. */
+    val reviewInitialized: Boolean = false,
 ) {
     /** Derived invalid state — the screen renders the rescan CTA instead of content. */
     val invalid: InvalidReason? get() = when {
@@ -114,6 +123,7 @@ class WorkDetailViewModel @Inject constructor(
     private val vaDao: VaDao,
     private val workTagDao: WorkTagDao,
     private val workVaDao: WorkVaDao,
+    private val reviewDao: ReviewDao,
     private val rootRepository: ScanRootRepository,
     private val scraper: SingleWorkScraper,
     private val fsFactory: DocumentFsFactory,
@@ -129,12 +139,13 @@ class WorkDetailViewModel @Inject constructor(
         vaDao: VaDao,
         workTagDao: WorkTagDao,
         workVaDao: WorkVaDao,
+        reviewDao: ReviewDao,
         rootRepository: ScanRootRepository,
         scraper: SingleWorkScraper,
         fsFactory: DocumentFsFactory,
         ioDispatcher: CoroutineDispatcher,
         clock: () -> Long,
-    ) : this(savedStateHandle, workDao, db, circleDao, tagDao, vaDao, workTagDao, workVaDao, rootRepository, scraper, fsFactory) {
+    ) : this(savedStateHandle, workDao, db, circleDao, tagDao, vaDao, workTagDao, workVaDao, reviewDao, rootRepository, scraper, fsFactory) {
         this.ioDispatcher = ioDispatcher
         this.clock = clock
     }
@@ -165,6 +176,61 @@ class WorkDetailViewModel @Inject constructor(
                 loadMetadata(work)
                 maybeLoadTree(work)
             }
+        }
+        viewModelScope.launch {
+            reviewDao.getByWorkIdFlow(workId).collect { review ->
+                _uiState.update { state ->
+                    if (!state.reviewInitialized) {
+                        state.copy(
+                            review = review,
+                            reviewText = review?.reviewText ?: "",
+                            reviewInitialized = true,
+                        )
+                    } else {
+                        state.copy(review = review)
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Task 15 review persistence: rating / progress / review text are ONE
+     * review row upserted through the validated [ReviewDao] (the DAO is the
+     * single enforcement point for the 1-5 rating range — the stars UI only
+     * ever produces 1-5). The draft text always rides along, so tapping a
+     * star can never drop an unsaved comment. updatedAt = injectable clock.
+     */
+    fun setRating(rating: Int?) {
+        val state = _uiState.value
+        persistReview(rating = rating, progress = state.review?.progress ?: ProgressState.none)
+    }
+
+    fun setProgress(progress: ProgressState) {
+        val state = _uiState.value
+        persistReview(rating = state.review?.rating, progress = progress)
+    }
+
+    fun onReviewTextChange(text: String) {
+        _uiState.update { it.copy(reviewText = text) }
+    }
+
+    fun saveReviewText() {
+        val state = _uiState.value
+        persistReview(rating = state.review?.rating, progress = state.review?.progress ?: ProgressState.none)
+    }
+
+    /** Deletes the review row (missing works included — plan failure path). */
+    fun clearReview() {
+        viewModelScope.launch {
+            reviewDao.deleteByWorkId(workId)
+            _uiState.update { it.copy(review = null, reviewText = "", reviewInitialized = true) }
+        }
+    }
+
+    private fun persistReview(rating: Int?, progress: ProgressState) {
+        viewModelScope.launch {
+            reviewDao.upsert(Review(workId = workId, rating = rating, reviewText = _uiState.value.reviewText, progress = progress, updatedAt = clock()))
         }
     }
 
