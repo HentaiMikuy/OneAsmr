@@ -19,12 +19,14 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -47,8 +49,16 @@ import com.oneasmr.app.data.repository.AddRootResult
 import com.oneasmr.app.data.repository.RootGrantStatus
 import com.oneasmr.app.data.repository.ScanRootEntry
 import com.oneasmr.app.data.repository.ScanRootRepository
+import com.oneasmr.app.data.scanner.RescanSummary
+import com.oneasmr.app.data.scanner.ScanBookkeepingStore
+import com.oneasmr.app.data.scanner.ScanPhase
+import com.oneasmr.app.data.scanner.ScanProgress
+import com.oneasmr.app.data.scanner.ScanProgressStore
+import com.oneasmr.app.ui.common.formatScanSummary
+import com.oneasmr.app.worker.ScanController
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
@@ -63,6 +73,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun ScanRootsScreen(viewModel: ScanRootsViewModel = hiltViewModel()) {
     val entries by viewModel.entries.collectAsStateWithLifecycle()
+    val progress by viewModel.progress.collectAsStateWithLifecycle()
+    val lastSummary by viewModel.lastSummary.collectAsStateWithLifecycle(initialValue = null)
     var removeCandidate by remember { mutableStateOf<ScanRootEntry?>(null) }
 
     val pickFolder = rememberLauncherForActivityResult(
@@ -93,6 +105,15 @@ fun ScanRootsScreen(viewModel: ScanRootsViewModel = hiltViewModel()) {
         }
         Spacer(Modifier.height(16.dp))
 
+        ScanControls(
+            progress = progress,
+            lastSummary = lastSummary,
+            hasAuthorizedRoot = entries.any { it.status == RootGrantStatus.AUTHORIZED },
+            onScan = viewModel::startScan,
+            onCancel = viewModel::cancelScan,
+        )
+        Spacer(Modifier.height(16.dp))
+
         if (entries.isEmpty()) {
             Text(
                 "尚未添加根文件夹",
@@ -115,7 +136,7 @@ fun ScanRootsScreen(viewModel: ScanRootsViewModel = hiltViewModel()) {
         AlertDialog(
             onDismissRequest = { removeCandidate = null },
             title = { Text("移除根文件夹？") },
-            text = { Text("将解除「${candidate.root.displayName}」的读取授权并移出列表，不会删除任何文件。") },
+            text = { Text("仅解除授权，不删除文件。将解除「${candidate.root.displayName}」的读取授权并移出列表。") },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -127,6 +148,62 @@ fun ScanRootsScreen(viewModel: ScanRootsViewModel = hiltViewModel()) {
             dismissButton = {
                 TextButton(onClick = { removeCandidate = null }) { Text("取消") }
             },
+        )
+    }
+}
+
+@Composable
+private fun ScanControls(
+    progress: ScanProgress,
+    lastSummary: RescanSummary?,
+    hasAuthorizedRoot: Boolean,
+    onScan: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    if (progress.phase == ScanPhase.SCANNING) {
+        Column(Modifier.fillMaxWidth()) {
+            LinearProgressIndicator(Modifier.fillMaxWidth())
+            Spacer(Modifier.height(8.dp))
+            Text("正在扫描…", style = MaterialTheme.typography.titleMedium)
+            val dir = if (progress.currentDir.isEmpty()) "（根目录）" else progress.currentDir
+            Text(
+                "${progress.rootDisplayName ?: ""} / $dir",
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                "已发现 ${progress.worksFound} 个作品 · 根文件夹 ${progress.rootsTotal} 个" +
+                    if (progress.warningCount > 0) " · 警告 ${progress.warningCount}" else "",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(4.dp))
+            TextButton(onClick = onCancel) { Text("取消扫描") }
+        }
+        return
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Button(onClick = onScan, enabled = hasAuthorizedRoot) {
+            Icon(Icons.Filled.Refresh, contentDescription = null)
+            Spacer(Modifier.width(4.dp))
+            Text("扫描作品库")
+        }
+        if (!hasAuthorizedRoot) {
+            Spacer(Modifier.width(8.dp))
+            Text(
+                "请先添加根文件夹",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+    if (lastSummary != null) {
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "上次扫描：${formatScanSummary(lastSummary)}",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }
@@ -190,8 +267,16 @@ private fun RootFolderRow(
 @HiltViewModel
 class ScanRootsViewModel @Inject constructor(
     private val repository: ScanRootRepository,
+    private val bookkeeping: ScanBookkeepingStore,
+    private val scanController: ScanController,
 ) : ViewModel() {
     val entries: StateFlow<List<ScanRootEntry>> = repository.entries
+
+    /** Live scan progress (Task 8); process-lifetime singleton, see [ScanProgressStore]. */
+    val progress: StateFlow<ScanProgress> = ScanProgressStore.state
+
+    /** Outcome of the most recent completed scan, durable across restarts. */
+    val lastSummary: Flow<RescanSummary?> = bookkeeping.lastSummary
 
     init {
         refreshValidation()
@@ -214,5 +299,15 @@ class ScanRootsViewModel @Inject constructor(
 
     fun remove(treeUri: String) {
         viewModelScope.launch { repository.removeRoot(treeUri) }
+    }
+
+    /** Enqueues a fresh full scan; no-op (returns 0) when no authorized root exists. */
+    fun startScan() {
+        scanController.startScan()
+    }
+
+    /** Cancels the running scan; committed works remain in the database. */
+    fun cancelScan() {
+        scanController.cancelScan()
     }
 }

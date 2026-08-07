@@ -1,6 +1,5 @@
 package com.oneasmr.app.data.scanner
 
-import androidx.room.withTransaction
 import com.oneasmr.app.data.local.KeySpec
 import com.oneasmr.app.data.local.OneAsmrDatabase
 import com.oneasmr.app.data.local.ScrapeStatus
@@ -39,9 +38,15 @@ interface ScanPersister {
 }
 
 /**
- * Room-backed [ScanPersister]. Every work is one `withTransaction` — atomic
- * by construction. (Upsert of a single row would be atomic on its own; the
- * transaction also makes the read-modify-write of the merge atomic.)
+ * Room-backed [ScanPersister]. Per-work atomicity comes from the DAO layer:
+ * with BundledSQLiteDriver every generated write already runs in its own
+ * driver-native transaction (Room's `performSuspending` wraps writes in
+ * `PooledConnectionImpl.withTransaction`), so a cancelled scan keeps exactly
+ * the already-committed works — never half rows. An EXPLICIT
+ * `RoomDatabase.withTransaction` is deliberately NOT used: its framework
+ * implementation calls `getOpenHelper()`, which throws
+ * "no SupportSQLiteOpenHelper" when a SQLiteDriver is configured (caught by
+ * the Task 8 on-device probe).
  */
 class RoomScanPersister(
     private val db: OneAsmrDatabase,
@@ -52,11 +57,11 @@ class RoomScanPersister(
         work: WorkCandidate,
         rootFolderUri: String,
         nowEpochMillis: Long,
-    ): CommitKind = db.withTransaction {
+    ): CommitKind {
         val id = KeySpec.workId(KeySpec.LOCAL_SOURCE, work.rjCode)
         val dao = db.workDao()
         val existing = dao.getById(id)
-        if (existing == null) {
+        return if (existing == null) {
             dao.upsert(
                 Work(
                     id = id,

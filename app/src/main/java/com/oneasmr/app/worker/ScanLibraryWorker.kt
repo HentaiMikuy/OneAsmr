@@ -15,6 +15,7 @@ import com.oneasmr.app.data.scanner.CommitKind
 import com.oneasmr.app.data.scanner.DocumentReadException
 import com.oneasmr.app.data.scanner.LibraryScanner
 import com.oneasmr.app.data.scanner.RescanDiffComputer
+import com.oneasmr.app.data.scanner.RescanSummary
 import com.oneasmr.app.data.scanner.RoomScanPersister
 import com.oneasmr.app.data.scanner.SafDocumentFs
 import com.oneasmr.app.data.scanner.ScanAbortedException
@@ -125,6 +126,7 @@ class ScanLibraryWorker(context: Context, params: WorkerParameters) : CoroutineW
         var rootIndex = checkpoint?.rootIndex ?: 0
         var completedWorks = 0
         var warnings = 0
+        val warningMessages = mutableListOf<String>()
         val budgetDeadline = SystemClock.elapsedRealtime() + CHUNK_TIME_BUDGET_MS
 
         try {
@@ -142,6 +144,7 @@ class ScanLibraryWorker(context: Context, params: WorkerParameters) : CoroutineW
                     // unknown — never mark them missing on an IO failure).
                     Log.w(TAG, "skipping unreadable root '${root.displayName}': ${e.message}")
                     warnings += 1
+                    warningMessages += "root '${root.displayName}' unreadable: ${e.message}"
                     runState = runState.copy(failedRootUris = (runState.failedRootUris + root.treeUri).distinct())
                     bookkeeping.setRunState(runState)
                     rootIndex++
@@ -185,6 +188,7 @@ class ScanLibraryWorker(context: Context, params: WorkerParameters) : CoroutineW
 
                             override fun onWarning(message: String) {
                                 warnings += 1
+                                warningMessages += message
                                 // This root was not fully enumerated (unreadable
                                 // subdirectory): exclude it from missing-marking.
                                 runState = runState.copy(failedRootUris = (runState.failedRootUris + root.treeUri).distinct())
@@ -246,6 +250,18 @@ class ScanLibraryWorker(context: Context, params: WorkerParameters) : CoroutineW
             Log.w(TAG, "rescan incomplete: ${runState.failedRootUris.size} root(s) not fully enumerated; " +
                 "their works were NOT marked missing (existing data kept)")
         }
+        // Task 8 completion summary: the real run counters (RunState) + the
+        // missing diff result — never fabricated. Persisted so the UI can show
+        // 新增/更新/失效 counts even after a process restart.
+        bookkeeping.setLastSummary(
+            RescanSummary(
+                added = runState.added,
+                updated = runState.updated,
+                missing = toMarkMissing.size,
+                unchanged = runState.unchanged,
+                warnings = warningMessages,
+            ),
+        )
         bookkeeping.setLastScanAt(now)
         bookkeeping.clearRunState()
         ScanProgressStore.finish(completedWorks)

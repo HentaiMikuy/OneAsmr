@@ -1,9 +1,9 @@
 package com.oneasmr.app.data.scanner
 
-import androidx.room.withTransaction
 import com.oneasmr.app.data.local.KeySpec
 import com.oneasmr.app.data.local.OneAsmrDatabase
 import com.oneasmr.app.data.local.WorkDao
+import kotlinx.serialization.Serializable
 
 /** A configured scan root (SAF tree uri + display name for messages/progress). */
 data class ScanRoot(val treeUri: String, val displayName: String)
@@ -12,7 +12,12 @@ data class ScanRoot(val treeUri: String, val displayName: String)
  * Row-level outcome of one full rescan (plan Task 7; the Task 8 completion
  * summary "新增/更新/失效计数" consumes this). [warnings] surfaces every
  * non-fatal problem (unreadable root/directory) so the caller can present it.
+ *
+ * @Serializable so the completion summary survives process death: the worker
+ * persists it in the scan_bookkeeping DataStore (Task 8) and the UI shows the
+ * counts of the most recent scan even after a force-stop.
  */
+@Serializable
 data class RescanSummary(
     val added: Int,
     val updated: Int,
@@ -269,14 +274,17 @@ class IncrementalRescanner(
  * Manual removal of a work and its user data (the "user can manually remove"
  * API of plan Task 7, consumed by the Task 8 scan UI / Task 12 greyed-out
  * entries): deletes the work row (work_tag/work_va links cascade via FK),
- * its review and its playback_state entries, in ONE transaction.
+ * its review and its playback_state entries.
+ *
+ * No explicit `RoomDatabase.withTransaction` (its framework path throws with
+ * BundledSQLiteDriver — see RoomScanPersister); each delete is its own
+ * driver-native atomic statement, and the deletes are idempotent so a
+ * re-run after an interruption completes the removal.
  *
  * NEVER invoked automatically: missing-marking alone never deletes anything.
  */
 suspend fun removeWork(db: OneAsmrDatabase, workId: String) {
-    db.withTransaction {
-        db.workDao().deleteById(workId)
-        db.reviewDao().deleteByWorkId(workId)
-        db.playbackStateDao().deleteForWorkPrefix("$workId:")
-    }
+    db.workDao().deleteById(workId)
+    db.reviewDao().deleteByWorkId(workId)
+    db.playbackStateDao().deleteForWorkPrefix("$workId:")
 }

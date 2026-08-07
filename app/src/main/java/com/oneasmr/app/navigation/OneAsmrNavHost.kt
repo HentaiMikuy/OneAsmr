@@ -100,7 +100,10 @@ fun OneAsmrNavHost(
                 route = Routes.LIBRARY,
                 deepLinks = listOf(navDeepLink { uriPattern = "oneasmr://library" }),
             ) {
-                LibraryScreen()
+                LibraryScreen(
+                    onOpenRootFolders = { navController.navigate(Routes.SCAN_ROOTS) },
+                    onOpenWork = { workId -> navController.navigate(Routes.workDetail(workId)) },
+                )
             }
             composable(
                 route = Routes.SEARCH,

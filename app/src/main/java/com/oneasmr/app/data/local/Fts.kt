@@ -31,8 +31,13 @@ object FtsStatus {
  * Four separate FTS tables index work.title / circle.name / tag.name / va.name
  * and search UNIONs across them (see [WorkDao]). Each FTS row carries the
  * content-table rowid so queries join back through rowid. Triggers keep the
- * index in sync with the base tables (delete+reinsert on UPDATE so trigram
- * tokenization is refreshed).
+ * index in sync with the base tables.
+ *
+ * The FTS5 special 'delete' command (`INSERT INTO t(t, rowid, c1...) VALUES
+ * ('delete', ...)`) is NOT used: with the trigram tokenizer it fails with
+ * SQLITE_ERROR on the bundled SQLite (verified on-device, Task 8). Deletion
+ * uses `DELETE FROM fts WHERE rowid = old.rowid`, which is supported on
+ * contentful FTS5 tables.
  */
 object FtsIndex {
 
@@ -54,12 +59,12 @@ object FtsIndex {
         """,
         """
             CREATE TRIGGER IF NOT EXISTS work_fts_ad AFTER DELETE ON work BEGIN
-                INSERT INTO work_fts(work_fts, rowid) VALUES ('delete', old.rowid);
+                DELETE FROM work_fts WHERE rowid = old.rowid;
             END
         """,
         """
             CREATE TRIGGER IF NOT EXISTS work_fts_au AFTER UPDATE OF title ON work BEGIN
-                INSERT INTO work_fts(work_fts, rowid) VALUES ('delete', old.rowid);
+                DELETE FROM work_fts WHERE rowid = old.rowid;
                 INSERT INTO work_fts(rowid, title) VALUES (new.rowid, new.title);
             END
         """,
@@ -70,12 +75,12 @@ object FtsIndex {
         """,
         """
             CREATE TRIGGER IF NOT EXISTS circle_fts_ad AFTER DELETE ON circle BEGIN
-                INSERT INTO circle_fts(circle_fts, rowid) VALUES ('delete', old.rowid);
+                DELETE FROM circle_fts WHERE rowid = old.rowid;
             END
         """,
         """
             CREATE TRIGGER IF NOT EXISTS circle_fts_au AFTER UPDATE OF name ON circle BEGIN
-                INSERT INTO circle_fts(circle_fts, rowid) VALUES ('delete', old.rowid);
+                DELETE FROM circle_fts WHERE rowid = old.rowid;
                 INSERT INTO circle_fts(rowid, name) VALUES (new.rowid, new.name);
             END
         """,
@@ -86,7 +91,7 @@ object FtsIndex {
         """,
         """
             CREATE TRIGGER IF NOT EXISTS tag_fts_ad AFTER DELETE ON tag BEGIN
-                INSERT INTO tag_fts(tag_fts, rowid) VALUES ('delete', old.rowid);
+                DELETE FROM tag_fts WHERE rowid = old.rowid;
             END
         """,
         """
@@ -96,7 +101,7 @@ object FtsIndex {
         """,
         """
             CREATE TRIGGER IF NOT EXISTS va_fts_ad AFTER DELETE ON va BEGIN
-                INSERT INTO va_fts(va_fts, rowid) VALUES ('delete', old.rowid);
+                DELETE FROM va_fts WHERE rowid = old.rowid;
             END
         """,
     )

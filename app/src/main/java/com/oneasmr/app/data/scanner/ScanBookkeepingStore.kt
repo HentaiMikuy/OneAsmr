@@ -33,6 +33,22 @@ class ScanBookkeepingStore @Inject constructor(
         dataStore.edit { it[KEY_LAST_SCAN_AT] = epochMillis }
     }
 
+    /**
+     * Row-level outcome of the most recent COMPLETED scan (Task 8 completion
+     * summary; worker writes it from the run's real counters at the final
+     * execution). Durable across process death — the UI reads it after a
+     * force-stop/relaunch, unlike the process-lifetime [ScanProgressStore].
+     */
+    val lastSummary: Flow<RescanSummary?> = dataStore.data.map { prefs ->
+        prefs[KEY_LAST_SUMMARY]?.let { raw ->
+            runCatching { json.decodeFromString<RescanSummary>(raw) }.getOrNull()
+        }
+    }
+
+    suspend fun setLastSummary(summary: RescanSummary) {
+        dataStore.edit { it[KEY_LAST_SUMMARY] = json.encodeToString(RescanSummary.serializer(), summary) }
+    }
+
     /** Current in-flight run state; null when no run is in progress. */
     val runState: Flow<ScanRunState?> = dataStore.data.map { prefs ->
         prefs[KEY_RUN_STATE]?.let { raw ->
@@ -53,6 +69,7 @@ class ScanBookkeepingStore @Inject constructor(
     companion object {
         private val KEY_LAST_SCAN_AT = longPreferencesKey("last_scan_at")
         private val KEY_RUN_STATE = stringPreferencesKey("scan_run_state")
+        private val KEY_LAST_SUMMARY = stringPreferencesKey("last_scan_summary")
         private val json = Json { ignoreUnknownKeys = true }
     }
 }

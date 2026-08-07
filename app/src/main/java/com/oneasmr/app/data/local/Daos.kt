@@ -9,6 +9,7 @@ import androidx.room.RawQuery
 import androidx.room.Upsert
 import androidx.sqlite.db.SupportSQLiteProgram
 import androidx.sqlite.db.SupportSQLiteQuery
+import kotlinx.coroutines.flow.Flow
 
 /**
  * Supported work ordering modes. The DAO layer never inlines these column
@@ -133,6 +134,10 @@ interface WorkDao {
     /** Every local work row (the work table only ever holds local works — KeySpec). */
     @Query("SELECT * FROM work")
     suspend fun getAll(): List<Work>
+
+    /** Live stream of every local work row (Task 8 library list + empty-state decision). */
+    @Query("SELECT * FROM work")
+    fun getAllFlow(): Flow<List<Work>>
 
     /**
      * Marks the given works as missing (Task 7 diff). Empty [ids] is a no-op —
