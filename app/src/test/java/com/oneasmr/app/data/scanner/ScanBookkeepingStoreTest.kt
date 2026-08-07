@@ -1,5 +1,7 @@
 package com.oneasmr.app.data.scanner
 
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringPreferencesKey
 import com.oneasmr.app.data.local.TestDataStoreFile
 import java.io.File
 import kotlinx.coroutines.flow.first
@@ -60,5 +62,76 @@ class ScanBookkeepingStoreTest {
 
         withTimeout(5_000) { a.setLastScanAt(1L) }
         withTimeout(5_000) { assertNull(b.lastScanAt.first()) }
+    }
+
+    // ---------- Task 7: cross-execution run state ----------
+
+    @Test
+    fun `run state roundtrips and clears`() = runBlocking {
+        val store = ScanBookkeepingStore(TestDataStoreFile(tempFile()).open())
+        withTimeout(5_000) { assertNull(store.getRunState()) }
+
+        val state = ScanRunState(
+            runId = 7L,
+            discoveredIds = listOf("local:RJ123456", "local:RJ200000"),
+            failedRootUris = listOf("content://tree/rootB"),
+            added = 1,
+            updated = 2,
+            unchanged = 3,
+        )
+        withTimeout(5_000) { store.setRunState(state) }
+        withTimeout(5_000) { assertEquals(state, store.getRunState()) }
+
+        withTimeout(5_000) { store.clearRunState() }
+        withTimeout(5_000) { assertNull(store.getRunState()) }
+    }
+
+    @Test
+    fun `run state survives a store restart like lastScanAt`() = runBlocking {
+        val testFile = TestDataStoreFile(tempFile())
+        ScanBookkeepingStore(testFile.open()).let { store ->
+            withTimeout(5_000) {
+                store.setRunState(ScanRunState(runId = 42L, discoveredIds = listOf("local:RJ123456")))
+            }
+        }
+
+        val reopened = ScanBookkeepingStore(testFile.restart())
+        withTimeout(5_000) {
+            val state = reopened.getRunState()
+            assertEquals(42L, state!!.runId)
+            assertEquals(listOf("local:RJ123456"), state.discoveredIds)
+        }
+    }
+
+    @Test
+    fun `malformed run state JSON decodes to null instead of crashing`() = runBlocking {
+        val testFile = TestDataStoreFile(tempFile())
+        val ds = testFile.open()
+        val store = ScanBookkeepingStore(ds)
+
+        // Hand-craft the exact preference key with broken JSON, through the
+        // same DataStore instance (two live instances on one file are refused).
+        withTimeout(5_000) {
+            ds.edit { it[stringPreferencesKey("scan_run_state")] = "{not json" }
+        }
+        withTimeout(5_000) { assertNull(store.getRunState()) }
+    }
+
+    @Test
+    fun `run state with unknown fields decodes tolerantly`() = runBlocking {
+        val testFile = TestDataStoreFile(tempFile())
+        val ds = testFile.open()
+        val store = ScanBookkeepingStore(ds)
+
+        withTimeout(5_000) {
+            ds.edit {
+                it[stringPreferencesKey("scan_run_state")] = """{"runId":9,"futureField":"x"}"""
+            }
+        }
+        withTimeout(5_000) {
+            val state = store.getRunState()
+            assertEquals(9L, state!!.runId)
+            assertEquals(0, state.added) // defaulted, not crashed
+        }
     }
 }

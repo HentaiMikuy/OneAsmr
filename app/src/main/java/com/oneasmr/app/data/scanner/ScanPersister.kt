@@ -8,6 +8,13 @@ import com.oneasmr.app.data.local.SortKeyGenerator
 import com.oneasmr.app.data.local.Work
 
 /**
+ * Result of one [ScanPersister.commitWork]: the row-level outcome, used by the
+ * rescan diff (Task 7) to build the added/updated/unchanged summary without
+ * re-reading the database.
+ */
+enum class CommitKind { INSERTED, UPDATED, UNCHANGED }
+
+/**
  * Commits discovered works into the database. The interface keeps the worker
  * decoupled from Room; [RoomScanPersister] is the production implementation.
  */
@@ -18,14 +25,17 @@ interface ScanPersister {
      * keeps every already-committed work and never leaves half rows.
      *
      * Merge semantics ("新作品 scrapeStatus=NOT_SCRAPED" — NEW works only):
-     * - Unknown id -> a fresh row with scrapeStatus=NOT_SCRAPED and the
-     *   titleSortKey generated from the folder name (FTS index is maintained
-     *   by the work_fts triggers on INSERT/UPDATE).
-     * - Known id (rescan) -> location/title/titleSortKey/updatedAt refreshed,
-     *   scrape metadata (scrapeStatus, circle, rating...) PRESERVED so a
-     *   later rescan cannot clobber scraped data.
+     * - Unknown id -> a fresh row with scrapeStatus=NOT_SCRAPED, missing=false
+     *   and the titleSortKey generated from the folder name (FTS index is
+     *   maintained by the work_fts triggers on INSERT/UPDATE).
+     * - Known id (rescan) -> location/title/titleSortKey refreshed and
+     *   missing cleared (the folder was seen again — Task 7), but scrape
+     *   metadata (scrapeStatus, circle, rating...) PRESERVED so a later
+     *   rescan cannot clobber scraped data. When nothing location/title/
+     *   missing-wise changed, the row is left completely untouched
+     *   ([CommitKind.UNCHANGED] — no updatedAt bump, no FTS trigger churn).
      */
-    suspend fun commitWork(work: WorkCandidate, rootFolderUri: String, nowEpochMillis: Long)
+    suspend fun commitWork(work: WorkCandidate, rootFolderUri: String, nowEpochMillis: Long): CommitKind
 }
 
 /**
@@ -38,12 +48,16 @@ class RoomScanPersister(
     private val sortKeyGenerator: (String) -> String = SortKeyGenerator::generate,
 ) : ScanPersister {
 
-    override suspend fun commitWork(work: WorkCandidate, rootFolderUri: String, nowEpochMillis: Long) {
-        db.withTransaction {
-            val id = KeySpec.workId(KeySpec.LOCAL_SOURCE, work.rjCode)
-            val dao = db.workDao()
-            val existing = dao.getById(id)
-            val merged = if (existing == null) {
+    override suspend fun commitWork(
+        work: WorkCandidate,
+        rootFolderUri: String,
+        nowEpochMillis: Long,
+    ): CommitKind = db.withTransaction {
+        val id = KeySpec.workId(KeySpec.LOCAL_SOURCE, work.rjCode)
+        val dao = db.workDao()
+        val existing = dao.getById(id)
+        if (existing == null) {
+            dao.upsert(
                 Work(
                     id = id,
                     rootFolderUri = rootFolderUri,
@@ -61,19 +75,34 @@ class RoomScanPersister(
                     rateCountDetailJson = null,
                     seriesName = null,
                     scrapeStatus = ScrapeStatus.NOT_SCRAPED,
+                    missing = false,
                     addedAt = nowEpochMillis,
                     updatedAt = nowEpochMillis,
-                )
+                ),
+            )
+            CommitKind.INSERTED
+        } else {
+            val newSortKey = sortKeyGenerator(work.displayName)
+            val changed = existing.missing ||
+                existing.rootFolderUri != rootFolderUri ||
+                existing.relativeDir != work.relativeDir ||
+                existing.title != work.displayName ||
+                existing.titleSortKey != newSortKey
+            if (!changed) {
+                CommitKind.UNCHANGED
             } else {
-                existing.copy(
-                    rootFolderUri = rootFolderUri,
-                    relativeDir = work.relativeDir,
-                    title = work.displayName,
-                    titleSortKey = sortKeyGenerator(work.displayName),
-                    updatedAt = nowEpochMillis,
+                dao.upsert(
+                    existing.copy(
+                        rootFolderUri = rootFolderUri,
+                        relativeDir = work.relativeDir,
+                        title = work.displayName,
+                        titleSortKey = newSortKey,
+                        missing = false,
+                        updatedAt = nowEpochMillis,
+                    ),
                 )
+                CommitKind.UPDATED
             }
-            dao.upsert(merged)
         }
     }
 }

@@ -9,6 +9,7 @@ import com.oneasmr.app.data.local.Work
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -139,5 +140,75 @@ class ScanPersisterTest {
             nowEpochMillis = 1_000L,
         )
         assertEquals(2, db.workDao().count())
+    }
+
+    @Test
+    fun `commit of an identical work returns UNCHANGED and rewrites nothing`() = runBlocking {
+        persister.commitWork(
+            WorkCandidate(relativeDir = "RJ123456", rjCode = "RJ123456", displayName = "RJ123456"),
+            rootFolderUri = "content://tree/root",
+            nowEpochMillis = 1_000L,
+        )
+
+        val kind = persister.commitWork(
+            WorkCandidate(relativeDir = "RJ123456", rjCode = "RJ123456", displayName = "RJ123456"),
+            rootFolderUri = "content://tree/root",
+            nowEpochMillis = 2_000L,
+        )
+
+        assertEquals(CommitKind.UNCHANGED, kind)
+        val row = db.workDao().getById("local:RJ123456")!!
+        // No-op commit must not bump updatedAt (no misleading "updated" counts).
+        assertEquals(1_000L, row.updatedAt)
+    }
+
+    @Test
+    fun `commit of a changed work returns UPDATED and bumps updatedAt`() = runBlocking {
+        persister.commitWork(
+            WorkCandidate(relativeDir = "RJ123456", rjCode = "RJ123456", displayName = "RJ123456"),
+            rootFolderUri = "content://tree/root",
+            nowEpochMillis = 1_000L,
+        )
+
+        val kind = persister.commitWork(
+            WorkCandidate(relativeDir = "Moved/RJ123456", rjCode = "RJ123456", displayName = "RJ123456"),
+            rootFolderUri = "content://tree/root",
+            nowEpochMillis = 2_000L,
+        )
+
+        assertEquals(CommitKind.UPDATED, kind)
+        assertEquals("Moved/RJ123456", db.workDao().getById("local:RJ123456")!!.relativeDir)
+        assertEquals(2_000L, db.workDao().getById("local:RJ123456")!!.updatedAt)
+    }
+
+    @Test
+    fun `commit of a previously missing work clears missing and returns UPDATED`() = runBlocking {
+        persister.commitWork(
+            WorkCandidate(relativeDir = "RJ123456", rjCode = "RJ123456", displayName = "RJ123456"),
+            rootFolderUri = "content://tree/root",
+            nowEpochMillis = 1_000L,
+        )
+        val before = db.workDao().getById("local:RJ123456")!!
+        db.workDao().upsert(before.copy(missing = true))
+
+        val kind = persister.commitWork(
+            WorkCandidate(relativeDir = "RJ123456", rjCode = "RJ123456", displayName = "RJ123456"),
+            rootFolderUri = "content://tree/root",
+            nowEpochMillis = 2_000L,
+        )
+
+        assertEquals(CommitKind.UPDATED, kind)
+        assertFalse(db.workDao().getById("local:RJ123456")!!.missing)
+    }
+
+    @Test
+    fun `new work returns INSERTED`() = runBlocking {
+        val kind = persister.commitWork(
+            WorkCandidate(relativeDir = "RJ123456", rjCode = "RJ123456", displayName = "RJ123456"),
+            rootFolderUri = "content://tree/root",
+            nowEpochMillis = 1_000L,
+        )
+        assertEquals(CommitKind.INSERTED, kind)
+        assertFalse(db.workDao().getById("local:RJ123456")!!.missing)
     }
 }

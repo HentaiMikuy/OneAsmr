@@ -87,6 +87,7 @@ class FtsTrigramProbeTest {
                     rateCountDetailJson = null,
                     seriesName = null,
                     scrapeStatus = ScrapeStatus.NOT_SCRAPED,
+                    missing = false,
                     addedAt = 1L,
                     updatedAt = 1L,
                 ),

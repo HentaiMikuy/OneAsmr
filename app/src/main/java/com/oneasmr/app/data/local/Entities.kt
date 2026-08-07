@@ -1,5 +1,6 @@
 package com.oneasmr.app.data.local
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -80,6 +81,17 @@ data class Work(
     val rateCountDetailJson: String?,
     val seriesName: String?,
     val scrapeStatus: ScrapeStatus,
+    /**
+     * True when the work folder was ABSENT from the last full rescan (Task 7
+     * "增量重扫与失效作品检测"). Missing works keep their row AND their review /
+     * playback_state rows (nothing is auto-deleted); the UI greys them out and
+     * offers a manual remove (Task 8/12, [com.oneasmr.app.data.scanner.IncrementalRescanner.removeWork]).
+     * Default "0" matches the v1→v2 migration's ALTER TABLE ADD COLUMN
+     * (SQLite requires a DEFAULT when adding a NOT NULL column to a
+     * populated table — see [com.oneasmr.app.data.local.OneAsmrDatabase.MIGRATION_1_2]).
+     */
+    @ColumnInfo(defaultValue = "0")
+    val missing: Boolean,
     /** Epoch millis when the row was inserted. */
     val addedAt: Long,
     /** Epoch millis of the last metadata update. */

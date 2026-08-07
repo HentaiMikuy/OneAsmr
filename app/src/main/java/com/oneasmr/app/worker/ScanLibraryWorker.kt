@@ -9,15 +9,20 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import com.oneasmr.app.data.local.KeySpec
 import com.oneasmr.app.data.local.OneAsmrDatabase
+import com.oneasmr.app.data.scanner.CommitKind
 import com.oneasmr.app.data.scanner.DocumentReadException
 import com.oneasmr.app.data.scanner.LibraryScanner
+import com.oneasmr.app.data.scanner.RescanDiffComputer
 import com.oneasmr.app.data.scanner.RoomScanPersister
 import com.oneasmr.app.data.scanner.SafDocumentFs
 import com.oneasmr.app.data.scanner.ScanAbortedException
 import com.oneasmr.app.data.scanner.ScanBookkeepingStore
 import com.oneasmr.app.data.scanner.ScanCallback
 import com.oneasmr.app.data.scanner.ScanProgressStore
+import com.oneasmr.app.data.scanner.ScanRunState
+import com.oneasmr.app.data.scanner.StoredWorkRef
 import com.oneasmr.app.data.scanner.WorkCandidate
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
@@ -37,9 +42,12 @@ data class RootRef(val treeUri: String, val displayName: String)
  * `(rootIndex, chunkDocumentId)` = "continue inside root `rootIndex`, after
  * the top-level entry whose document id is `chunkDocumentId`". Durable in
  * WorkManager storage, so a killed process resumes where it stopped.
+ * [runId] stamps the whole chunk chain (first execution generates it, the
+ * final execution matches its accumulated [ScanRunState] against it) — a
+ * stale run state left by a crashed run is never trusted by a new run.
  */
 @Serializable
-data class ScanCheckpoint(val rootIndex: Int, val chunkDocumentId: String?)
+data class ScanCheckpoint(val rootIndex: Int, val chunkDocumentId: String?, val runId: Long? = null)
 
 /**
  * Hilt entry point for the worker. The worker CANNOT use @HiltWorker: that
@@ -105,6 +113,15 @@ class ScanLibraryWorker(context: Context, params: WorkerParameters) : CoroutineW
         val bookkeeping = entryPoint.bookkeeping()
 
         ScanProgressStore.begin(roots.size)
+        val runId = checkpoint?.runId ?: System.currentTimeMillis()
+        // Task 7: cross-execution diff state. Trust the persisted state only
+        // when its runId matches THIS run's chain; anything else is a stale
+        // leftover of a crashed run and is replaced by a fresh state.
+        var runState = if (checkpoint?.runId != null) {
+            bookkeeping.getRunState()?.takeIf { it.runId == runId } ?: ScanRunState(runId)
+        } else {
+            ScanRunState(runId)
+        }
         var rootIndex = checkpoint?.rootIndex ?: 0
         var completedWorks = 0
         var warnings = 0
@@ -121,8 +138,12 @@ class ScanLibraryWorker(context: Context, params: WorkerParameters) : CoroutineW
                     scanner.topLevelChunks()
                 } catch (e: DocumentReadException) {
                     // Root unreadable (grant revoked mid-scan): warn and skip it.
+                    // Its works are excluded from missing-marking (folder set
+                    // unknown — never mark them missing on an IO failure).
                     Log.w(TAG, "skipping unreadable root '${root.displayName}': ${e.message}")
                     warnings += 1
+                    runState = runState.copy(failedRootUris = (runState.failedRootUris + root.treeUri).distinct())
+                    bookkeeping.setRunState(runState)
                     rootIndex++
                     continue
                 }
@@ -142,11 +163,20 @@ class ScanLibraryWorker(context: Context, params: WorkerParameters) : CoroutineW
                         ScanProgressStore.reset()
                         return@withContext Result.failure()
                     }
+                    var chunkDiscovered = mutableListOf<String>()
+                    var chunkAdded = 0
+                    var chunkUpdated = 0
+                    var chunkUnchanged = 0
                     scanner.scanChunk(
                         chunk,
                         object : ScanCallback {
                             override suspend fun onWorkFound(work: WorkCandidate) {
-                                persister.commitWork(work, root.treeUri, System.currentTimeMillis())
+                                when (persister.commitWork(work, root.treeUri, System.currentTimeMillis())) {
+                                    CommitKind.INSERTED -> chunkAdded++
+                                    CommitKind.UPDATED -> chunkUpdated++
+                                    CommitKind.UNCHANGED -> chunkUnchanged++
+                                }
+                                chunkDiscovered += KeySpec.workId(KeySpec.LOCAL_SOURCE, work.rjCode)
                             }
 
                             override fun onProgress(currentDir: String, worksFound: Int) {
@@ -155,6 +185,9 @@ class ScanLibraryWorker(context: Context, params: WorkerParameters) : CoroutineW
 
                             override fun onWarning(message: String) {
                                 warnings += 1
+                                // This root was not fully enumerated (unreadable
+                                // subdirectory): exclude it from missing-marking.
+                                runState = runState.copy(failedRootUris = (runState.failedRootUris + root.treeUri).distinct())
                                 ScanProgressStore.warn(message)
                                 Log.w(TAG, message)
                             }
@@ -162,11 +195,21 @@ class ScanLibraryWorker(context: Context, params: WorkerParameters) : CoroutineW
                             override fun isActive(): Boolean = !isStopped
                         },
                     )
+                    // Persist the accumulated diff state after EVERY chunk so
+                    // every exit path (budget continuation, process death,
+                    // final diff) sees exactly the works committed so far.
+                    runState = runState.copy(
+                        discoveredIds = (runState.discoveredIds + chunkDiscovered).distinct(),
+                        added = runState.added + chunkAdded,
+                        updated = runState.updated + chunkUpdated,
+                        unchanged = runState.unchanged + chunkUnchanged,
+                    )
+                    bookkeeping.setRunState(runState)
                     lastProcessedChunkId = chunk.documentId
                     // Budget check AFTER the chunk: the checkpoint cursor is
                     // always a PROCESSED chunk, so no chunk is ever skipped.
                     if (SystemClock.elapsedRealtime() > budgetDeadline) {
-                        enqueueContinuation(roots, rootIndex, lastProcessedChunkId!!)
+                        enqueueContinuation(roots, rootIndex, lastProcessedChunkId!!, runId)
                         return@withContext Result.success()
                     }
                 }
@@ -180,16 +223,44 @@ class ScanLibraryWorker(context: Context, params: WorkerParameters) : CoroutineW
             return@withContext Result.failure()
         }
 
+        // ---- final execution of the run: Task 7 missing-work diff ----
+        // isStopped guard: a scan cancelled after the last chunk must not
+        // mark anything missing (the user stopped it on purpose).
+        if (isStopped) {
+            ScanProgressStore.reset()
+            return@withContext Result.failure()
+        }
+        bookkeeping.setRunState(runState)
         val now = System.currentTimeMillis()
+        val completeRoots = roots.map { it.treeUri }.toSet() - runState.failedRootUris.toSet()
+        val stored = db.workDao().getAll()
+        val toMarkMissing = RescanDiffComputer.computeMissing(
+            runState.discoveredSet,
+            stored.map { StoredWorkRef(it.id, it.rootFolderUri, it.missing) },
+            completeRoots,
+        )
+        if (toMarkMissing.isNotEmpty()) {
+            db.workDao().markMissing(toMarkMissing, now)
+        }
+        if (runState.failedRootUris.isNotEmpty()) {
+            Log.w(TAG, "rescan incomplete: ${runState.failedRootUris.size} root(s) not fully enumerated; " +
+                "their works were NOT marked missing (existing data kept)")
+        }
         bookkeeping.setLastScanAt(now)
+        bookkeeping.clearRunState()
         ScanProgressStore.finish(completedWorks)
-        Log.i(TAG, "scan complete: roots=${roots.size} works=$completedWorks warnings=$warnings lastScanAt=$now")
+        Log.i(
+            TAG,
+            "scan complete: roots=${roots.size} works=$completedWorks added=${runState.added} " +
+                "updated=${runState.updated} unchanged=${runState.unchanged} missing=${toMarkMissing.size} " +
+                "warnings=$warnings lastScanAt=$now",
+        )
         Result.success()
     }
 
     /** Enqueues the next chunk chained after this one (APPEND_OR_REPLACE). */
-    private fun enqueueContinuation(roots: List<RootRef>, rootIndex: Int, chunkDocumentId: String) {
-        val checkpoint = ScanCheckpoint(rootIndex, chunkDocumentId)
+    private fun enqueueContinuation(roots: List<RootRef>, rootIndex: Int, chunkDocumentId: String, runId: Long) {
+        val checkpoint = ScanCheckpoint(rootIndex, chunkDocumentId, runId)
         val request = OneTimeWorkRequestBuilder<ScanLibraryWorker>()
             .setInputData(workDataOf(KEY_ROOTS to json.encodeToString(roots), KEY_CHECKPOINT to json.encodeToString(checkpoint)))
             .build()

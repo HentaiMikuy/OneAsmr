@@ -130,6 +130,22 @@ interface WorkDao {
     @Query("SELECT COUNT(*) FROM work")
     suspend fun count(): Int
 
+    /** Every local work row (the work table only ever holds local works — KeySpec). */
+    @Query("SELECT * FROM work")
+    suspend fun getAll(): List<Work>
+
+    /**
+     * Marks the given works as missing (Task 7 diff). Empty [ids] is a no-op —
+     * Room's `IN (:ids)` would otherwise render the invalid `IN ()`.
+     */
+    suspend fun markMissing(ids: List<String>, now: Long) {
+        if (ids.isEmpty()) return
+        markMissingInternal(ids, now)
+    }
+
+    @Query("UPDATE work SET missing = 1, updatedAt = :now WHERE id IN (:ids)")
+    suspend fun markMissingInternal(ids: List<String>, now: Long)
+
     @RawQuery
     suspend fun getPageRaw(query: SupportSQLiteQuery): List<Work>
 
@@ -307,4 +323,14 @@ interface PlaybackStateDao {
 
     @Query("DELETE FROM playback_state WHERE trackKey = :trackKey")
     suspend fun delete(trackKey: String)
+
+    /**
+     * Deletes every playback entry of one work (manual-remove API, Task 7).
+     * [prefix] is "{workId}:" e.g. "local:RJ123456:" — the trailing colon
+     * anchors the match so "local:RJ123456:3" is removed but a hypothetical
+     * "local:RJ1234567:3" is NOT. Prefixes are alphanumeric + ':' (KeySpec
+     * shape) so LIKE wildcards cannot appear in them.
+     */
+    @Query("DELETE FROM playback_state WHERE trackKey LIKE :prefix || '%'")
+    suspend fun deleteForWorkPrefix(prefix: String)
 }

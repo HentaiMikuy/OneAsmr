@@ -62,6 +62,7 @@ class OneAsmrDatabaseTest {
             rateCountDetailJson = null,
             seriesName = null,
             scrapeStatus = ScrapeStatus.NOT_SCRAPED,
+            missing = false,
             addedAt = 1_000L,
             updatedAt = 1_000L,
         )
@@ -258,6 +259,47 @@ class OneAsmrDatabaseTest {
         db.playbackStateDao().upsert(PlaybackState("srv1:RJ123456:0", positionMs = 5, durationMs = 10, updatedAt = 1L))
         db.playbackStateDao().delete("srv1:RJ123456:0")
         assertNull(db.playbackStateDao().get("srv1:RJ123456:0"))
+    }
+
+    // ---------- Task 7: missing flag + manual-remove helpers ----------
+
+    @Test
+    fun `markMissing flips the flag and bumps updatedAt`() = runBlocking {
+        db.workDao().upsert(work("local:RJ100", "A"))
+        db.workDao().markMissing(listOf("local:RJ100"), now = 2_000L)
+
+        val row = db.workDao().getById("local:RJ100")!!
+        assertTrue(row.missing)
+        assertEquals(2_000L, row.updatedAt)
+    }
+
+    @Test
+    fun `markMissing with empty list is a no-op`() = runBlocking {
+        db.workDao().upsert(work("local:RJ100", "A"))
+        db.workDao().markMissing(emptyList(), now = 2_000L)
+        assertEquals(1_000L, db.workDao().getById("local:RJ100")!!.updatedAt)
+        assertTrue(!db.workDao().getById("local:RJ100")!!.missing)
+    }
+
+    @Test
+    fun `getAll returns every row`() = runBlocking {
+        db.workDao().upsertAll(listOf(work("local:RJ100", "A"), work("local:RJ200", "B")))
+        assertEquals(setOf("local:RJ100", "local:RJ200"), db.workDao().getAll().map { it.id }.toSet())
+    }
+
+    @Test
+    fun `deleteForWorkPrefix removes only that work playback entries`() = runBlocking {
+        db.playbackStateDao().upsert(PlaybackState("local:RJ123456:1", positionMs = 1, durationMs = 2, updatedAt = 1L))
+        db.playbackStateDao().upsert(PlaybackState("local:RJ123456:3", positionMs = 3, durationMs = 4, updatedAt = 1L))
+        db.playbackStateDao().upsert(PlaybackState("local:RJ1234567:0", positionMs = 5, durationMs = 6, updatedAt = 1L))
+        db.playbackStateDao().upsert(PlaybackState("srv1:RJ123456:2", positionMs = 7, durationMs = 8, updatedAt = 1L))
+
+        db.playbackStateDao().deleteForWorkPrefix("local:RJ123456:")
+
+        assertNull(db.playbackStateDao().get("local:RJ123456:1"))
+        assertNull(db.playbackStateDao().get("local:RJ123456:3"))
+        assertEquals(5, db.playbackStateDao().get("local:RJ1234567:0")!!.positionMs)
+        assertEquals(7, db.playbackStateDao().get("srv1:RJ123456:2")!!.positionMs)
     }
 
     // ---------- search (degraded LIKE path on JVM) ----------
