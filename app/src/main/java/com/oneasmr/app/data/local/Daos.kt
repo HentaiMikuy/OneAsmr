@@ -287,6 +287,13 @@ interface WorkDao {
     fun countFlow(): Flow<Int>
 
     /**
+     * Works of one scrape status that are still present on disk (Task 27
+     * settings batch-scrape status row; same predicate as the batch targets).
+     */
+    @Query("SELECT COUNT(*) FROM work WHERE NOT missing AND scrapeStatus = :status")
+    suspend fun countByScrapeStatus(status: ScrapeStatus): Int
+
+    /**
      * Paged library source (Task 12/13): work + circle name + user progress in
      * ONE indexed query. Room's built-in PagingSource (LimitOffsetPagingSource)
      * translates this into `SELECT ... LIMIT ? OFFSET ?` — a single statement
@@ -765,6 +772,13 @@ interface PlaybackStateDao {
      */
     @Query("DELETE FROM playback_state WHERE trackKey LIKE :prefix || '%'")
     suspend fun deleteForWorkPrefix(prefix: String)
+
+    /**
+     * Task 27 optional "同时清除播放进度": wipes EVERY playback position.
+     * Only ever invoked from the Settings confirm dialog — never implicitly.
+     */
+    @Query("DELETE FROM playback_state")
+    suspend fun clearAll()
 }
 
 /**

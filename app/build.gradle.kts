@@ -33,6 +33,8 @@ android {
 
     buildFeatures {
         compose = true
+        // Task 27 About section reads versionName/versionCode from BuildConfig.
+        buildConfig = true
     }
 
     compileOptions {

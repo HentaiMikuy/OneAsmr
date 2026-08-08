@@ -202,20 +202,35 @@ class CoverStore(
         return bundledCoverUri(rootFolderUri, relativeDir)
     }
 
-    // ---- cache management (Task 27 will surface this in Settings) --------
+    // ---- cache management (Task 27 surfaces this in Settings) -------------
 
-    /** Total bytes currently held in covers/ (tracked entries only). */
+    /**
+     * Total bytes currently held in covers/ (disk truth, not just the
+     * in-memory [entries] map): a fresh process with on-disk covers written
+     * before restart must still report them, and in-flight `.part` downloads
+     * are excluded (they belong to a download that owns the lock — none can
+     * be in flight while this runs). Missing dir → 0, never throws.
+     */
     suspend fun totalSizeBytes(): Long = lock.withLock {
-        entries.values.sumOf { it.sizeBytes }
+        coversDir.listFiles()
+            ?.filter { it.isFile && !it.name.endsWith(PART_SUFFIX) }
+            ?.sumOf { it.length() }
+            ?: 0L
     }
 
-    /** Deletes every cached cover. Playback data and reviews are untouched. */
+    /**
+     * Deletes every cached cover from covers/ (disk truth, same restart
+     * rationale as [totalSizeBytes]). Playback data and reviews are NEVER
+     * touched — this method cannot see the database at all. Leftover `.part`
+     * files from a crashed download are removed too ("covers/ size zero" is
+     * the acceptance criterion). Missing dir → no-op, never crashes.
+     */
     suspend fun clearAll() {
         lock.withLock {
-            entries.keys.toList().forEach { path ->
-                File(path).delete()
-                entries.remove(path)
+            coversDir.listFiles()?.forEach { file ->
+                if (file.isFile) file.delete()
             }
+            entries.clear()
         }
     }
 

@@ -102,6 +102,10 @@ class SettingsStore @Inject constructor(
     val themeMode: Flow<ThemeMode> =
         dataStore.data.map { ThemeMode.fromStored(it[KEY_THEME_MODE]) }
 
+    /** Material You dynamic color (Android 12+); on by default (Task 27 toggle). */
+    val dynamicColor: Flow<Boolean> =
+        dataStore.data.map { it[KEY_DYNAMIC_COLOR] ?: true }
+
     val scrapingLanguage: Flow<ScrapingLanguage> =
         dataStore.data.map { ScrapingLanguage.fromStored(it[KEY_SCRAPING_LANGUAGE]) }
 
@@ -149,6 +153,10 @@ class SettingsStore @Inject constructor(
 
     suspend fun setThemeMode(mode: ThemeMode) {
         dataStore.edit { it[KEY_THEME_MODE] = mode.name }
+    }
+
+    suspend fun setDynamicColor(enabled: Boolean) {
+        dataStore.edit { it[KEY_DYNAMIC_COLOR] = enabled }
     }
 
     suspend fun setScrapingLanguage(language: ScrapingLanguage) {
@@ -207,6 +215,7 @@ class SettingsStore @Inject constructor(
         const val MAX_RECENT_SEARCHES = 10
 
         private val KEY_THEME_MODE = stringPreferencesKey("theme_mode")
+        private val KEY_DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
         private val KEY_SCRAPING_LANGUAGE = stringPreferencesKey("scraping_language")
         private val KEY_SCRAPER_BASE_URL_OVERRIDE = stringPreferencesKey("scraper_base_url_override")
         private val KEY_CACHE_CAP_MB = intPreferencesKey("cache_cap_mb")

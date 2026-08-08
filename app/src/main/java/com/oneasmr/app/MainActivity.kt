@@ -31,7 +31,11 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             val themeMode by settingsStore.themeMode.collectAsStateWithLifecycle(initialValue = ThemeMode.SYSTEM)
-            OneAsmrTheme(darkTheme = themeMode.resolveDarkTheme(isSystemInDarkTheme())) {
+            val dynamicColor by settingsStore.dynamicColor.collectAsStateWithLifecycle(initialValue = true)
+            OneAsmrTheme(
+                darkTheme = themeMode.resolveDarkTheme(isSystemInDarkTheme()),
+                dynamicColor = dynamicColor,
+            ) {
                 OneAsmrNavHost()
             }
         }

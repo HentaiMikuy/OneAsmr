@@ -46,6 +46,10 @@ class PlaybackProgressWriterTest {
         override suspend fun deleteForWorkPrefix(prefix: String) {
             rows.keys.filter { it.startsWith(prefix) }.forEach { rows.remove(it) }
         }
+
+        override suspend fun clearAll() {
+            rows.clear()
+        }
     }
 
     private var sample = PlaybackProgressWriter.Sample(null, 0L, 0L)

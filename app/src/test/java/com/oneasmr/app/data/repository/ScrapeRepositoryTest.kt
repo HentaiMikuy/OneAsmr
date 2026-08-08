@@ -116,6 +116,8 @@ class ScrapeRepositoryTest {
             rows.remove(id)
         }
         override suspend fun count(): Int = rows.size
+        override suspend fun countByScrapeStatus(status: ScrapeStatus): Int =
+            rows.values.count { !it.missing && it.scrapeStatus == status }
         override suspend fun getAll(): List<Work> = rows.values.toList()
         override fun getAllFlow(): Flow<List<Work>> = MutableStateFlow(rows.values.toList())
         override fun countFlow(): Flow<Int> = MutableStateFlow(rows.size)
