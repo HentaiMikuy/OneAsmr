@@ -27,10 +27,9 @@ class SettingsStoreTest {
     private fun file(name: String) = TestDataStoreFile(tmp.newFile("$name.preferences_pb"))
 
     @Test
-    fun `defaults are system theme empty server zh-CN and 500MB cache cap`() = runTest {
+    fun `defaults are system theme zh-CN and 500MB cache cap`() = runTest {
         val store = storeIn(file("defaults").open())
         assertEquals(ThemeMode.SYSTEM, store.themeMode.first())
-        assertEquals("", store.serverAddress.first())
         assertEquals(ScrapingLanguage.ZH, store.scrapingLanguage.first())
         assertEquals(SettingsStore.DEFAULT_CACHE_CAP_MB, store.cacheSizeCapMb.first())
         assertEquals(ResumeMode.AUTO, store.resumeMode.first())
@@ -64,14 +63,11 @@ class SettingsStoreTest {
         val tf = file("all")
         val store = storeIn(tf.open())
         store.setThemeMode(ThemeMode.LIGHT)
-        store.setServerAddress("  http://192.168.1.5:8787/  ")
         store.setScrapingLanguage(ScrapingLanguage.JA)
         store.setCacheSizeCapMb(256)
 
         val restarted = storeIn(tf.restart())
         assertEquals(ThemeMode.LIGHT, restarted.themeMode.first())
-        // Server address is trimmed on write.
-        assertEquals("http://192.168.1.5:8787/", restarted.serverAddress.first())
         assertEquals(ScrapingLanguage.JA, restarted.scrapingLanguage.first())
         assertEquals(256, restarted.cacheSizeCapMb.first())
     }

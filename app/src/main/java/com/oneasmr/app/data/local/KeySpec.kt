@@ -10,9 +10,9 @@ package com.oneasmr.app.data.local
  * Rules (from plan Task 4):
  * - [rjCode] = bare normalized code, prefix + digits, e.g. "RJ123456". Never
  *   carries a source prefix ("local"/"srvN").
- * - [sourceScope] = "local" for local works; "srv1".."srvN" for remote server
- *   config ids. Server configs do not exist before Task 24, but the format is
- *   fixed here.
+ * - [sourceScope] = "local" for local works; "srv1".."srvN" for remote
+ *   kikoeru-compatible server config ids. Server configs do not exist yet in
+ *   the local-only app, but the format is fixed here.
  * - [workId] = "{sourceScope}:{rjCode}", e.g. "local:RJ123456". Remote works
  *   never enter the local work table; a remote work id is only ever a string
  *   used by the unified repository (Task 25).

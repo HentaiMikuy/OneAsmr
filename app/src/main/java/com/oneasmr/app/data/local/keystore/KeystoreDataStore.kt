@@ -112,8 +112,7 @@ class KeystoreKeyCipher(
  * each value base64(AES-GCM IV + ciphertext) under a `secret.<key>` pref.
  *
  * Values are typed convenience wrappers for known secrets; the generic
- * [put]/[get]/[remove] surface serves anything later tasks need. Task 24 uses
- * [SERVER_TOKEN_KEY] via [saveServerToken]/[serverToken] for the kikoeru JWT.
+ * [put]/[get]/[remove] surface serves anything later tasks need.
  *
  * A corrupted/tampered/wrong-key payload must never crash readers: [get]
  * catches decrypt failures, logs them and returns `null` (the secret is
@@ -146,24 +145,8 @@ class KeystoreDataStore @Inject constructor(
         dataStore.edit { it.remove(stringPreferencesKey(secretKey(key))) }
     }
 
-    suspend fun saveServerToken(token: String) = put(SERVER_TOKEN_KEY, token)
-
-    suspend fun serverToken(): String? = get(SERVER_TOKEN_KEY)
-
-    /** Per-server JWT slot (Task 24): one encrypted secret per server id, so
-     *  tokens are never locked to a single server. Never logged; stored
-     *  ciphertext-only (asserted in KeystoreDataStoreTest). */
-    suspend fun saveServerToken(serverId: String, token: String) =
-        put(serverTokenKey(serverId), token)
-
-    suspend fun serverToken(serverId: String): String? = get(serverTokenKey(serverId))
-
-    suspend fun removeServerToken(serverId: String) = remove(serverTokenKey(serverId))
-
     companion object {
-        const val SERVER_TOKEN_KEY = "server_token"
         private const val TAG = "OneAsmrKeystore"
         private fun secretKey(key: String) = "secret.$key"
-        private fun serverTokenKey(serverId: String) = "$SERVER_TOKEN_KEY.$serverId"
     }
 }

@@ -67,8 +67,8 @@ object CoverModule {
      * Shared OkHttp client for Coil + the cover downloader. A browser UA is
      * stamped on every request: DLsite cover URLs 403 without it (hotlink
      * protection, Task 9 learning). No referer here — that is per-request in
-     * [OkHttpCoverDownloader] (the work page URL), Coil's remote covers are
-     * the user's own kikoeru server (Task 25) and need none.
+     * [OkHttpCoverDownloader] (the work page URL); Coil loads DLsite covers
+     * that need no referer at all.
      */
     @Provides
     @Singleton

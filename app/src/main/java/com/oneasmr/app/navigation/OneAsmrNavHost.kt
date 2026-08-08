@@ -37,7 +37,6 @@ import com.oneasmr.app.ui.player.PlayerScreen
 import com.oneasmr.app.ui.player.VideoPlayerScreen
 import com.oneasmr.app.ui.reviews.ReviewListScreen
 import com.oneasmr.app.ui.settings.ScanRootsScreen
-import com.oneasmr.app.ui.settings.ServerLoginScreen
 import com.oneasmr.app.ui.settings.SettingsScreen
 import com.oneasmr.app.ui.work.ImageFileScreen
 import com.oneasmr.app.ui.work.TextFileScreen
@@ -56,7 +55,6 @@ object Routes {
     const val BROWSE = "browse/{dimension}/{id}"
     const val REVIEWS = "reviews"
     const val SETTINGS = "settings"
-    const val SERVER_LOGIN = "server_login"
     const val SCAN_ROOTS = "scan_roots"
 
     const val WORK_DETAIL_ARG = "workId"
@@ -299,14 +297,7 @@ fun OneAsmrNavHost(
             ) {
                 SettingsScreen(
                     onOpenRootFolders = { navController.navigate(Routes.SCAN_ROOTS) },
-                    onOpenServerLogin = { navController.navigate(Routes.SERVER_LOGIN) },
                 )
-            }
-            composable(
-                route = Routes.SERVER_LOGIN,
-                deepLinks = listOf(navDeepLink { uriPattern = "oneasmr://server_login" }),
-            ) {
-                ServerLoginScreen(onBack = { navController.popBackStack() })
             }
             composable(
                 route = Routes.SCAN_ROOTS,

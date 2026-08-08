@@ -92,7 +92,7 @@ enum class ResumeMode {
  * a temp-file [PreferenceDataStoreFactory] store to prove defaults and
  * persistence across "restarts" (new instance, same file).
  *
- * Task 5 scope: theme mode, server address, scraping language, cache cap.
+ * Task 5 scope: theme mode, scraping language, cache cap.
  * Task 27 adds more entries; keep this class the single source of truth.
  */
 @Singleton
@@ -101,9 +101,6 @@ class SettingsStore @Inject constructor(
 ) {
     val themeMode: Flow<ThemeMode> =
         dataStore.data.map { ThemeMode.fromStored(it[KEY_THEME_MODE]) }
-
-    val serverAddress: Flow<String> =
-        dataStore.data.map { it[KEY_SERVER_ADDRESS] ?: "" }
 
     val scrapingLanguage: Flow<ScrapingLanguage> =
         dataStore.data.map { ScrapingLanguage.fromStored(it[KEY_SCRAPING_LANGUAGE]) }
@@ -152,10 +149,6 @@ class SettingsStore @Inject constructor(
 
     suspend fun setThemeMode(mode: ThemeMode) {
         dataStore.edit { it[KEY_THEME_MODE] = mode.name }
-    }
-
-    suspend fun setServerAddress(address: String) {
-        dataStore.edit { it[KEY_SERVER_ADDRESS] = address.trim() }
     }
 
     suspend fun setScrapingLanguage(language: ScrapingLanguage) {
@@ -214,7 +207,6 @@ class SettingsStore @Inject constructor(
         const val MAX_RECENT_SEARCHES = 10
 
         private val KEY_THEME_MODE = stringPreferencesKey("theme_mode")
-        private val KEY_SERVER_ADDRESS = stringPreferencesKey("server_address")
         private val KEY_SCRAPING_LANGUAGE = stringPreferencesKey("scraping_language")
         private val KEY_SCRAPER_BASE_URL_OVERRIDE = stringPreferencesKey("scraper_base_url_override")
         private val KEY_CACHE_CAP_MB = intPreferencesKey("cache_cap_mb")
