@@ -150,9 +150,20 @@ class KeystoreDataStore @Inject constructor(
 
     suspend fun serverToken(): String? = get(SERVER_TOKEN_KEY)
 
+    /** Per-server JWT slot (Task 24): one encrypted secret per server id, so
+     *  tokens are never locked to a single server. Never logged; stored
+     *  ciphertext-only (asserted in KeystoreDataStoreTest). */
+    suspend fun saveServerToken(serverId: String, token: String) =
+        put(serverTokenKey(serverId), token)
+
+    suspend fun serverToken(serverId: String): String? = get(serverTokenKey(serverId))
+
+    suspend fun removeServerToken(serverId: String) = remove(serverTokenKey(serverId))
+
     companion object {
         const val SERVER_TOKEN_KEY = "server_token"
         private const val TAG = "OneAsmrKeystore"
         private fun secretKey(key: String) = "secret.$key"
+        private fun serverTokenKey(serverId: String) = "$SERVER_TOKEN_KEY.$serverId"
     }
 }

@@ -29,6 +29,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.oneasmr.app.data.local.settings.ResumeMode
+import com.oneasmr.app.data.local.settings.ServerStore
 import com.oneasmr.app.data.local.settings.SettingsStore
 import com.oneasmr.app.data.local.settings.ThemeMode
 import com.oneasmr.app.data.repository.RootGrantStatus
@@ -37,6 +38,7 @@ import com.oneasmr.app.data.repository.ScanRootRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -48,11 +50,14 @@ import kotlinx.coroutines.launch
 @Composable
 fun SettingsScreen(
     onOpenRootFolders: () -> Unit = {},
+    onOpenServerLogin: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
     val rootEntries by viewModel.rootEntries.collectAsStateWithLifecycle()
     val resumeMode by viewModel.resumeMode.collectAsStateWithLifecycle()
+    val activeServerName by viewModel.activeServerName.collectAsStateWithLifecycle()
+    val serverCount by viewModel.serverCount.collectAsStateWithLifecycle()
 
     Column(
         modifier = Modifier
@@ -114,6 +119,29 @@ fun SettingsScreen(
                 if (rootEntries.isEmpty()) "未添加" else "${rootEntries.size} 个",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        HorizontalDivider()
+        Spacer(Modifier.height(16.dp))
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onOpenServerLogin)
+                .padding(vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("服务器模式", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            Text(
+                when {
+                    serverCount == 0 -> "未配置"
+                    activeServerName.isNotBlank() -> activeServerName
+                    else -> "${serverCount} 个"
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
         HorizontalDivider()
@@ -181,12 +209,21 @@ private fun ResumeMode.displayLabel(): String = when (this) {
 class SettingsViewModel @Inject constructor(
     private val settingsStore: SettingsStore,
     private val scanRootRepository: ScanRootRepository,
+    serverStore: ServerStore,
 ) : ViewModel() {
     val themeMode: StateFlow<ThemeMode> = settingsStore.themeMode
         .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, ThemeMode.SYSTEM)
     val rootEntries: StateFlow<List<ScanRootEntry>> = scanRootRepository.entries
     val resumeMode: StateFlow<ResumeMode> = settingsStore.resumeMode
         .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, ResumeMode.AUTO)
+
+    val activeServerName: StateFlow<String> = serverStore.activeServer
+        .map { it?.name.orEmpty() }
+        .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, "")
+
+    val serverCount: StateFlow<Int> = serverStore.servers
+        .map { it.size }
+        .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, 0)
 
     init {
         viewModelScope.launch { scanRootRepository.refreshValidation() }

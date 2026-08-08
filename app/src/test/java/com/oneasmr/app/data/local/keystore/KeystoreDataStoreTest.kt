@@ -126,6 +126,36 @@ class KeystoreDataStoreTest {
     }
 
     @Test
+    fun `per-server tokens are isolated and survive restart`() = runTest {
+        val tf = file("perserver")
+        val key = testKey()
+        val store = storeIn(tf.open(), key)
+        store.saveServerToken("srv1", "token-for-srv1")
+        store.saveServerToken("srv2", "token-for-srv2")
+
+        assertEquals("token-for-srv1", store.serverToken("srv1"))
+        assertEquals("token-for-srv2", store.serverToken("srv2"))
+        assertNull(store.serverToken("srv3"))
+
+        val restarted = storeIn(tf.restart(), key)
+        assertEquals("token-for-srv1", restarted.serverToken("srv1"))
+        assertEquals("token-for-srv2", restarted.serverToken("srv2"))
+
+        restarted.removeServerToken("srv1")
+        assertNull(restarted.serverToken("srv1"))
+        assertEquals("token-for-srv2", restarted.serverToken("srv2"))
+    }
+
+    @Test
+    fun `per-server tokens never appear in plaintext in the store file`() = runTest {
+        val tf = file("perserver-plain")
+        val key = testKey()
+        storeIn(tf.open(), key).saveServerToken("srv1", "super-secret-jwt-value")
+
+        assertFalse(tf.file().readText().contains("super-secret-jwt-value"))
+    }
+
+    @Test
     fun `gcm ciphertext differs between runs of the same plaintext`() {
         val key = testKey()
         val c = cipher(key)

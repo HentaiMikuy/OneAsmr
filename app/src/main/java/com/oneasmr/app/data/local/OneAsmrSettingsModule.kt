@@ -10,6 +10,7 @@ import com.oneasmr.app.data.local.keystore.KeystoreKeyCipher
 import com.oneasmr.app.data.local.keystore.KeyCipher
 import com.oneasmr.app.data.local.settings.SettingsStore
 import com.oneasmr.app.data.local.settings.QueueStore
+import com.oneasmr.app.data.local.settings.ServerStore
 import com.oneasmr.app.data.repository.AndroidRootDisplayNameResolver
 import com.oneasmr.app.data.repository.AndroidScanRootPermissionStore
 import com.oneasmr.app.data.repository.RootDisplayNameResolver
@@ -70,6 +71,12 @@ object OneAsmrSettingsModule {
 
     @Provides
     @Singleton
+    @Named("server_config")
+    fun provideServerConfigDataStore(@ApplicationContext context: Context): DataStore<Preferences> =
+        PreferenceDataStoreFactory.create(produceFile = { context.preferencesDataStoreFile("server_config") })
+
+    @Provides
+    @Singleton
     fun provideScanBookkeepingStore(
         @Named("scan_bookkeeping") dataStore: DataStore<Preferences>,
     ): ScanBookkeepingStore = ScanBookkeepingStore(dataStore)
@@ -88,6 +95,11 @@ object OneAsmrSettingsModule {
     @Singleton
     fun provideScanRootsStore(@Named("scan_roots") dataStore: DataStore<Preferences>): ScanRootsStore =
         ScanRootsStore(dataStore)
+
+    @Provides
+    @Singleton
+    fun provideServerStore(@Named("server_config") dataStore: DataStore<Preferences>): ServerStore =
+        ServerStore(dataStore)
 
     @Provides
     @Singleton

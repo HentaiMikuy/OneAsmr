@@ -297,13 +297,16 @@ fun OneAsmrNavHost(
                 route = Routes.SETTINGS,
                 deepLinks = listOf(navDeepLink { uriPattern = "oneasmr://settings" }),
             ) {
-                SettingsScreen(onOpenRootFolders = { navController.navigate(Routes.SCAN_ROOTS) })
+                SettingsScreen(
+                    onOpenRootFolders = { navController.navigate(Routes.SCAN_ROOTS) },
+                    onOpenServerLogin = { navController.navigate(Routes.SERVER_LOGIN) },
+                )
             }
             composable(
                 route = Routes.SERVER_LOGIN,
                 deepLinks = listOf(navDeepLink { uriPattern = "oneasmr://server_login" }),
             ) {
-                ServerLoginScreen()
+                ServerLoginScreen(onBack = { navController.popBackStack() })
             }
             composable(
                 route = Routes.SCAN_ROOTS,
