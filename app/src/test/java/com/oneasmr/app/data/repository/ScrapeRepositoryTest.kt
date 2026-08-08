@@ -16,10 +16,12 @@ import com.oneasmr.app.data.local.WorkTag
 import com.oneasmr.app.data.local.WorkTagDao
 import com.oneasmr.app.data.local.WorkVa
 import com.oneasmr.app.data.local.WorkVaDao
+import com.oneasmr.app.data.remote.RequestPacer
 import com.oneasmr.app.data.remote.dlsite.AjaxFields
 import com.oneasmr.app.data.remote.dlsite.DlsiteCovers
 import com.oneasmr.app.data.remote.dlsite.DlsiteScrapeException
 import com.oneasmr.app.data.remote.dlsite.DlsiteScraperApi
+import com.oneasmr.app.data.remote.dlsite.FallbackScraper
 import com.oneasmr.app.data.remote.dlsite.ScrapedWork
 import com.oneasmr.app.domain.rjcode.RjCode
 import java.io.File
@@ -82,6 +84,26 @@ class ScrapeRepositoryTest {
             concurrent--
             failKinds[code.canonical]?.let { throw DlsiteScrapeException(it, "fake failure for ${code.canonical}") }
             return testScrapedWork(code.canonical)
+        }
+    }
+
+    /**
+     * Minimal stub scraper for the fallback-chain tests: a fixed failure kind
+     * or a fixed result, plus an [onScrape] hook used by the pacing test to
+     * pass through the shared [RequestPacer] and stamp the fake clock.
+     */
+    private class StubScraper(
+        var failure: DlsiteScrapeException.Kind? = null,
+        val onScrape: suspend () -> Unit = {},
+        val result: (String) -> ScrapedWork = { testScrapedWork(it) },
+    ) : DlsiteScraperApi {
+        val codes = mutableListOf<String>()
+
+        override suspend fun scrape(code: RjCode): ScrapedWork {
+            onScrape()
+            codes += code.canonical
+            failure?.let { throw DlsiteScrapeException(it, "stub failure for ${code.canonical}") }
+            return result(code.canonical)
         }
     }
 
@@ -200,6 +222,8 @@ class ScrapeRepositoryTest {
         val scheduler: TestCoroutineScheduler = TestCoroutineScheduler(),
         val clock: FakeClock = FakeClock(),
         downloaderResult: (String) -> CoverDownloadResult = { CoverDownloadResult.OK },
+        scraperFactory: (suspend () -> DlsiteScraperApi)? = null,
+        requestPacer: RequestPacer? = null,
     ) {
         val workDao = FakeWorkDao()
         val circleDao = FakeCircleDao()
@@ -224,10 +248,11 @@ class ScrapeRepositoryTest {
                 cacheCapBytes = { Long.MAX_VALUE },
                 clock = clock,
             ),
-            scraperFactory = { scraper },
+            scraperFactory = scraperFactory ?: { scraper },
             ioDispatcher = StandardTestDispatcher(scheduler),
             clock = clock,
             paceDelay = { ms -> clock.advance(ms) },
+            requestPacer = requestPacer ?: RequestPacer(clock, { ms -> clock.advance(ms) }),
         )
 
         suspend fun seedWork(rjCode: String, status: ScrapeStatus = ScrapeStatus.NOT_SCRAPED, title: String = "Folder $rjCode") {
@@ -518,5 +543,111 @@ class ScrapeRepositoryTest {
         assertNotNull(h.circleDao.getById("Circle-RJ111111"))
         assertEquals(setOf("tag-a", "tag-b"), h.tagDao.rows.keys)
         assertEquals(setOf("va-x"), h.vaDao.rows.keys)
+    }
+
+    // ---- fallback chain (asmr.one wiring) ---------------------------------
+
+    @Test
+    fun `fallback succeeds when the primary fails and persists the fallback metadata`() = runTest {
+        val clock = FakeClock()
+        val primary = StubScraper(failure = DlsiteScrapeException.Kind.NETWORK)
+        val fallback = StubScraper { code ->
+            testScrapedWork(code).copy(title = "Fallback-$code", circle = "AsmCircle-$code")
+        }
+        val h = Harness(
+            tmp,
+            scheduler = testScheduler,
+            clock = clock,
+            scraperFactory = { FallbackScraper(primary = primary, fallback = { fallback }) },
+        )
+        h.seedWork("RJ111111")
+
+        val outcome = h.repo.scrapeOne("local:RJ111111")
+
+        assertTrue(outcome is ScrapeOutcome.Success)
+        assertEquals("RJ111111", (outcome as ScrapeOutcome.Success).rjCode)
+        val work = h.workDao.getById("local:RJ111111")!!
+        assertEquals(ScrapeStatus.OK, work.scrapeStatus)
+        assertEquals("Fallback-RJ111111", work.title)
+        assertEquals("AsmCircle-RJ111111", work.circleId)
+        assertEquals(listOf("RJ111111"), primary.codes)
+        assertEquals(listOf("RJ111111"), fallback.codes)
+    }
+
+    @Test
+    fun `double failure returns the fallback kind and marks the work FAILED`() = runTest {
+        val clock = FakeClock()
+        val primary = StubScraper(failure = DlsiteScrapeException.Kind.NOT_FOUND)
+        val fallback = StubScraper(failure = DlsiteScrapeException.Kind.BLOCKED)
+        val h = Harness(
+            tmp,
+            scheduler = testScheduler,
+            clock = clock,
+            scraperFactory = { FallbackScraper(primary = primary, fallback = { fallback }) },
+        )
+        h.seedWork("RJ111111")
+
+        val outcome = h.repo.scrapeOne("local:RJ111111")
+
+        assertTrue(outcome is ScrapeOutcome.Failed)
+        assertEquals(DlsiteScrapeException.Kind.BLOCKED, (outcome as ScrapeOutcome.Failed).kind)
+        assertEquals(ScrapeStatus.FAILED, h.workDao.getById("local:RJ111111")!!.scrapeStatus)
+        assertEquals(listOf("RJ111111"), primary.codes)
+        assertEquals(listOf("RJ111111"), fallback.codes)
+    }
+
+    @Test
+    fun `disabled fallback rethrows the primary failure unchanged`() = runTest {
+        val clock = FakeClock()
+        val primary = StubScraper(failure = DlsiteScrapeException.Kind.PARSE_ERROR)
+        val fallback = StubScraper()
+        val h = Harness(
+            tmp,
+            scheduler = testScheduler,
+            clock = clock,
+            scraperFactory = { FallbackScraper(primary = primary, fallback = { null }) },
+        )
+        h.seedWork("RJ111111")
+
+        val outcome = h.repo.scrapeOne("local:RJ111111")
+
+        assertTrue(outcome is ScrapeOutcome.Failed)
+        assertEquals(DlsiteScrapeException.Kind.PARSE_ERROR, (outcome as ScrapeOutcome.Failed).kind)
+        assertEquals(ScrapeStatus.FAILED, h.workDao.getById("local:RJ111111")!!.scrapeStatus)
+        assertEquals(listOf("RJ111111"), primary.codes)
+        assertEquals(0, fallback.codes.size) // never constructed into a request
+    }
+
+    @Test
+    fun `primary and fallback requests share the global pacing gate`() = runTest {
+        val clock = FakeClock()
+        val pacer = RequestPacer(clock, { ms -> clock.advance(ms) })
+        val starts = mutableListOf<Long>()
+        val pacedStart: suspend () -> Unit = {
+            pacer.pace()
+            starts += clock()
+        }
+        val primary = StubScraper(failure = DlsiteScrapeException.Kind.NETWORK, onScrape = pacedStart)
+        val fallback = StubScraper(onScrape = pacedStart)
+        val h = Harness(
+            tmp,
+            scheduler = testScheduler,
+            clock = clock,
+            scraperFactory = { FallbackScraper(primary = primary, fallback = { fallback }) },
+            requestPacer = pacer,
+        )
+        h.seedWork("RJ111111")
+        h.seedWork("RJ222222")
+
+        assertTrue(h.repo.scrapeOne("local:RJ111111") is ScrapeOutcome.Success)
+        assertTrue(h.repo.scrapeOne("local:RJ222222") is ScrapeOutcome.Success)
+
+        // 4 requests total (primary + fallback per work), all through the ONE
+        // pacer: consecutive starts are spaced by the full 1s interval even
+        // though they come from two different scrape sources.
+        assertEquals(4, starts.size)
+        starts.zipWithNext().forEach { (a, b) ->
+            assertTrue("gap ${b - a}ms must be >= 1000ms", b - a >= 1_000L)
+        }
     }
 }

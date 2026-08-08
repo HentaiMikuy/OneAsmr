@@ -15,6 +15,7 @@ import com.oneasmr.app.data.local.WorkTag
 import com.oneasmr.app.data.local.WorkTagDao
 import com.oneasmr.app.data.local.WorkVa
 import com.oneasmr.app.data.local.WorkVaDao
+import com.oneasmr.app.data.remote.RequestPacer
 import com.oneasmr.app.data.remote.dlsite.DlsiteScrapeException
 import com.oneasmr.app.data.remote.dlsite.DlsiteScraperApi
 import com.oneasmr.app.data.remote.dlsite.ScrapedWork
@@ -32,8 +33,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 
@@ -85,14 +84,18 @@ sealed interface ScrapeOutcome {
  *
  * Batch = worker pool of [maxConcurrency] coroutines pulling ids from a
  * channel. Rate-limit contract (Task 9): NO request starts within
- * [minRequestIntervalMillis] of the previous request's start — enforced by a
- * shared mutex so the spacing is GLOBAL across workers, not per worker —
+ * [minRequestIntervalMillis] of the previous request's start — enforced by
+ * the shared [RequestPacer] so the spacing is GLOBAL across workers (and
+ * across every scrape source sharing the pacer), not per worker —
  * and at most [maxConcurrency] requests in flight. Cancelling the calling
  * coroutine stops the queue; already-committed works stay, in-flight works are
  * cancelled cooperatively, and nothing is half-persisted.
  *
- * All timing (pacing decision + request start stamps) reads [clock]; the
- * actual wait is injected via [paceDelay] (defaults to [delay]). Tests inject
+ * Pacing is delegated to [requestPacer]; the default builds one from [clock],
+ * [paceDelay] and [minRequestIntervalMillis] so direct-construction tests
+ * keep working without a pacer argument (production injects the shared
+ * singleton from ScrapeModule). All other timing reads [clock]; the actual
+ * wait is injected via [paceDelay] (defaults to [delay]). Tests inject
  * a fake clock + an instant delay that advances it — no real-time waits.
  */
 @Singleton
@@ -110,10 +113,8 @@ class ScrapeRepository @Inject constructor(
     private val paceDelay: suspend (Long) -> Unit = { delay(it) },
     private val maxConcurrency: Int = 2,
     private val minRequestIntervalMillis: Long = 1_000L,
+    private val requestPacer: RequestPacer = RequestPacer(clock, paceDelay, minRequestIntervalMillis),
 ) : SingleWorkScraper {
-    private val paceMutex = Mutex()
-    private var lastRequestStart = Long.MIN_VALUE / 2
-
     /**
      * Scrapes ONE work. OK on the work row (scrapeStatus=OK + fields) or
      * FAILED — never throws (except [CancellationException], rethrown so the
@@ -139,7 +140,7 @@ class ScrapeRepository @Inject constructor(
             state.value = BatchScrapeState.IDLE
             return BatchScrapeResult(0, 0, 0, cancelled = false)
         }
-        lastRequestStart = clock() - minRequestIntervalMillis
+        requestPacer.prime()
         val done = AtomicInteger(0)
         val succeeded = AtomicInteger(0)
         val failed = AtomicInteger(0)
@@ -149,7 +150,7 @@ class ScrapeRepository @Inject constructor(
                 repeat(maxConcurrency) {
                     launch(ioDispatcher) {
                         for (id in channel) {
-                            pace()
+                            requestPacer.pace()
                             state.update { it.copy(currentCode = rjCodeOf(id)) }
                             val outcome = runScrape(id, scraper)
                             val d = done.incrementAndGet()
@@ -167,16 +168,6 @@ class ScrapeRepository @Inject constructor(
         } catch (e: CancellationException) {
             state.value = state.value.copy(phase = BatchPhase.FINISHED, currentCode = null, cancelled = true)
             throw e
-        }
-    }
-
-    /** Global request gate: blocks until [minRequestIntervalMillis] since the last request START. */
-    private suspend fun pace() {
-        paceMutex.withLock {
-            val now = clock()
-            val wait = minRequestIntervalMillis - (now - lastRequestStart)
-            if (wait > 0) paceDelay(wait)
-            lastRequestStart = clock()
         }
     }
 

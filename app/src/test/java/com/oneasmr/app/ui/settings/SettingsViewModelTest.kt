@@ -19,6 +19,7 @@ import com.oneasmr.app.data.local.ProgressState
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestCoroutineScheduler
@@ -60,6 +61,7 @@ class SettingsViewModelTest {
     private lateinit var settingsDataStore: TestDataStoreFile
     private lateinit var rootsDataStore: TestDataStoreFile
     private lateinit var settings: SettingsStore
+    private lateinit var rootsScope: kotlinx.coroutines.CoroutineScope
     private lateinit var rootsRepo: ScanRootRepository
     private lateinit var coverStore: CoverStore
     private lateinit var coverDir: File
@@ -170,11 +172,12 @@ class SettingsViewModelTest {
         settingsDataStore = TestDataStoreFile(tmp.newFile("settings.preferences_pb"))
         rootsDataStore = TestDataStoreFile(tmp.newFile("scan_roots.preferences_pb"))
         settings = SettingsStore(settingsDataStore.open())
+        rootsScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.Default)
         rootsRepo = ScanRootRepository(
             permissionStore = FakePermissionStore(),
             rootsStore = ScanRootsStore(rootsDataStore.open()),
             displayNameResolver = FakeResolver(),
-            scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.Default),
+            scope = rootsScope,
         )
         coverDir = tmp.newFolder("covers")
         capBytes = Long.MAX_VALUE
@@ -205,6 +208,10 @@ class SettingsViewModelTest {
 
     @After
     fun tearDown() {
+        // The repo's eager entries collector lives on a REAL Default-dispatcher
+        // thread; without cancelling it here, a late resume can land on Main
+        // after resetMain and crash whichever test runs next.
+        rootsScope.cancel()
         Dispatchers.resetMain()
     }
 
@@ -371,5 +378,55 @@ class SettingsViewModelTest {
         assertEquals("512 B", formatCacheBytes(512))
         assertEquals("2 KB", formatCacheBytes(2048))
         assertEquals("1.5 MB", formatCacheBytes(1572864L))
+    }
+
+    // ---- asmr.one fallback source ------------------------------------------
+
+    @Test
+    fun `asmr one settings emit defaults`() = runTest(scheduler) {
+        assertEquals(true, harness.viewModel.asmrOneFallbackEnabled.first())
+        assertEquals("", harness.viewModel.asmrOneBaseUrl.first())
+    }
+
+    @Test
+    fun `fallback toggle persists through the store`() = runTest(scheduler) {
+        harness.viewModel.setAsmrOneFallbackEnabled(false)
+        assertEquals(false, harness.viewModel.asmrOneFallbackEnabled.first { !it })
+        assertEquals(false, settings.asmrOneFallbackEnabled.first())
+
+        harness.viewModel.setAsmrOneFallbackEnabled(true)
+        assertEquals(true, harness.viewModel.asmrOneFallbackEnabled.first { it })
+    }
+
+    @Test
+    fun `mirror base url persists and blank restores default`() = runTest(scheduler) {
+        harness.viewModel.setAsmrOneBaseUrl("https://api.asmr-100.com")
+        assertEquals(
+            "https://api.asmr-100.com",
+            harness.viewModel.asmrOneBaseUrl.first { it.isNotBlank() },
+        )
+        assertEquals("https://api.asmr-100.com", settings.asmrOneBaseUrl.first())
+
+        harness.viewModel.setAsmrOneBaseUrl("")
+        assertEquals("", harness.viewModel.asmrOneBaseUrl.first { it.isBlank() })
+    }
+
+    @Test
+    fun `mirror dialog visibility toggles and confirm hides it`() = runTest(scheduler) {
+        assertTrue(!harness.viewModel.asmrOneMirrorDialogVisible.value)
+
+        harness.viewModel.showAsmrOneMirrorDialog()
+        assertTrue(harness.viewModel.asmrOneMirrorDialogVisible.value)
+
+        harness.viewModel.cancelAsmrOneMirrorDialog()
+        assertTrue(!harness.viewModel.asmrOneMirrorDialogVisible.value)
+
+        harness.viewModel.showAsmrOneMirrorDialog()
+        harness.viewModel.setAsmrOneBaseUrl("https://api.asmr-100.com")
+        assertTrue(!harness.viewModel.asmrOneMirrorDialogVisible.value)
+        assertEquals(
+            "https://api.asmr-100.com",
+            harness.viewModel.asmrOneBaseUrl.first { it.isNotBlank() },
+        )
     }
 }

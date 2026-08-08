@@ -102,9 +102,14 @@ class SettingsStore @Inject constructor(
     val themeMode: Flow<ThemeMode> =
         dataStore.data.map { ThemeMode.fromStored(it[KEY_THEME_MODE]) }
 
-    /** Material You dynamic color (Android 12+); on by default (Task 27 toggle). */
+    /**
+     * Material You dynamic color (Android 12+). Off by default since the
+     * custom brand scheme (warm-amber dark palette, OneAsmrColorSchemes) is
+     * the intended out-of-box look; the toggle opts INTO wallpaper-derived
+     * color for users who prefer it.
+     */
     val dynamicColor: Flow<Boolean> =
-        dataStore.data.map { it[KEY_DYNAMIC_COLOR] ?: true }
+        dataStore.data.map { it[KEY_DYNAMIC_COLOR] ?: false }
 
     val scrapingLanguage: Flow<ScrapingLanguage> =
         dataStore.data.map { ScrapingLanguage.fromStored(it[KEY_SCRAPING_LANGUAGE]) }
@@ -151,6 +156,25 @@ class SettingsStore @Inject constructor(
     val scraperBaseUrlOverride: Flow<String> =
         dataStore.data.map { it[KEY_SCRAPER_BASE_URL_OVERRIDE] ?: "" }
 
+    /**
+     * asmr.one fallback source toggle. On by default: when a DLsite scrape
+     * fails (any kind), RJ works are retried against asmr.one's JSON API.
+     * Unlike [scraperBaseUrlOverride] this is a user-facing, non-debug
+     * setting — asmr.one is a legitimate secondary metadata source, not a QA
+     * hook.
+     */
+    val asmrOneFallbackEnabled: Flow<Boolean> =
+        dataStore.data.map { it[KEY_ASMR_ONE_FALLBACK_ENABLED] ?: true }
+
+    /**
+     * asmr.one API mirror base-url. Blank = [DEFAULT_ASMR_ONE_BASE_URL]
+     * (same blank-means-default convention as [scraperBaseUrlOverride]);
+     * non-blank values point at a mirror (e.g. api.asmr-100.com) for users
+     * whose networks cannot reach the primary host.
+     */
+    val asmrOneBaseUrl: Flow<String> =
+        dataStore.data.map { it[KEY_ASMR_ONE_BASE_URL] ?: "" }
+
     suspend fun setThemeMode(mode: ThemeMode) {
         dataStore.edit { it[KEY_THEME_MODE] = mode.name }
     }
@@ -166,6 +190,15 @@ class SettingsStore @Inject constructor(
     /** Sets the debug scraper base-url override; blank restores production. */
     suspend fun setScraperBaseUrlOverride(url: String) {
         dataStore.edit { it[KEY_SCRAPER_BASE_URL_OVERRIDE] = url.trim() }
+    }
+
+    suspend fun setAsmrOneFallbackEnabled(enabled: Boolean) {
+        dataStore.edit { it[KEY_ASMR_ONE_FALLBACK_ENABLED] = enabled }
+    }
+
+    /** Sets the asmr.one mirror base-url; blank restores [DEFAULT_ASMR_ONE_BASE_URL]. */
+    suspend fun setAsmrOneBaseUrl(url: String) {
+        dataStore.edit { it[KEY_ASMR_ONE_BASE_URL] = url.trim().trimEnd('/') }
     }
 
     /** Cache size cap in MB, clamped to [1, 100_000] (Task 10 CoverStore enforces it). */
@@ -213,6 +246,7 @@ class SettingsStore @Inject constructor(
     companion object {
         const val DEFAULT_CACHE_CAP_MB = 500
         const val MAX_RECENT_SEARCHES = 10
+        const val DEFAULT_ASMR_ONE_BASE_URL = "https://api.asmr.one"
 
         private val KEY_THEME_MODE = stringPreferencesKey("theme_mode")
         private val KEY_DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
@@ -224,6 +258,8 @@ class SettingsStore @Inject constructor(
         private val KEY_LIBRARY_SORT_DESCENDING = booleanPreferencesKey("library_sort_descending")
         private val KEY_RECENT_SEARCHES = stringPreferencesKey("recent_searches")
         private val KEY_RESUME_MODE = stringPreferencesKey("resume_mode")
+        private val KEY_ASMR_ONE_FALLBACK_ENABLED = booleanPreferencesKey("asmr_one_fallback_enabled")
+        private val KEY_ASMR_ONE_BASE_URL = stringPreferencesKey("asmr_one_base_url")
 
         /** Unit separator: the only forbidden character in a search term. */
         private const val SEPARATOR = "\u001F"

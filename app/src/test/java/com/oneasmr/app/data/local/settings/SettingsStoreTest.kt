@@ -190,4 +190,24 @@ class SettingsStoreTest {
         dataStore.edit { it[stringPreferencesKey("library_sort_order")] = "BY_MOON" }
         assertEquals(com.oneasmr.app.data.local.WorkOrder.ID, storeIn(dataStore).librarySortOrder.first())
     }
+
+    // ---------- asmr.one fallback source ----------
+
+    @Test
+    fun `asmr one fallback defaults to enabled with blank base url`() = runTest {
+        val store = storeIn(file("asmrone-default").open())
+        assertTrue(store.asmrOneFallbackEnabled.first())
+        assertEquals("", store.asmrOneBaseUrl.first())
+    }
+
+    @Test
+    fun `asmr one settings round trip across store instances`() = runTest {
+        val tf = file("asmrone")
+        val store = storeIn(tf.open())
+        store.setAsmrOneFallbackEnabled(false)
+        store.setAsmrOneBaseUrl(" https://api.asmr-100.com/ ")
+        val restarted = storeIn(tf.restart())
+        assertFalse(restarted.asmrOneFallbackEnabled.first())
+        assertEquals("https://api.asmr-100.com", restarted.asmrOneBaseUrl.first())
+    }
 }
