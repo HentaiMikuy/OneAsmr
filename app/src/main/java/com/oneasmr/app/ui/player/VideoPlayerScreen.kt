@@ -139,9 +139,8 @@ import kotlinx.coroutines.withContext
  *    (plan must-not). The service skips QueueStore persistence in video mode,
  *    so even a force-stop mid-video cold-restores the AUDIO queue.
  *
- * The MediaItem source is generic ([MediaItem.Builder.setUri]) — content://
- * SAF uris for local works today; Task 26 routes remote video streams
- * (http(s) + ?token) through this same page without changes.
+ * The MediaItem source is generic ([MediaItem.Builder.setUri]) — this page
+ * is local-only today, playing content:// SAF uris from the local library.
  *
  * Must-NOT honored: no subtitle-track switching, no PiP, no casting; video is
  * never added to the shuffle/queue logic.
