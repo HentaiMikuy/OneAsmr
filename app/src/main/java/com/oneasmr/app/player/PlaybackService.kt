@@ -115,6 +115,33 @@ class PlaybackService : MediaSessionService() {
     private var lastQueue: List<MediaItem> = emptyList()
     private var lastStartIndex: Int = 0
 
+    /**
+     * Task 22 attached-video page: the audio context saved when the video
+     * enters the SHARED session player. Playing the video through the same
+     * MediaSession/ExoPlayer singleton (plan-recommended choice — the
+     * background audio policy of Task 17 stays on the single managed player:
+     * audio focus, noisy handling, wake mode, foreground service/notification)
+     * means the audio timeline must be saved before the video item replaces
+     * it and restored verbatim on exit — "返回音频队列时恢复音频上下文".
+     *
+     * The video is a single-item replacement timeline (never merged into the
+     * audio queue), so it can never enter repeat/shuffle logic (plan must-not),
+     * and [captureSession] skips QueueStore persistence while [videoMode] is
+     * active so a force-stop mid-video still cold-restores the AUDIO queue.
+     */
+    private data class SavedAudioContext(
+        val items: List<MediaItem>,
+        val startIndex: Int,
+        val startPositionMs: Long,
+        val playWhenReady: Boolean,
+        val speed: Float,
+        val repeatMode: Int,
+        val shuffleEnabled: Boolean,
+    )
+
+    private var savedAudioContext: SavedAudioContext? = null
+    private var videoMode: Boolean = false
+
     override fun onCreate() {
         super.onCreate()
         serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -178,6 +205,76 @@ class PlaybackService : MediaSessionService() {
         mediaSession?.run { release() }
         mediaSession = null
         super.onDestroy()
+    }
+
+    // ---------------------------------------------------------------------
+    // Task 22 attached-video mode (shared session player)
+    // ---------------------------------------------------------------------
+
+    /**
+     * VIDEO_ENTER handler: snapshot the current audio session BEFORE the
+     * video page replaces the timeline with the single video item. Called by
+     * the video page's controller right before its setMediaItems, so the
+     * restore point is always the exact pre-video state.
+     */
+    private fun saveAudioContext() {
+        videoMode = true
+        if (player.mediaItemCount == 0) {
+            Log.i(TAG, "video enter: empty session — nothing to save")
+            return
+        }
+        savedAudioContext = SavedAudioContext(
+            items = lastQueue,
+            startIndex = player.currentMediaItemIndex,
+            startPositionMs = player.currentPosition,
+            playWhenReady = player.playWhenReady,
+            speed = player.playbackParameters.speed,
+            repeatMode = player.repeatMode,
+            shuffleEnabled = player.shuffleModeEnabled,
+        )
+        Log.i(
+            TAG,
+            "video enter: audio context saved (${savedAudioContext!!.items.size} items at " +
+                "index ${savedAudioContext!!.startIndex}, pos=${savedAudioContext!!.startPositionMs}ms, " +
+                "playing=${savedAudioContext!!.playWhenReady}, speed=${savedAudioContext!!.speed})",
+        )
+    }
+
+    /**
+     * VIDEO_EXIT handler: restore the pre-video audio context verbatim
+     * (queue, index, position, speed, repeat/shuffle, playWhenReady) so the
+     * user returns to the exact audio state — "返回音频队列时恢复音频上下文".
+     * The video's final position is flushed FIRST (Task 19 rules: last-write-
+     * wins on the video trackKey, same >95%/<3% resume policy on reopen).
+     * With no saved context (video entered from an empty session) this is a
+     * clean exit: pause + clear, mirroring the mini-bar swipe dismiss.
+     */
+    private fun exitVideoMode() {
+        val saved = savedAudioContext
+        videoMode = false
+        savedAudioContext = null
+        serviceScope.launch {
+            progressWriter.flush()
+            if (saved == null) {
+                Log.i(TAG, "video exit: no saved audio context — pausing and clearing")
+                player.pause()
+                player.clearMediaItems()
+                return@launch
+            }
+            player.setPlaybackSpeed(saved.speed)
+            player.repeatMode = saved.repeatMode
+            player.shuffleModeEnabled = saved.shuffleEnabled
+            player.setMediaItems(saved.items, saved.startIndex, saved.startPositionMs)
+            // prepare() also clears a lingering ERROR state from a failed
+            // video item (setMediaItems alone leaves the session in ERROR).
+            player.prepare()
+            player.playWhenReady = saved.playWhenReady
+            Log.i(
+                TAG,
+                "video exit: audio context restored (${saved.items.size} items at index " +
+                    "${saved.startIndex}, pos=${saved.startPositionMs}ms, playing=${saved.playWhenReady})",
+            )
+        }
     }
 
     // ---------------------------------------------------------------------
@@ -408,10 +505,30 @@ class PlaybackService : MediaSessionService() {
          * controller listener) shows the toast from the same error event.
          * The clear is posted on the service scope — never blocking the main
          * thread inside a listener callback.
+         *
+         * Task 22 exception: when the failing item is the attached VIDEO and
+         * an audio context was saved, restore that context instead of
+         * clearing+stopping — the video page surfaces "无法播放" (plan QA:
+         * message, no crash) while the audio session survives intact.
          */
         override fun onPlayerError(error: PlaybackException) {
             Log.e(TAG, "player error: ${error.errorCodeName}: ${error.message}")
             lastQueue = emptyList()
+            if (videoMode && savedAudioContext != null) {
+                Log.w(TAG, "video playback error — restoring saved audio context")
+                // The restore supersedes the transient ERROR state within one
+                // main-thread tick, so MediaController listeners can MISS the
+                // error event entirely (coalesced into the restore). Surface
+                // the failure through an explicit app-local broadcast — the
+                // same pattern as the sleep-timer state push.
+                sendBroadcast(
+                    Intent(ACTION_VIDEO_PLAYBACK_FAILED)
+                        .setPackage(packageName)
+                        .putExtra(EXTRA_VIDEO_FAILED_MESSAGE, error.message ?: error.errorCodeName),
+                )
+                exitVideoMode()
+                return
+            }
             serviceScope.launch {
                 if (player.mediaItemCount > 0) {
                     player.clearMediaItems()
@@ -506,6 +623,13 @@ class PlaybackService : MediaSessionService() {
             lastQueue = mediaItems
             lastStartIndex = session.player.currentMediaItemIndex
             Log.i(TAG, "queue snapshot: ${mediaItems.size} items, start index $lastStartIndex")
+        }
+        // Task 22: while the attached-video page owns the session, never
+        // overwrite the persisted AUDIO queue — a force-stop mid-video must
+        // cold-restore the audio context, not the video item.
+        if (videoMode) {
+            Log.i(TAG, "queue snapshot skipped (video mode)")
+            return
         }
         val currentIndex = session.player.currentMediaItemIndex
         serviceScope.launch {
@@ -603,6 +727,8 @@ class PlaybackService : MediaSessionService() {
                 .add(SessionCommand(ACTION_SLEEP_TIMER_SET, Bundle.EMPTY))
                 .add(SessionCommand(ACTION_SLEEP_TIMER_STATE, Bundle.EMPTY))
                 .add(SessionCommand(ACTION_TOGGLE_PROGRESS, Bundle.EMPTY))
+                .add(SessionCommand(ACTION_VIDEO_ENTER, Bundle.EMPTY))
+                .add(SessionCommand(ACTION_VIDEO_EXIT, Bundle.EMPTY))
                 .build()
             return ConnectionResult.accept(
                 sessionCommands,
@@ -635,6 +761,14 @@ class PlaybackService : MediaSessionService() {
                 }
                 ACTION_TOGGLE_PROGRESS -> {
                     toggleProgress()
+                    return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+                }
+                ACTION_VIDEO_ENTER -> {
+                    saveAudioContext()
+                    return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+                }
+                ACTION_VIDEO_EXIT -> {
+                    exitVideoMode()
                     return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
                 }
             }
@@ -718,6 +852,14 @@ class PlaybackService : MediaSessionService() {
         const val EXTRA_SLEEP_TIMER_ACTIVE = "active"
         const val EXTRA_SLEEP_TIMER_REMAINING_MS = "remaining_ms"
         const val EXTRA_SLEEP_TIMER_DISPLAY = "display"
+
+        /** Task 22: attached-video page enter/exit (shared-session video mode). */
+        const val ACTION_VIDEO_ENTER = "oneasmr.command.video_enter"
+        const val ACTION_VIDEO_EXIT = "oneasmr.command.video_exit"
+
+        /** Task 22: video playback failed (service restored the audio context). */
+        const val ACTION_VIDEO_PLAYBACK_FAILED = "oneasmr.app.video_playback_failed"
+        const val EXTRA_VIDEO_FAILED_MESSAGE = "video_failed_message"
 
         /** Debug sleep-timer hook (plan-mandated; debuggable builds only). */
         const val ACTION_DEBUG_SLEEP_TIMER = "oneasmr.debug.sleep_timer"
