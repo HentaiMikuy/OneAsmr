@@ -9,14 +9,13 @@ import kotlinx.serialization.Serializable
  * model; it stays a plain immutable data holder here.
  *
  * Key format notes (KeySpec, plan Task 4):
- * - [PlayQueueItem.sourceScope] = "local" or "srv{n}" (Task 26).
+ * - [PlayQueueItem.sourceScope] = "local" (the app is local-only).
  * - [PlayQueueItem.rjCode] = bare normalized code, e.g. "RJ123456".
  * - The mediaId of the constructed MediaItem is the trackKey
  *   "{sourceScope}:{rjCode}:{trackIndex}" (built in MediaItemMapper via
  *   [com.oneasmr.app.data.local.KeySpec] — never inlined here).
- * - [PlayQueueItem.uri] supports BOTH the local SAF content:// document URI
- *   and a remote http(s) streaming URL; only the local path is exercised
- *   until Task 26 wires remote streaming.
+ * - [PlayQueueItem.uri] is the local SAF content:// document URI of the
+ *   track file (the app is local-only; no remote streaming sources).
  */
 @Serializable
 data class PlayQueueItem(
@@ -28,7 +27,7 @@ data class PlayQueueItem(
     val trackTitle: String,
     /** Work title — shown as the artist line in the media notification. */
     val workTitle: String,
-    /** SAF content:// document uri OR a remote http(s) stream url (Task 26). */
+    /** Local SAF content:// document uri of the track file. */
     val uri: String,
     /** Total duration in ms when known (null until a playback pass). */
     val durationMs: Long? = null,
