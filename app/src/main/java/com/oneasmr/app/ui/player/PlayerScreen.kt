@@ -5,6 +5,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -37,8 +38,13 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.oneasmr.app.data.local.KeySpec
 import com.oneasmr.app.data.local.WorkDao
+import com.oneasmr.app.data.lyrics.LrcLoader
+import com.oneasmr.app.data.lyrics.LrcMatcher
+import com.oneasmr.app.data.scanner.TrackNode
+import com.oneasmr.app.data.scanner.TrackNodeType
 import com.oneasmr.app.data.scanner.TrackTreeBuilder
 import com.oneasmr.app.data.scanner.WorkPathResolver
+import com.oneasmr.app.domain.lyrics.LrcLyrics
 import com.oneasmr.app.domain.player.PlayQueue
 import com.oneasmr.app.domain.player.PlaybackSpeed
 import com.oneasmr.app.navigation.Routes
@@ -54,10 +60,13 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -87,6 +96,18 @@ data class PlayerUiState(
 }
 
 /**
+ * Task 20 lyrics state. [lyrics] == null and [loading] == false means the
+ * current track has NO usable .lrc — the player hides the lyrics entry
+ * ("无歌词时隐藏入口"). [activeIndex] is the highlighted line derived from the
+ * playback position (see [LrcLyrics.indexAt]).
+ */
+data class LyricsUiState(
+    val loading: Boolean = false,
+    val lyrics: LrcLyrics? = null,
+    val activeIndex: Int = -1,
+)
+
+/**
  * Task 17 playback launcher (plan Task 17 wiring; the full player screen is
  * Task 21):
  *
@@ -106,6 +127,7 @@ class PlayerViewModel @Inject constructor(
     private val workDao: WorkDao,
     private val fsFactory: DocumentFsFactory,
     private val resumePositionResolver: ResumePositionResolver,
+    private val lrcLoader: LrcLoader,
 ) : ViewModel() {
 
     private val workId: String = checkNotNull(savedStateHandle[Routes.WORK_DETAIL_ARG])
@@ -114,8 +136,17 @@ class PlayerViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(PlayerUiState())
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
 
+    private val _lyricsUi = MutableStateFlow(LyricsUiState())
+    val lyricsUi: StateFlow<LyricsUiState> = _lyricsUi.asStateFlow()
+
     private var controller: MediaController? = null
     private var controllerFuture: com.google.common.util.concurrent.ListenableFuture<MediaController>? = null
+
+    /** Live track tree of the playing work (lyrics matching needs it). */
+    private var treeRoot: TrackNode? = null
+    private var audioByIndex: Map<Int, TrackNode> = emptyMap()
+    private var lyricsJob: Job? = null
+    private var loadedForTrackIndex: Int? = null
 
     init {
         viewModelScope.launch { startPlayback() }
@@ -134,6 +165,8 @@ class PlayerViewModel @Inject constructor(
                         val tree = TrackTreeBuilder(fs).build(
                             resolved.path, resolved.displayName, resolved.documentUri,
                         )
+                        treeRoot = tree.root
+                        audioByIndex = collectAudioNodes(tree.root)
                         val queue = PlayQueueBuilder().build(
                             workId = work.id,
                             workTitle = work.title,
@@ -186,14 +219,20 @@ class PlayerViewModel @Inject constructor(
             controller.setMediaItems(queue.items.map { it.toMediaItem() }, queue.startIndex, startPositionMs)
             controller.prepare()
             controller.play()
+            // Task 20: explicit lyrics load for the tapped track; the
+            // transition listener covers subsequent tracks (dedup-guarded).
+            loadLyricsFor(queue.items[queue.startIndex].trackIndex)
             controller.addListener(object : Player.Listener {
                 override fun onIsPlayingChanged(isPlaying: Boolean) {
                     _uiState.update { it.copy(isPlaying = isPlaying) }
                 }
 
                 override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) {
-                    val title = mediaItem?.mediaMetadata?.title?.toString() ?: return
-                    _uiState.update { it.copy(trackTitle = title) }
+                    mediaItem?.mediaMetadata?.title?.toString()?.let { title ->
+                        _uiState.update { it.copy(trackTitle = title) }
+                    }
+                    val trackIndex = mediaItem?.mediaId?.let { KeySpec.parseTrackKey(it)?.trackIndex }
+                    if (trackIndex != null) loadLyricsFor(trackIndex)
                 }
 
                 override fun onTimelineChanged(timeline: androidx.media3.common.Timeline, reason: Int) {
@@ -225,10 +264,87 @@ class PlayerViewModel @Inject constructor(
     }
 
     override fun onCleared() {
+        lyricsJob?.cancel()
         controllerFuture?.let { MediaController.releaseFuture(it) }
         controllerFuture = null
         controller = null
         super.onCleared()
+    }
+
+    // ------------------------------------------------------------------
+    // Task 20 synced lyrics
+    // ------------------------------------------------------------------
+
+    /** Audio nodes of the current tree indexed by their stable trackIndex. */
+    private fun collectAudioNodes(root: TrackNode): Map<Int, TrackNode> {
+        val byIndex = mutableMapOf<Int, TrackNode>()
+        fun walk(node: TrackNode) {
+            if (node.isFolder) {
+                node.children.forEach { walk(it) }
+                return
+            }
+            if (node.type == TrackNodeType.AUDIO && node.trackIndex != null) {
+                byIndex[node.trackIndex] = node
+            }
+        }
+        walk(root)
+        return byIndex
+    }
+
+    /**
+     * Matches + loads the .lrc for [trackIndex] (same dir, same basename —
+     * kikoeru check-lrc semantics). No match / undecodable file / empty
+     * lyrics -> the entry stays hidden; a corrupt LRC parses with skipped
+     * rows. While lyrics are loaded, a 100ms ticker derives the active line
+     * from the playback position (≤100ms staleness, well inside the plan's
+     * ±200ms sync budget).
+     */
+    private fun loadLyricsFor(trackIndex: Int) {
+        if (loadedForTrackIndex == trackIndex) return
+        loadedForTrackIndex = trackIndex
+        lyricsJob?.cancel()
+        val root = treeRoot
+        val audio = audioByIndex[trackIndex]
+        if (root == null || audio == null) {
+            _lyricsUi.value = LyricsUiState()
+            return
+        }
+        val lrcNode = LrcMatcher.findLrc(root, audio.relativePath)
+        if (lrcNode == null) {
+            Log.i(TAG, "lyrics: no matching .lrc for track $trackIndex (${audio.relativePath})")
+            _lyricsUi.value = LyricsUiState()
+            return
+        }
+        _lyricsUi.value = LyricsUiState(loading = true)
+        lyricsJob = viewModelScope.launch {
+            val lyrics = withContext(Dispatchers.IO) { lrcLoader.load(lrcNode.documentUri) }
+            if (lyrics == null) {
+                Log.w(TAG, "lyrics: unavailable for track $trackIndex (${lrcNode.name})")
+                _lyricsUi.value = LyricsUiState()
+                return@launch
+            }
+            Log.i(TAG, "lyrics: loaded ${lyrics.lines.size} lines (skipped ${lyrics.skippedLines}) for track $trackIndex")
+            _lyricsUi.update { it.copy(loading = false, lyrics = lyrics) }
+            while (isActive) {
+                val positionMs = controller?.currentPosition ?: 0L
+                val index = lyrics.indexAt(positionMs)
+                if (index != _lyricsUi.value.activeIndex) {
+                    Log.i(TAG, "lyrics: active line -> $index (position ${positionMs}ms, track $trackIndex)")
+                    _lyricsUi.update { it.copy(activeIndex = index) }
+                }
+                delay(POSITION_TICK_MS)
+            }
+        }
+    }
+
+    /** Taps a lyric line: seek the session to that timestamp. */
+    fun seekToLyric(timestampMs: Long) {
+        controller?.seekTo(timestampMs)
+    }
+
+    companion object {
+        private const val TAG = "PlayerViewModel"
+        private const val POSITION_TICK_MS = 100L
     }
 
     // ------------------------------------------------------------------
@@ -285,6 +401,7 @@ class PlayerViewModel @Inject constructor(
 @Composable
 fun PlayerScreen(viewModel: PlayerViewModel = hiltViewModel()) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val lyricsState by viewModel.lyricsUi.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -331,6 +448,26 @@ fun PlayerScreen(viewModel: PlayerViewModel = hiltViewModel()) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
                 )
+                Spacer(Modifier.height(8.dp))
+                // Task 20: synced lyrics — hidden entirely when the track has
+                // no usable .lrc ("无歌词时隐藏入口").
+                val lyrics = lyricsState.lyrics
+                when {
+                    lyricsState.loading -> {
+                        Text(
+                            "正在加载歌词…",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    lyrics != null -> {
+                        LyricsPanel(
+                            lyrics = lyrics,
+                            activeIndex = lyricsState.activeIndex,
+                            onLineClick = viewModel::seekToLyric,
+                        )
+                    }
+                }
                 Spacer(Modifier.height(8.dp))
                 Text(
                     if (state.isPlaying) "▶ 播放中" else "⏸ 已暂停",
