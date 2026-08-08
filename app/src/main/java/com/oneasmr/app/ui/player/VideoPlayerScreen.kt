@@ -703,8 +703,8 @@ class VideoPlayerViewModel @Inject constructor(
                 if (result?.resultCode != SessionResult.RESULT_SUCCESS) {
                     Log.w(TAG, "video enter: audio-context snapshot failed (code=${result?.resultCode})")
                 }
-                // Generic source: content:// SAF uri today; http(s) stream url
-                // lands in Task 26 through the same builder.
+                // Generic source: content:// SAF uri from the local library
+                // (the app is local-only; no remote/streaming sources).
                 val item = MediaItem.Builder()
                     .setMediaId(videoKey)
                     .setUri(video.documentUri)
