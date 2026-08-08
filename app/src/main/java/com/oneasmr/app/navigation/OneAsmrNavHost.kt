@@ -102,11 +102,17 @@ object Routes {
  * it is routed explicitly below; [NavHostController.handleDeepLink] ignores
  * URIs that match nothing (e.g. `oneasmr://nope`), which leaves the start
  * destination (library) visible — the required failure path.
+ *
+ * [deepLinkIntent] is snapshot state refreshed by [MainActivity.onNewIntent],
+ * so a VIEW intent the system delivers to the running top instance (warm
+ * deep link) re-runs [NavHostController.handleDeepLink] instead of being
+ * silently dropped. Falls back to `activity.intent` when not provided.
  */
 @Composable
 fun OneAsmrNavHost(
     navController: NavHostController = rememberNavController(),
     modifier: Modifier = Modifier,
+    deepLinkIntent: Intent? = null,
 ) {
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
@@ -309,8 +315,8 @@ fun OneAsmrNavHost(
     }
 
     val activity = LocalContext.current as? Activity
-    val intent = activity?.intent
-    LaunchedEffect(activity, intent) {
+    LaunchedEffect(activity, deepLinkIntent) {
+        val intent = deepLinkIntent ?: activity?.intent
         if (intent?.action == Intent.ACTION_VIEW && intent.data != null) {
             navController.handleDeepLink(intent)
         }
