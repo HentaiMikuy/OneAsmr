@@ -5,9 +5,11 @@ import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.Timeline
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.ShuffleOrder
 import androidx.media3.session.CommandButton
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
@@ -24,12 +26,18 @@ import com.oneasmr.app.data.local.KeySpec
 import com.oneasmr.app.data.local.ProgressState
 import com.oneasmr.app.data.local.Review
 import com.oneasmr.app.data.local.ReviewDao
+import com.oneasmr.app.data.local.settings.PersistedQueue
+import com.oneasmr.app.data.local.settings.QueueStore
+import com.oneasmr.app.domain.player.FairDeckShuffle
+import com.oneasmr.app.domain.player.PlayQueueItem
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
+import kotlin.random.Random
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
@@ -51,6 +59,15 @@ import kotlinx.coroutines.launch
  *   returns the last queue so a headset/media-button play request with an
  *   empty playlist restarts it. (Cross-process queue persistence is Task 18;
  *   this service keeps an in-process snapshot.)
+ * - Task 18 (queue/repeat/shuffle/speed): the service is the SINGLE source
+ *   of truth for the session state. Every queue/mode change is persisted to
+ *   [QueueStore] (DataStore) via [Player.Listener] callbacks; on cold start
+ *   [restoreSession] rebuilds the queue structure + repeat/shuffle/speed.
+ *   POSITION restore is Task 19's playback_state table — this task restores
+ *   with start position 0 (see [restoreSession] seam comment). Speed changes
+ *   go through `player.setPlaybackSpeed` ONLY — the player/session are never
+ *   rebuilt (plan must-not); identity logging under "PlaybackService" is the
+ *   QA evidence channel (same player/session hash across speed steps).
  * - Foreground service: Media3's [MediaNotificationManager] handles
  *   startForeground for media sessions automatically (see
  *   MediaSessionService.onUpdateNotification default impl); the manifest
@@ -64,6 +81,9 @@ class PlaybackService : MediaSessionService() {
 
     @Inject
     lateinit var reviewDao: ReviewDao
+
+    @Inject
+    lateinit var queueStore: QueueStore
 
     private lateinit var notificationProvider: DefaultMediaNotificationProvider
     private var mediaSession: MediaSession? = null
@@ -100,11 +120,13 @@ class PlaybackService : MediaSessionService() {
             .setMediaButtonPreferences(mediaButtonPreferences(null))
             .build()
 
+        Log.i(TAG, "onCreate: player@${System.identityHashCode(player)} session@${System.identityHashCode(mediaSession)}")
         player.addListener(queueSnapshotListener)
         // Re-render the notification on every sleep-timer tick (countdown label).
         serviceScope.launch {
             sleepTimer.state.collect { updateButtonLabels() }
         }
+        restoreSession()
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = mediaSession
@@ -214,33 +236,163 @@ class PlaybackService : MediaSessionService() {
     }
 
     // ---------------------------------------------------------------------
-    // Queue snapshot (playback resumption source)
+    // Queue snapshot + session persistence (Task 18)
     // ---------------------------------------------------------------------
 
     private val queueSnapshotListener = object : Player.Listener {
-        override fun onTimelineChanged(timeline: Timeline, reason: Int) = snapshotQueue()
+        override fun onTimelineChanged(timeline: Timeline, reason: Int) {
+            captureSession()
+        }
+
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-            snapshotQueue()
+            captureSession()
             // The progress button label shows the CURRENT work's six-state
             // progress — refresh it whenever the item changes (a fresh
             // service start has no item yet, so labels start idle).
             updateButtonLabels()
         }
+
+        override fun onRepeatModeChanged(repeatMode: Int) {
+            serviceScope.launch { queueStore.setRepeatMode(repeatMode.toRepeatMode()) }
+            Log.i(TAG, "repeat mode -> ${repeatMode.toRepeatMode()}")
+        }
+
+        override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
+            // Fair-deck first cycle: hand the player OUR seeded permutation
+            // (no-repeat-until-exhausted; FairDeckShuffleTest locks the
+            // property). When the order is exhausted mid-playback ExoPlayer
+            // generates a fresh permutation from the seed — still fair.
+            if (shuffleModeEnabled) {
+                applyFairShuffleOrder()
+                // Enabled at queue end: restart the walk from the deck's first
+                // item so the next play runs the WHOLE order instead of the
+                // remainder (repeat OFF stops at order end either way).
+                if (player.playbackState == Player.STATE_ENDED) {
+                    player.seekToDefaultPosition()
+                    Log.i(TAG, "shuffle enabled at queue end: deck restarted")
+                }
+            }
+            serviceScope.launch { queueStore.setShuffleEnabled(shuffleModeEnabled) }
+            Log.i(TAG, "shuffle -> $shuffleModeEnabled")
+        }
+
+        override fun onPlaybackParametersChanged(playbackParameters: PlaybackParameters) {
+            val speed = playbackParameters.speed
+            val pitch = playbackParameters.pitch
+            serviceScope.launch { queueStore.setSpeed(speed) }
+            // Identity evidence: same player/session hash on every step proves
+            // the speed change never rebuilds the player (plan must-not);
+            // pitch=1.0 proves the Sonic pitch-preserving path stayed on.
+            Log.i(
+                TAG,
+                "speed -> ${speed}x pitch=$pitch player@${System.identityHashCode(player)} " +
+                    "session@${System.identityHashCode(mediaSession)} (no rebuild)",
+            )
+        }
     }
 
-    private fun snapshotQueue() {
+    /** Snapshot of the CURRENT timeline: fills [lastQueue] (Android 13+ resumption) and persists the session. */
+    private fun captureSession() {
         val session = mediaSession ?: return
-        // Player.getMediaItems() was removed in media3 1.10 — read the timeline.
         val timeline = session.player.currentTimeline
-        val items = mutableListOf<MediaItem>()
+        val mediaItems = mutableListOf<MediaItem>()
+        val playQueueItems = mutableListOf<PlayQueueItem>()
         for (i in 0 until timeline.windowCount) {
-            timeline.getWindow(i, Timeline.Window()).mediaItem?.let(items::add)
+            val window = Timeline.Window()
+            timeline.getWindow(i, window)
+            val mediaItem = window.mediaItem ?: continue
+            mediaItems += mediaItem
+            // mediaId IS the normative trackKey "{scope}:{rjCode}:{index}".
+            val parts = KeySpec.parseTrackKey(mediaItem.mediaId)
+            if (parts != null) {
+                playQueueItems += PlayQueueItem(
+                    sourceScope = parts.sourceScope,
+                    rjCode = parts.rjCode,
+                    trackIndex = parts.trackIndex,
+                    trackTitle = mediaItem.mediaMetadata.title?.toString() ?: "",
+                    workTitle = mediaItem.mediaMetadata.artist?.toString() ?: "",
+                    uri = mediaItem.localConfiguration?.uri?.toString() ?: "",
+                )
+            }
         }
-        if (items.isNotEmpty()) {
-            lastQueue = items
+        if (mediaItems.isNotEmpty()) {
+            lastQueue = mediaItems
             lastStartIndex = session.player.currentMediaItemIndex
-            Log.i(TAG, "queue snapshot: ${items.size} items, start index $lastStartIndex")
+            Log.i(TAG, "queue snapshot: ${mediaItems.size} items, start index $lastStartIndex")
         }
+        val currentIndex = session.player.currentMediaItemIndex
+        serviceScope.launch {
+            if (playQueueItems.isEmpty()) {
+                queueStore.saveQueue(null)
+            } else {
+                queueStore.saveQueue(
+                    PersistedQueue(
+                        workId = KeySpec.workId(playQueueItems[0].sourceScope, playQueueItems[0].rjCode),
+                        items = playQueueItems,
+                        currentIndex = currentIndex.coerceAtLeast(0),
+                    ),
+                )
+            }
+        }
+    }
+
+    /**
+     * Cold-start restore (plan Task 18): rebuild the queue STRUCTURE and the
+     * repeat/shuffle/speed modes from [QueueStore]. Task 19 owns the playback
+     * POSITION — its playback_state read plugs in here as the
+     * `startPositionMs` argument of the [androidx.media3.session.MediaSession.MediaItemsWithStartPosition]
+     * style set (today: position 0). Playback is NOT auto-started; the user
+     * or a media-button play resumes (Android 13+ [onPlaybackResumption]).
+     */
+    private fun restoreSession() {
+        serviceScope.launch {
+            val persisted = queueStore.queue.first()
+            // Modes are independent of the queue: restore them even when the
+            // last queue was cleared (the player singleton starts fresh here).
+            player.repeatMode = queueStore.repeatMode.first().toMedia3()
+            // Enabling shuffle fires onShuffleModeEnabledChanged, whose
+            // listener applies the fair-deck order automatically.
+            if (queueStore.shuffleEnabled.first()) player.shuffleModeEnabled = true
+            player.setPlaybackSpeed(queueStore.speed.first())
+            if (persisted == null) {
+                Log.i(TAG, "session restore: no persisted queue (modes only)")
+                return@launch
+            }
+            if (player.mediaItemCount > 0) {
+                Log.i(TAG, "session restore skipped (queue already on player)")
+                return@launch
+            }
+            if (!persisted.isRestorable) {
+                Log.w(
+                    TAG,
+                    "persisted session not restorable (${persisted.items.size} items, index ${persisted.currentIndex})",
+                )
+                return@launch
+            }
+            // Task 19 seam: replace 0L with the playback_state read for the
+            // restored item (per-trackKey position memory).
+            player.setMediaItems(persisted.items.map { it.toMediaItem() }, persisted.currentIndex, 0L)
+            Log.i(
+                TAG,
+                "session restored: ${persisted.items.size} items at index ${persisted.currentIndex} " +
+                    "repeat=${player.repeatMode.toRepeatMode()} shuffle=${player.shuffleModeEnabled} " +
+                    "speed=${player.playbackParameters.speed} (position restore = Task 19, not started)",
+            )
+        }
+    }
+
+    /**
+     * Hands the player a seeded fair-deck permutation as the shuffle order
+     * (see [FairDeckShuffle]); skipped on an empty timeline.
+     */
+    private fun applyFairShuffleOrder() {
+        val count = player.mediaItemCount
+        if (count == 0) return
+        val seed = FairDeckShuffle.newSeed()
+        player.setShuffleOrder(
+            ShuffleOrder.DefaultShuffleOrder(FairDeckShuffle.permutation(count, Random(seed)), seed),
+        )
+        Log.i(TAG, "fair shuffle order applied for $count items (seed=$seed)")
     }
 
     // ---------------------------------------------------------------------

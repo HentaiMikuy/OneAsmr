@@ -9,10 +9,12 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -37,10 +39,13 @@ import com.oneasmr.app.data.local.WorkDao
 import com.oneasmr.app.data.scanner.TrackTreeBuilder
 import com.oneasmr.app.data.scanner.WorkPathResolver
 import com.oneasmr.app.domain.player.PlayQueue
+import com.oneasmr.app.domain.player.PlaybackSpeed
 import com.oneasmr.app.navigation.Routes
 import com.oneasmr.app.player.PlayQueueBuilder
 import com.oneasmr.app.player.PlaybackService
+import com.oneasmr.app.player.toMedia3
 import com.oneasmr.app.player.toMediaItem
+import com.oneasmr.app.player.toRepeatMode
 import com.oneasmr.app.ui.work.DocumentFsFactory
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -59,6 +64,11 @@ import kotlinx.coroutines.withContext
  * full player UI lands in Task 21, but playback START and the notification
  * permission request live here (they are Task 17's wiring, driven from the
  * detail-page audio-node tap -> player route).
+ *
+ * Task 18 extends this placeholder with a compact queue-control cluster
+ * (repeat / shuffle / speed / next / reorder / clear) — the QA surface for
+ * the queue-mode-speed work. Task 21 replaces the whole screen; the session
+ * state stays owned by PlaybackService either way.
  */
 data class PlayerUiState(
     val loading: Boolean = true,
@@ -66,6 +76,10 @@ data class PlayerUiState(
     val workTitle: String = "",
     val trackTitle: String = "",
     val isPlaying: Boolean = false,
+    val queueSize: Int = 0,
+    val repeatMode: Int = Player.REPEAT_MODE_OFF,
+    val shuffleEnabled: Boolean = false,
+    val speed: Float = 1f,
 ) {
     val ready: Boolean get() = !loading && error == null
 }
@@ -169,8 +183,32 @@ class PlayerViewModel @Inject constructor(
                     val title = mediaItem?.mediaMetadata?.title?.toString() ?: return
                     _uiState.update { it.copy(trackTitle = title) }
                 }
+
+                override fun onTimelineChanged(timeline: androidx.media3.common.Timeline, reason: Int) {
+                    _uiState.update { it.copy(queueSize = timeline.windowCount) }
+                }
+
+                override fun onRepeatModeChanged(repeatMode: Int) {
+                    _uiState.update { it.copy(repeatMode = repeatMode) }
+                }
+
+                override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
+                    _uiState.update { it.copy(shuffleEnabled = shuffleModeEnabled) }
+                }
+
+                override fun onPlaybackParametersChanged(playbackParameters: androidx.media3.common.PlaybackParameters) {
+                    _uiState.update { it.copy(speed = playbackParameters.speed) }
+                }
             })
-            _uiState.update { it.copy(loading = false) }
+            _uiState.update {
+                it.copy(
+                    loading = false,
+                    queueSize = controller.mediaItemCount,
+                    repeatMode = controller.repeatMode,
+                    shuffleEnabled = controller.shuffleModeEnabled,
+                    speed = controller.playbackParameters.speed,
+                )
+            }
         }, ContextCompat.getMainExecutor(context))
     }
 
@@ -179,6 +217,50 @@ class PlayerViewModel @Inject constructor(
         controllerFuture = null
         controller = null
         super.onCleared()
+    }
+
+    // ------------------------------------------------------------------
+    // Task 18 queue controls — drive the SESSION (single source of truth);
+    // PlaybackService persists every change and never rebuilds the player.
+    // ------------------------------------------------------------------
+
+    /** Cycles repeat OFF -> ALL -> ONE -> OFF. */
+    fun cycleRepeat() {
+        val c = controller ?: return
+        c.repeatMode = c.repeatMode.toRepeatMode().next().toMedia3()
+    }
+
+    fun toggleShuffle() {
+        val c = controller ?: return
+        c.shuffleModeEnabled = !c.shuffleModeEnabled
+    }
+
+    fun speedUp() {
+        val c = controller ?: return
+        c.setPlaybackSpeed(PlaybackSpeed.stepUp(c.playbackParameters.speed))
+    }
+
+    fun speedDown() {
+        val c = controller ?: return
+        c.setPlaybackSpeed(PlaybackSpeed.stepDown(c.playbackParameters.speed))
+    }
+
+    /** Guarded next: an empty queue must be a no-op, never a crash. */
+    fun nextTrack() {
+        val c = controller ?: return
+        if (c.mediaItemCount > 0) c.seekToNextMediaItem()
+    }
+
+    /** Reorder evidence: swap the current item one position forward. */
+    fun swapWithNext() {
+        val c = controller ?: return
+        val i = c.currentMediaItemIndex
+        if (i >= 0 && i + 1 < c.mediaItemCount) c.moveMediaItem(i, i + 1)
+    }
+
+    fun clearQueue() {
+        val c = controller ?: return
+        c.setMediaItems(emptyList())
     }
 }
 
@@ -244,6 +326,8 @@ fun PlayerScreen(viewModel: PlayerViewModel = hiltViewModel()) {
                     color = MaterialTheme.colorScheme.primary,
                 )
                 Spacer(Modifier.height(16.dp))
+                QueueControls(viewModel, state)
+                Spacer(Modifier.height(16.dp))
                 Text(
                     "播放器界面将在后续任务中完成 — 按 Home 键可从通知栏控制播放",
                     style = MaterialTheme.typography.bodySmall,
@@ -251,6 +335,45 @@ fun PlayerScreen(viewModel: PlayerViewModel = hiltViewModel()) {
                     textAlign = TextAlign.Center,
                 )
             }
+        }
+    }
+}
+
+/**
+ * Task 18 queue-mode control cluster (temporary QA surface; Task 21 ships the
+ * real player UI). All state lives in the session — this cluster only sends
+ * standard Player commands through the [MediaController].
+ */
+@Composable
+private fun QueueControls(viewModel: PlayerViewModel, state: PlayerUiState) {
+    val repeatLabel = when (state.repeatMode) {
+        Player.REPEAT_MODE_ALL -> "循环:列表"
+        Player.REPEAT_MODE_ONE -> "循环:单曲"
+        else -> "循环:关闭"
+    }
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            "队列 ${state.queueSize} 首 · 随机 ${if (state.shuffleEnabled) "开" else "关"} · 倍速 ${state.speed}x",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = viewModel::cycleRepeat) { Text(repeatLabel) }
+            Button(onClick = viewModel::toggleShuffle) {
+                Text(if (state.shuffleEnabled) "随机 开" else "随机 关")
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = viewModel::speedDown) { Text("倍速 −") }
+            Button(onClick = viewModel::speedUp) { Text("倍速 +") }
+            Button(onClick = viewModel::nextTrack, enabled = state.queueSize > 0) { Text("下一首") }
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = viewModel::swapWithNext, enabled = state.queueSize > 1) { Text("交换下一首") }
+            Button(onClick = viewModel::clearQueue) { Text("清空队列") }
         }
     }
 }

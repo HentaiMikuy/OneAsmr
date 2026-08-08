@@ -1,5 +1,7 @@
 package com.oneasmr.app.domain.player
 
+import kotlinx.serialization.Serializable
+
 /**
  * Playback queue model — single source of truth for everything the player
  * builds its MediaItems from (plan Task 17). Task 18 builds the queue
@@ -16,6 +18,7 @@ package com.oneasmr.app.domain.player
  *   and a remote http(s) streaming URL; only the local path is exercised
  *   until Task 26 wires remote streaming.
  */
+@Serializable
 data class PlayQueueItem(
     val sourceScope: String,
     val rjCode: String,
