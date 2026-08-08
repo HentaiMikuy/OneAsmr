@@ -1,4 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.OneAsmr" parent="android:Theme.Material.NoActionBar" />
+    <!--
+        Base app theme (plan Task 28): dark Material, no action bar. The
+        window background is the brand color so cold starts on API 26-30 show
+        a branded frame behind the first Compose frame; API 31+ replaces the
+        starting window entirely with the platform splash (values-v31).
+    -->
+    <style name="Theme.OneAsmr" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/ic_launcher_background</item>
+    </style>
 </resources>

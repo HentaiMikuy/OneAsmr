@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        Dark-mode adaptation of the brand color (plan Task 28): the launcher
+        picks the -night variant when the device is in dark mode, so the
+        adaptive-icon background (and the splash background, which shares the
+        resource) shifts to a purple-tinted dark that matches the lavender
+        glyph. The themed-icon monochrome layer additionally handles contrast
+        on API 33+.
+    -->
+    <color name="ic_launcher_background">#211E2A</color>
+</resources>

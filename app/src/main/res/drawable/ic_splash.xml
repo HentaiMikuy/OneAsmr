@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Splash-screen mark (plan Task 28): the OneAsmr headphone glyph enlarged
+    onto the 288dp splash icon canvas (2/3 safe zone, per the splash-screen
+    icon guidance). The splash background color comes from
+    windowSplashScreenBackground (values-v31); this drawable is the brand
+    glyph alone, drawn from scratch — not the launcher adaptive icon (the
+    platform forbids using the adaptive icon as the splash icon).
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="288dp"
+    android:height="288dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="@android:color/transparent"
+        android:pathData="M27,47.25 A27,27 0 0 1 81,47.25"
+        android:strokeColor="#E8DEF8"
+        android:strokeLineCap="round"
+        android:strokeWidth="8" />
+    <path
+        android:fillColor="#E8DEF8"
+        android:pathData="M25.65,51.25 a4,4 0 0 1 4,-4 h5.5 a4,4 0 0 1 4,4 v19 a4,4 0 0 1 -4,4 h-5.5 a4,4 0 0 1 -4,-4 z" />
+    <path
+        android:fillColor="#E8DEF8"
+        android:pathData="M68.85,51.25 a4,4 0 0 1 4,-4 h5.5 a4,4 0 0 1 4,4 v19 a4,4 0 0 1 -4,4 h-5.5 a4,4 0 0 1 -4,-4 z" />
+</vector>

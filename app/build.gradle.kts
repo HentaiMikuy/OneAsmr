@@ -23,7 +23,14 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // Plan Task 28: production-grade release — R8 minification +
+            // resource shrinking. The release variant is signed with the
+            // DEBUG key so `assembleRelease` yields an installable APK out of
+            // the box (documented in README.md); official distribution must
+            // swap in a dedicated signing config.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            signingConfig = signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",

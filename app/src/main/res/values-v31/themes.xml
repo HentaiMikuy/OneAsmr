@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        API 31+ platform splash (plan Task 28): the starting window shows the
+        brand-colored background with the headphone mark, then fades into the
+        activity. windowSplashScreen* are framework attrs introduced in API 31,
+        so this variant file only applies where the platform can honor them;
+        API 26-30 fall back to the base theme's branded window background.
+    -->
+    <style name="Theme.OneAsmr" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/ic_launcher_background</item>
+        <item name="android:windowSplashScreenBackground">@color/ic_launcher_background</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_splash</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">@color/ic_launcher_background</item>
+        <item name="android:windowSplashScreenAnimationDuration">200</item>
+    </style>
+</resources>
