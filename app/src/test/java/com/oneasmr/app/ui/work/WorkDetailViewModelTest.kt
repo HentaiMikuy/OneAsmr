@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.room.Room
 import com.oneasmr.app.data.local.Circle
 import com.oneasmr.app.data.local.OneAsmrDatabase
+import com.oneasmr.app.data.local.PlaybackState
 import com.oneasmr.app.data.local.ProgressState
 import com.oneasmr.app.data.local.Review
 import com.oneasmr.app.data.local.ScrapeStatus
@@ -101,6 +102,7 @@ class WorkDetailViewModelTest {
             workTagDao = db.workTagDao(),
             workVaDao = db.workVaDao(),
             reviewDao = db.reviewDao(),
+            playbackStateDao = db.playbackStateDao(),
             rootRepository = rootRepository,
             scraper = scraper,
             fsFactory = DocumentFsFactory { fs },
@@ -285,6 +287,30 @@ class WorkDetailViewModelTest {
             t != null && !t.expanded.contains("CD1/Sub")
         }
         assertFalse((collapsed.tree as TrackTreeUiState.Ready).expanded.contains("CD1/Sub"))
+    }
+
+    @Test
+    fun `remembered playback positions surface per track index`() = runTest(scheduler) {
+        seedWork()
+        seedWorkFolder()
+        scheduler.advanceUntilIdle()
+        awaitTreeReady()
+
+        // Task 19: playback_state rows drive the detail-page progress bars.
+        db.playbackStateDao().upsert(
+            PlaybackState("local:RJ000001:1", positionMs = 30_000, durationMs = 300_000, updatedAt = 1L),
+        )
+        db.playbackStateDao().upsert(
+            PlaybackState("local:RJ000001:4", positionMs = 2_000, durationMs = 300_000, updatedAt = 1L),
+        )
+
+        val state = viewModel.uiState.first { it.trackProgress.isNotEmpty() }
+        assertEquals(30_000L, state.trackProgress[1]?.positionMs)
+        assertEquals(300_000L, state.trackProgress[1]?.durationMs)
+        assertEquals(0.1f, state.trackProgress[1]?.fraction)
+        assertNull("track without a row has no progress", state.trackProgress[2])
+        assertNull(state.trackProgress[3])
+        assertEquals(2_000L, state.trackProgress[4]?.positionMs)
     }
 
     @Test

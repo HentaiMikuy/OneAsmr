@@ -99,4 +99,66 @@ class SleepTimerControllerTest {
         // negative clamps to zero
         assertEquals("0:00", SleepTimerController.formatCountdown(-5L))
     }
+
+    // ------------------------------------------------------------------
+    // Task 19: END_OF_TRACK mode ("播完当前曲")
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `startAtTrackEnd activates end-of-track mode with a static label`() = runTest {
+        val controller = SleepTimerController(scope = this, clock = { testScheduler.currentTime })
+        controller.startAtTrackEnd()
+        assertTrue(controller.state.value.active)
+        assertEquals(SleepTimerMode.END_OF_TRACK, controller.state.value.mode)
+        assertEquals("播完当前曲", controller.state.value.display)
+        // No countdown ticks in this mode.
+        advanceTimeBy(5_000)
+        runCurrent()
+        assertEquals(SleepTimerMode.END_OF_TRACK, controller.state.value.mode)
+        assertTrue(controller.state.value.active)
+    }
+
+    @Test
+    fun `startAtTrackEnd replaces a running countdown`() = runTest {
+        val controller = SleepTimerController(scope = this, clock = { testScheduler.currentTime })
+        controller.start(60_000L)
+        controller.startAtTrackEnd()
+        assertEquals(SleepTimerMode.END_OF_TRACK, controller.state.value.mode)
+        advanceTimeBy(60_000)
+        runCurrent()
+        // The old countdown job is gone: no expiry after the switch.
+        assertTrue(controller.state.value.active)
+    }
+
+    @Test
+    fun `expireNow fires the seam and resets state - the player-driven end-of-track stop`() = runTest {
+        var expired = false
+        val controller = SleepTimerController(scope = this, clock = { testScheduler.currentTime }, onExpired = { expired = true })
+        controller.startAtTrackEnd()
+        controller.expireNow()
+        assertFalse(controller.state.value.active)
+        assertTrue(expired)
+    }
+
+    @Test
+    fun `expireNow on an inactive timer is a no-op`() = runTest {
+        var expired = false
+        val controller = SleepTimerController(scope = this, clock = { testScheduler.currentTime }, onExpired = { expired = true })
+        controller.expireNow()
+        assertFalse(expired)
+    }
+
+    @Test
+    fun `countdown expiry still fires the seam exactly once`() = runTest {
+        var expired = 0
+        val controller = SleepTimerController(scope = this, clock = { testScheduler.currentTime }, onExpired = { expired += 1 })
+        controller.start(3_000L)
+        advanceTimeBy(3_000)
+        runCurrent()
+        assertEquals(1, expired)
+        // No late double-expiry.
+        advanceTimeBy(60_000)
+        runCurrent()
+        assertEquals(1, expired)
+    }
 }

@@ -65,6 +65,25 @@ enum class LibraryViewMode {
 }
 
 /**
+ * Playback-resume policy (plan Task 19): [AUTO] resumes from the remembered
+ * position per [com.oneasmr.app.player.ResumePolicy] boundaries; [ALWAYS_ASK]
+ * prompts the user on every resume (the ask dialog ships with the Task 21
+ * player screen — until then the mode auto-resumes, see
+ * ResumePositionResolver). Default: [AUTO].
+ */
+enum class ResumeMode {
+    AUTO,
+    ALWAYS_ASK,
+    ;
+
+    companion object {
+        /** Read the persisted value; unknown/missing values fall back to [AUTO]. */
+        fun fromStored(value: String?): ResumeMode =
+            entries.firstOrNull { it.name == value } ?: AUTO
+    }
+}
+
+/**
  * App-wide settings persisted in a DataStore Preferences file ("settings").
  *
  * Exposed as typed [Flow]s plus suspend setters; the Hilt module
@@ -112,6 +131,14 @@ class SettingsStore @Inject constructor(
      */
     val recentSearches: Flow<List<String>> =
         dataStore.data.map { decodeRecentSearches(it[KEY_RECENT_SEARCHES]) }
+
+    /**
+     * Playback-resume policy (Task 19); default [ResumeMode.AUTO] (auto
+     * resume per the >95% / <3% boundaries). "总是询问" ships its ask UI with
+     * Task 21; the persisted value is honored by ResumePositionResolver.
+     */
+    val resumeMode: Flow<ResumeMode> =
+        dataStore.data.map { ResumeMode.fromStored(it[KEY_RESUME_MODE]) }
 
     /**
      * Debug-only DLsite base-url override (Task 11 device QA: the emulator
@@ -178,6 +205,10 @@ class SettingsStore @Inject constructor(
         dataStore.edit { it.remove(KEY_RECENT_SEARCHES) }
     }
 
+    suspend fun setResumeMode(mode: ResumeMode) {
+        dataStore.edit { it[KEY_RESUME_MODE] = mode.name }
+    }
+
     companion object {
         const val DEFAULT_CACHE_CAP_MB = 500
         const val MAX_RECENT_SEARCHES = 10
@@ -191,6 +222,7 @@ class SettingsStore @Inject constructor(
         private val KEY_LIBRARY_SORT_ORDER = stringPreferencesKey("library_sort_order")
         private val KEY_LIBRARY_SORT_DESCENDING = booleanPreferencesKey("library_sort_descending")
         private val KEY_RECENT_SEARCHES = stringPreferencesKey("recent_searches")
+        private val KEY_RESUME_MODE = stringPreferencesKey("resume_mode")
 
         /** Unit separator: the only forbidden character in a search term. */
         private const val SEPARATOR = "\u001F"

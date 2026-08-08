@@ -35,6 +35,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
+import com.oneasmr.app.data.local.KeySpec
 import com.oneasmr.app.data.local.WorkDao
 import com.oneasmr.app.data.scanner.TrackTreeBuilder
 import com.oneasmr.app.data.scanner.WorkPathResolver
@@ -43,6 +44,7 @@ import com.oneasmr.app.domain.player.PlaybackSpeed
 import com.oneasmr.app.navigation.Routes
 import com.oneasmr.app.player.PlayQueueBuilder
 import com.oneasmr.app.player.PlaybackService
+import com.oneasmr.app.player.ResumePositionResolver
 import com.oneasmr.app.player.toMedia3
 import com.oneasmr.app.player.toMediaItem
 import com.oneasmr.app.player.toRepeatMode
@@ -103,6 +105,7 @@ class PlayerViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val workDao: WorkDao,
     private val fsFactory: DocumentFsFactory,
+    private val resumePositionResolver: ResumePositionResolver,
 ) : ViewModel() {
 
     private val workId: String = checkNotNull(savedStateHandle[Routes.WORK_DETAIL_ARG])
@@ -140,26 +143,35 @@ class PlayerViewModel @Inject constructor(
                         if (!queue.isPlayable) {
                             throw IllegalStateException("该作品没有可播放的音频")
                         }
+                        // Task 19: resume the TAPPED track from its remembered
+                        // position (playback_state + resume policy); other
+                        // tracks start fresh at 0.
+                        val startItem = queue.items[queue.startIndex]
+                        val startPositionMs = resumePositionResolver.resolve(
+                            KeySpec.trackKey(startItem.sourceScope, startItem.rjCode, startItem.trackIndex),
+                        )
                         _uiState.update {
                             it.copy(
                                 workTitle = work.title,
-                                trackTitle = queue.items[queue.startIndex].trackTitle,
+                                trackTitle = startItem.trackTitle,
                             )
                         }
-                        queue
+                        PlaybackLaunch(queue, startPositionMs)
                     }
                 }
             }
         }
         outcome
-            .onSuccess { queue -> connectAndPlay(queue) }
+            .onSuccess { launch -> connectAndPlay(launch.queue, launch.startPositionMs) }
             .onFailure { e ->
                 if (e is CancellationException) throw e
                 _uiState.update { it.copy(loading = false, error = e.message ?: "播放启动失败") }
             }
     }
 
-    private fun connectAndPlay(queue: PlayQueue) {
+    private data class PlaybackLaunch(val queue: PlayQueue, val startPositionMs: Long)
+
+    private fun connectAndPlay(queue: PlayQueue, startPositionMs: Long) {
         val token = SessionToken(context, ComponentName(context, PlaybackService::class.java))
         val future = MediaController.Builder(context, token).buildAsync()
         controllerFuture = future
@@ -171,7 +183,7 @@ class PlayerViewModel @Inject constructor(
                 return@addListener
             }
             this.controller = controller
-            controller.setMediaItems(queue.items.map { it.toMediaItem() }, queue.startIndex, 0L)
+            controller.setMediaItems(queue.items.map { it.toMediaItem() }, queue.startIndex, startPositionMs)
             controller.prepare()
             controller.play()
             controller.addListener(object : Player.Listener {

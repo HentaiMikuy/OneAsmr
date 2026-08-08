@@ -24,6 +24,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -39,6 +40,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -301,9 +304,15 @@ private fun DetailContent(
             is TrackTreeUiState.Ready -> {
                 val rows = treeRows.orEmpty()
                 items(count = rows.size, key = { rows[it].node.relativePath }) { index ->
+                    val row = rows[index]
                     TreeRowItem(
-                        row = rows[index],
+                        row = row,
                         workId = work.id,
+                        progress = if (row.node.type == TrackNodeType.AUDIO) {
+                            row.node.trackIndex?.let { state.trackProgress[it] }
+                        } else {
+                            null
+                        },
                         onToggleFolder = onToggleFolder,
                         onOpenPlayer = onOpenPlayer,
                         onOpenVideoPlayer = onOpenVideoPlayer,
@@ -504,6 +513,7 @@ private fun TreeHeader(state: WorkDetailUiState) {
 private fun TreeRowItem(
     row: TreeRow,
     workId: String,
+    progress: TrackProgress?,
     onToggleFolder: (String) -> Unit,
     onOpenPlayer: (String, Int) -> Unit,
     onOpenVideoPlayer: (String, Int) -> Unit,
@@ -551,6 +561,20 @@ private fun TreeRowItem(
                     "#${node.trackIndex} · ${formatBytes(node.size)}",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            // Task 19: remembered-position progress bar on audio rows
+            // (playback_state-driven; live via Room invalidation). The
+            // contentDescription is the uiautomator-visible evidence handle.
+            val fraction = progress?.fraction
+            if (fraction != null) {
+                Spacer(Modifier.height(3.dp))
+                LinearProgressIndicator(
+                    progress = { fraction },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .semantics { contentDescription = "已播 ${(fraction * 100).toInt()}%" },
+                    trackColor = MaterialTheme.colorScheme.surfaceVariant,
                 )
             }
         }

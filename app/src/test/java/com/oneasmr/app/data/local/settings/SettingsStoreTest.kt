@@ -33,6 +33,22 @@ class SettingsStoreTest {
         assertEquals("", store.serverAddress.first())
         assertEquals(ScrapingLanguage.ZH, store.scrapingLanguage.first())
         assertEquals(SettingsStore.DEFAULT_CACHE_CAP_MB, store.cacheSizeCapMb.first())
+        assertEquals(ResumeMode.AUTO, store.resumeMode.first())
+    }
+
+    @Test
+    fun `resume mode round trip and persistence across store instances`() = runTest {
+        val tf = file("resume")
+        storeIn(tf.open()).setResumeMode(ResumeMode.ALWAYS_ASK)
+        assertEquals(ResumeMode.ALWAYS_ASK, storeIn(tf.restart()).resumeMode.first())
+    }
+
+    @Test
+    fun `corrupt persisted resume mode falls back to AUTO`() = runTest {
+        val tf = file("resume_corrupt")
+        val dataStore = tf.open()
+        dataStore.edit { it[stringPreferencesKey("resume_mode")] = "NUCLEAR" }
+        assertEquals(ResumeMode.AUTO, storeIn(dataStore).resumeMode.first())
     }
 
     @Test

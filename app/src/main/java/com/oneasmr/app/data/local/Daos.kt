@@ -743,6 +743,20 @@ interface PlaybackStateDao {
     suspend fun delete(trackKey: String)
 
     /**
+     * Every playback entry of one work (Task 19 detail-page progress bars).
+     * [prefix] is "{workId}:" e.g. "local:RJ123456:" — the trailing colon
+     * anchors the match so "local:RJ123456:3" is returned but a hypothetical
+     * "local:RJ1234567:3" is NOT (same anchoring rule as
+     * [deleteForWorkPrefix]).
+     */
+    @Query("SELECT * FROM playback_state WHERE trackKey LIKE :prefix || '%'")
+    suspend fun getAllForWork(prefix: String): List<PlaybackState>
+
+    /** Live variant: detail-page rows re-render when the writer upserts. */
+    @Query("SELECT * FROM playback_state WHERE trackKey LIKE :prefix || '%'")
+    fun getAllForWorkFlow(prefix: String): Flow<List<PlaybackState>>
+
+    /**
      * Deletes every playback entry of one work (manual-remove API, Task 7).
      * [prefix] is "{workId}:" e.g. "local:RJ123456:" — the trailing colon
      * anchors the match so "local:RJ123456:3" is removed but a hypothetical

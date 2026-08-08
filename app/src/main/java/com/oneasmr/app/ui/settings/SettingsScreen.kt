@@ -28,6 +28,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
+import com.oneasmr.app.data.local.settings.ResumeMode
 import com.oneasmr.app.data.local.settings.SettingsStore
 import com.oneasmr.app.data.local.settings.ThemeMode
 import com.oneasmr.app.data.repository.RootGrantStatus
@@ -51,6 +52,7 @@ fun SettingsScreen(
 ) {
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
     val rootEntries by viewModel.rootEntries.collectAsStateWithLifecycle()
+    val resumeMode by viewModel.resumeMode.collectAsStateWithLifecycle()
 
     Column(
         modifier = Modifier
@@ -75,6 +77,29 @@ fun SettingsScreen(
                 }
             }
         }
+        Spacer(Modifier.height(24.dp))
+
+        // Task 19: playback-resume policy (default AUTO; ALWAYS_ASK dialog
+        // lands with the Task 21 player screen).
+        Text("续播策略", style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(8.dp))
+        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+            ResumeMode.entries.forEachIndexed { index, mode ->
+                SegmentedButton(
+                    selected = resumeMode == mode,
+                    onClick = { viewModel.setResumeMode(mode) },
+                    shape = SegmentedButtonDefaults.itemShape(index = index, count = ResumeMode.entries.size),
+                ) {
+                    Text(mode.displayLabel())
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "已听超过 95% 或不足 3% 的曲目将从头播放，其余从记忆位置续播。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         Spacer(Modifier.height(24.dp))
 
         Row(
@@ -146,6 +171,11 @@ private fun ThemeMode.displayLabel(): String = when (this) {
     ThemeMode.DARK -> "深色"
 }
 
+private fun ResumeMode.displayLabel(): String = when (this) {
+    ResumeMode.AUTO -> "自动续播"
+    ResumeMode.ALWAYS_ASK -> "总是询问"
+}
+
 /** ViewModel for [SettingsScreen]: theme mode from [SettingsStore], roots from [ScanRootRepository]. */
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
@@ -155,6 +185,8 @@ class SettingsViewModel @Inject constructor(
     val themeMode: StateFlow<ThemeMode> = settingsStore.themeMode
         .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, ThemeMode.SYSTEM)
     val rootEntries: StateFlow<List<ScanRootEntry>> = scanRootRepository.entries
+    val resumeMode: StateFlow<ResumeMode> = settingsStore.resumeMode
+        .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, ResumeMode.AUTO)
 
     init {
         viewModelScope.launch { scanRootRepository.refreshValidation() }
@@ -162,5 +194,9 @@ class SettingsViewModel @Inject constructor(
 
     fun setThemeMode(mode: ThemeMode) {
         viewModelScope.launch { settingsStore.setThemeMode(mode) }
+    }
+
+    fun setResumeMode(mode: ResumeMode) {
+        viewModelScope.launch { settingsStore.setResumeMode(mode) }
     }
 }

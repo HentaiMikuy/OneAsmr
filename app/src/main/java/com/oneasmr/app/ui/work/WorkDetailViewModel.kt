@@ -7,6 +7,7 @@ import com.oneasmr.app.data.local.CircleDao
 import com.oneasmr.app.data.local.KeySpec
 import com.oneasmr.app.data.local.OneAsmrDatabase
 import com.oneasmr.app.data.local.ProgressState
+import com.oneasmr.app.data.local.PlaybackStateDao
 import com.oneasmr.app.data.local.Review
 import com.oneasmr.app.data.local.ReviewDao
 import com.oneasmr.app.data.local.Tag
@@ -54,6 +55,20 @@ sealed interface TrackTreeUiState {
     data class Error(val message: String) : TrackTreeUiState
 }
 
+/**
+ * One track's remembered playback position (Task 19 detail-page progress
+ * bar). [fraction] is null while there is nothing meaningful to show (no
+ * position, or the player never prepared the item).
+ */
+data class TrackProgress(val positionMs: Long, val durationMs: Long) {
+    val fraction: Float?
+        get() = if (durationMs > 0L && positionMs > 0L) {
+            (positionMs.toFloat() / durationMs).coerceIn(0f, 1f)
+        } else {
+            null
+        }
+}
+
 /** Why the detail page cannot show the work (plan: invalid state, never a blank page). */
 sealed interface InvalidReason {
     /** The work id is not in the library at all. */
@@ -83,6 +98,8 @@ data class WorkDetailUiState(
     val reviewText: String = "",
     /** The draft was seeded from the stored review — never clobber typing again. */
     val reviewInitialized: Boolean = false,
+    /** Task 19: remembered playback positions by trackIndex (detail-page progress bars). */
+    val trackProgress: Map<Int, TrackProgress> = emptyMap(),
 ) {
     /** Derived invalid state — the screen renders the rescan CTA instead of content. */
     val invalid: InvalidReason? get() = when {
@@ -124,6 +141,7 @@ class WorkDetailViewModel @Inject constructor(
     private val workTagDao: WorkTagDao,
     private val workVaDao: WorkVaDao,
     private val reviewDao: ReviewDao,
+    private val playbackStateDao: PlaybackStateDao,
     private val rootRepository: ScanRootRepository,
     private val scraper: SingleWorkScraper,
     private val fsFactory: DocumentFsFactory,
@@ -140,12 +158,13 @@ class WorkDetailViewModel @Inject constructor(
         workTagDao: WorkTagDao,
         workVaDao: WorkVaDao,
         reviewDao: ReviewDao,
+        playbackStateDao: PlaybackStateDao,
         rootRepository: ScanRootRepository,
         scraper: SingleWorkScraper,
         fsFactory: DocumentFsFactory,
         ioDispatcher: CoroutineDispatcher,
         clock: () -> Long,
-    ) : this(savedStateHandle, workDao, db, circleDao, tagDao, vaDao, workTagDao, workVaDao, reviewDao, rootRepository, scraper, fsFactory) {
+    ) : this(savedStateHandle, workDao, db, circleDao, tagDao, vaDao, workTagDao, workVaDao, reviewDao, playbackStateDao, rootRepository, scraper, fsFactory) {
         this.ioDispatcher = ioDispatcher
         this.clock = clock
     }
@@ -190,6 +209,17 @@ class WorkDetailViewModel @Inject constructor(
                         state.copy(review = review)
                     }
                 }
+            }
+        }
+        // Task 19: live playback positions for THIS work's tracks (Room
+        // invalidation re-emits when PlaybackService writes playback_state).
+        viewModelScope.launch {
+            playbackStateDao.getAllForWorkFlow("$workId:").collect { rows ->
+                val byIndex = rows.mapNotNull { row ->
+                    KeySpec.parseTrackKey(row.trackKey)?.trackIndex
+                        ?.let { it to TrackProgress(row.positionMs, row.durationMs) }
+                }.toMap()
+                _uiState.update { it.copy(trackProgress = byIndex) }
             }
         }
     }

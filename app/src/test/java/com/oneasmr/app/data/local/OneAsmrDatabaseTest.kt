@@ -302,6 +302,17 @@ class OneAsmrDatabaseTest {
         assertEquals(7, db.playbackStateDao().get("srv1:RJ123456:2")!!.positionMs)
     }
 
+    @Test
+    fun `getAllForWork anchors the colon prefix exactly like delete`() = runBlocking {
+        db.playbackStateDao().upsert(PlaybackState("local:RJ123456:1", positionMs = 1, durationMs = 2, updatedAt = 1L))
+        db.playbackStateDao().upsert(PlaybackState("local:RJ123456:3", positionMs = 3, durationMs = 4, updatedAt = 1L))
+        db.playbackStateDao().upsert(PlaybackState("local:RJ1234567:0", positionMs = 5, durationMs = 6, updatedAt = 1L))
+        db.playbackStateDao().upsert(PlaybackState("srv1:RJ123456:2", positionMs = 7, durationMs = 8, updatedAt = 1L))
+
+        val rows = db.playbackStateDao().getAllForWork("local:RJ123456:")
+        assertEquals(setOf("local:RJ123456:1", "local:RJ123456:3"), rows.map { it.trackKey }.toSet())
+    }
+
     // ---------- search (degraded LIKE path on JVM) ----------
 
     @Test

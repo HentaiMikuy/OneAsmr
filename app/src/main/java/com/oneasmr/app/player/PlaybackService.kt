@@ -1,9 +1,14 @@
 package com.oneasmr.app.player
 
 import android.app.PendingIntent
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
+import androidx.core.content.ContextCompat
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
@@ -20,9 +25,11 @@ import androidx.media3.session.SessionCommands
 import androidx.media3.session.SessionResult
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
+import com.google.common.util.concurrent.SettableFuture
 import com.oneasmr.app.MainActivity
 import com.oneasmr.app.R
 import com.oneasmr.app.data.local.KeySpec
+import com.oneasmr.app.data.local.PlaybackStateDao
 import com.oneasmr.app.data.local.ProgressState
 import com.oneasmr.app.data.local.Review
 import com.oneasmr.app.data.local.ReviewDao
@@ -37,6 +44,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -85,10 +93,22 @@ class PlaybackService : MediaSessionService() {
     @Inject
     lateinit var queueStore: QueueStore
 
+    @Inject
+    lateinit var playbackStateDao: PlaybackStateDao
+
+    @Inject
+    lateinit var resumePositionResolver: ResumePositionResolver
+
     private lateinit var notificationProvider: DefaultMediaNotificationProvider
     private var mediaSession: MediaSession? = null
     private lateinit var serviceScope: CoroutineScope
     private lateinit var sleepTimer: SleepTimerController
+
+    /** Task 19: debounced per-trackKey position writer (5s cadence + pause flush). */
+    private lateinit var progressWriter: PlaybackProgressWriter
+
+    /** Debug-only sleep-timer hook (see [registerDebugSleepTimerHook]); null on release. */
+    private var sleepTimerDebugReceiver: BroadcastReceiver? = null
 
     /** Last queue snapshot for Android 13+ playback resumption. */
     private var lastQueue: List<MediaItem> = emptyList()
@@ -101,6 +121,12 @@ class PlaybackService : MediaSessionService() {
             scope = serviceScope,
             onExpired = ::onSleepTimerExpired,
         )
+        progressWriter = PlaybackProgressWriter(
+            dao = playbackStateDao,
+            scope = serviceScope,
+            positionProvider = ::positionSample,
+        ).apply { start() }
+        registerDebugSleepTimerHook()
         notificationProvider = DefaultMediaNotificationProvider.Builder(this)
             .setChannelId(NOTIFICATION_CHANNEL_ID)
             .setChannelName(R.string.playback_channel_name)
@@ -141,6 +167,8 @@ class PlaybackService : MediaSessionService() {
     override fun onDestroy() {
         player.removeListener(queueSnapshotListener)
         sleepTimer.cancel()
+        progressWriter.stop()
+        unregisterDebugSleepTimerHook()
         serviceScope.cancel()
         mediaSession?.run { release() }
         mediaSession = null
@@ -198,10 +226,86 @@ class PlaybackService : MediaSessionService() {
         triggerNotificationUpdate()
     }
 
-    /** Task 19 seam: real fade-out stop lands there; inert (logged) today. */
+    /**
+     * Task 19 seam: real fade-out stop lands there; inert (logged) today.
+     */
     private fun onSleepTimerExpired() {
-        Log.i(TAG, "sleep timer expired — Task 19 will fade out and stop playback")
-        updateButtonLabels()
+        Log.i(TAG, "sleep timer expired — fading out ~1s then pausing and releasing")
+        serviceScope.launch {
+            val initial = player.volume
+            for (step in FADE_STEPS downTo 1) {
+                player.volume = initial * step / FADE_STEPS
+                Log.i(TAG, "sleep fade: volume=${player.volume} (step $step/$FADE_STEPS)")
+                delay(FADE_STEP_MS)
+            }
+            player.volume = 0f
+            // Final position write BEFORE stopping (last-write-wins must hold).
+            progressWriter.flush()
+            player.pause()
+            Log.i(TAG, "sleep timer: paused after fade, stopping foreground service (released)")
+            stopSelf()
+        }
+    }
+
+    /**
+     * "播完当前曲" trigger: the player side detects the current track end
+     * (media-item transition with a real advance, or STATE_ENDED at queue
+     * end) and expires the timer through the same seam as a countdown.
+     */
+    private fun checkEndOfTrackTimer() {
+        if (!sleepTimer.state.value.active) return
+        if (sleepTimer.state.value.mode != SleepTimerMode.END_OF_TRACK) return
+        Log.i(TAG, "sleep timer END_OF_TRACK: current track finished — expiring")
+        sleepTimer.expireNow()
+    }
+
+    /** Snapshot for the position writer: mediaId IS the normative trackKey. */
+    private fun positionSample(): PlaybackProgressWriter.Sample {
+        val key = player.currentMediaItem?.mediaId
+        val duration = player.duration
+        return if (duration > 0L) {
+            PlaybackProgressWriter.Sample(key, player.currentPosition.coerceIn(0L, duration), duration)
+        } else {
+            PlaybackProgressWriter.Sample(key, 0L, 0L)
+        }
+    }
+
+    /**
+     * Debug/test hook (plan Task 19 mandates: "可通过测试参数设置任意秒数"):
+     * a dynamic broadcast receiver `oneasmr.debug.sleep_timer` with an extra
+     * `sleep_timer_seconds` starts the countdown for ANY duration (e.g. 30s)
+     * so QA never waits 15 minutes. Registered ONLY on debuggable builds;
+     * the receiver's only power is starting/cancelling a sleep timer, so the
+     * exported registration is acceptable (documented).
+     */
+    private fun registerDebugSleepTimerHook() {
+        val debuggable = applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0
+        if (!debuggable) return
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                val seconds = intent.getLongExtra(EXTRA_SLEEP_TIMER_SECONDS, -1L)
+                if (seconds > 0L) {
+                    sleepTimer.start(seconds * 1000L)
+                    Log.i(TAG, "debug hook: sleep timer started for ${seconds}s")
+                } else if (seconds == 0L) {
+                    sleepTimer.cancel()
+                    Log.i(TAG, "debug hook: sleep timer cancelled")
+                }
+                updateButtonLabels()
+            }
+        }
+        ContextCompat.registerReceiver(
+            this,
+            receiver,
+            IntentFilter(ACTION_DEBUG_SLEEP_TIMER),
+            ContextCompat.RECEIVER_EXPORTED,
+        )
+        sleepTimerDebugReceiver = receiver
+    }
+
+    private fun unregisterDebugSleepTimerHook() {
+        sleepTimerDebugReceiver?.let { runCatching { unregisterReceiver(it) } }
+        sleepTimerDebugReceiver = null
     }
 
     /**
@@ -250,6 +354,36 @@ class PlaybackService : MediaSessionService() {
             // progress — refresh it whenever the item changes (a fresh
             // service start has no item yet, so labels start idle).
             updateButtonLabels()
+            // "播完当前曲": a real advance (not a repeat-one replay) means the
+            // previous track finished. Repeat-one replays are excluded — the
+            // track "never ends" while looping.
+            if (reason != Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT) {
+                checkEndOfTrackTimer()
+            }
+        }
+
+        override fun onPlaybackStateChanged(playbackState: Int) {
+            if (playbackState == Player.STATE_ENDED) {
+                // Queue end (repeat off): flush the final position AND expire
+                // an END_OF_TRACK timer — the current track just finished.
+                serviceScope.launch { progressWriter.flush() }
+                checkEndOfTrackTimer()
+            }
+        }
+
+        /**
+         * Task 19 must-not: the sleep timer must never outlive manual
+         * control. ANY pause/stop (notification, media button, audio-focus
+         * loss, noisy) flushes the position and cancels the countdown — a
+         * late auto-stop is impossible. The fade-out's own pause is exempt:
+         * by then the timer already reset itself (see [SleepTimerController.expire]).
+         */
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            if (!isPlaying) {
+                serviceScope.launch { progressWriter.flush() }
+                sleepTimer.cancel()
+                updateButtonLabels()
+            }
         }
 
         override fun onRepeatModeChanged(repeatMode: Int) {
@@ -369,14 +503,20 @@ class PlaybackService : MediaSessionService() {
                 )
                 return@launch
             }
-            // Task 19 seam: replace 0L with the playback_state read for the
-            // restored item (per-trackKey position memory).
-            player.setMediaItems(persisted.items.map { it.toMediaItem() }, persisted.currentIndex, 0L)
+            // Task 19: per-trackKey position memory — replace the Task 18
+            // placeholder 0L with the playback_state read for the restored
+            // item (resume policy applied: <3% / >95% start over).
+            val startIndex = persisted.currentIndex
+            val startKey = persisted.items.getOrNull(startIndex)
+                ?.let { KeySpec.trackKey(it.sourceScope, it.rjCode, it.trackIndex) }
+            val startPositionMs = resumePositionResolver.resolve(startKey)
+            player.setMediaItems(persisted.items.map { it.toMediaItem() }, startIndex, startPositionMs)
             Log.i(
                 TAG,
-                "session restored: ${persisted.items.size} items at index ${persisted.currentIndex} " +
+                "session restored: ${persisted.items.size} items at index $startIndex " +
                     "repeat=${player.repeatMode.toRepeatMode()} shuffle=${player.shuffleModeEnabled} " +
-                    "speed=${player.playbackParameters.speed} (position restore = Task 19, not started)",
+                    "speed=${player.playbackParameters.speed} " +
+                    "position=$startPositionMs ms (key=$startKey, not started)",
             )
         }
     }
@@ -439,21 +579,29 @@ class PlaybackService : MediaSessionService() {
         /**
          * Android 13+ playback resumption: a headset/media-button play request
          * with an empty playlist calls here — return the last queue so
-         * playback restarts from where the session left off. Position memory
-         * (Task 19) will refine [MediaItemsWithStartPosition.startPositionMs].
+         * playback restarts from where the session left off. Task 19: the
+         * start position comes from playback_state via [ResumePositionResolver]
+         * (resolved async on the service scope).
          */
         override fun onPlaybackResumption(
             session: MediaSession,
             controller: MediaSession.ControllerInfo,
         ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
-            return if (lastQueue.isEmpty()) {
-                Futures.immediateFailedFuture(IllegalStateException("no queue stored for resumption"))
-            } else {
-                Log.i(TAG, "playback resumption: ${lastQueue.size} items from index $lastStartIndex")
-                Futures.immediateFuture(
-                    MediaSession.MediaItemsWithStartPosition(lastQueue, lastStartIndex, 0L),
-                )
+            if (lastQueue.isEmpty()) {
+                return Futures.immediateFailedFuture(IllegalStateException("no queue stored for resumption"))
             }
+            val future = SettableFuture.create<MediaSession.MediaItemsWithStartPosition>()
+            serviceScope.launch {
+                val key = lastQueue[lastStartIndex].mediaId
+                val startPositionMs = resumePositionResolver.resolve(key)
+                Log.i(
+                    TAG,
+                    "playback resumption: ${lastQueue.size} items from index $lastStartIndex " +
+                        "at ${startPositionMs}ms (key=$key)",
+                )
+                future.set(MediaSession.MediaItemsWithStartPosition(lastQueue, lastStartIndex, startPositionMs))
+            }
+            return future
         }
     }
 
@@ -465,6 +613,14 @@ class PlaybackService : MediaSessionService() {
         /** Custom command actions (custom layout buttons in the notification). */
         const val ACTION_SLEEP_TIMER = "oneasmr.command.sleep_timer"
         const val ACTION_TOGGLE_PROGRESS = "oneasmr.command.toggle_progress"
+
+        /** Debug sleep-timer hook (plan-mandated; debuggable builds only). */
+        const val ACTION_DEBUG_SLEEP_TIMER = "oneasmr.debug.sleep_timer"
+        const val EXTRA_SLEEP_TIMER_SECONDS = "sleep_timer_seconds"
+
+        /** ~1s fade-out: 10 steps x 100ms (plan Task 19 "1s 渐弱"). */
+        private const val FADE_STEPS = 10
+        private const val FADE_STEP_MS = 100L
     }
 }
 
