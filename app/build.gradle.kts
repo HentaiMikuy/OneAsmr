@@ -75,6 +75,9 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     // Bottom-navigation icons (Home/Search/Settings); version managed by the Compose BOM.
     implementation("androidx.compose.material:material-icons-core")
+    // Player controls (Task 21: skip/repeat/shuffle/timer/queue/lyrics icons);
+    // extended set is BOM-managed, symbols kept only when referenced.
+    implementation("androidx.compose.material:material-icons-extended")
     implementation(libs.androidx.compose.ui.tooling.preview)
     debugImplementation(libs.androidx.compose.ui.tooling)
     implementation(libs.androidx.navigation.compose)

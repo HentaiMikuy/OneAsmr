@@ -10,6 +10,7 @@ import android.os.Bundle
 import android.util.Log
 import androidx.core.content.ContextCompat
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.Timeline
@@ -148,9 +149,13 @@ class PlaybackService : MediaSessionService() {
 
         Log.i(TAG, "onCreate: player@${System.identityHashCode(player)} session@${System.identityHashCode(mediaSession)}")
         player.addListener(queueSnapshotListener)
-        // Re-render the notification on every sleep-timer tick (countdown label).
+        // Re-render the notification on every sleep-timer tick (countdown label)
+        // AND broadcast the state so the player screen's picker stays live.
         serviceScope.launch {
-            sleepTimer.state.collect { updateButtonLabels() }
+            sleepTimer.state.collect {
+                updateButtonLabels()
+                broadcastSleepTimerState()
+            }
         }
         restoreSession()
     }
@@ -271,6 +276,30 @@ class PlaybackService : MediaSessionService() {
     }
 
     /**
+     * Serializes the sleep-timer state (same extras for the ACTION_SLEEP_TIMER_STATE
+     * query result AND the app-local broadcast), so the player screen's picker
+     * can render "睡眠 14:59" live without polling.
+     */
+    private fun sleepTimerStateBundle(): Bundle {
+        val s = sleepTimer.state.value
+        return Bundle().apply {
+            putBoolean(EXTRA_SLEEP_TIMER_ACTIVE, s.active)
+            putString(EXTRA_SLEEP_TIMER_MODE, s.mode.name)
+            putLong(EXTRA_SLEEP_TIMER_REMAINING_MS, s.remainingMs)
+            putString(EXTRA_SLEEP_TIMER_DISPLAY, if (s.active) s.display else "")
+        }
+    }
+
+    /** App-local state push (explicit package: same app only). */
+    private fun broadcastSleepTimerState() {
+        sendBroadcast(
+            Intent(ACTION_SLEEP_TIMER_STATE)
+                .setPackage(packageName)
+                .putExtras(sleepTimerStateBundle()),
+        )
+    }
+
+    /**
      * Debug/test hook (plan Task 19 mandates: "可通过测试参数设置任意秒数"):
      * a dynamic broadcast receiver `oneasmr.debug.sleep_timer` with an extra
      * `sleep_timer_seconds` starts the countdown for ANY duration (e.g. 30s)
@@ -368,6 +397,30 @@ class PlaybackService : MediaSessionService() {
                 // an END_OF_TRACK timer — the current track just finished.
                 serviceScope.launch { progressWriter.flush() }
                 checkEndOfTrackTimer()
+            }
+        }
+
+        /**
+         * Failure path (plan QA: work folder deleted mid-play -> toast + stop,
+         * no ANR): a fatal source error stops playback. We clear the session
+         * queue (persists the cleared queue via [captureSession], removes the
+         * notification) and stop the service; the UI side (SessionConnection
+         * controller listener) shows the toast from the same error event.
+         * The clear is posted on the service scope — never blocking the main
+         * thread inside a listener callback.
+         */
+        override fun onPlayerError(error: PlaybackException) {
+            Log.e(TAG, "player error: ${error.errorCodeName}: ${error.message}")
+            lastQueue = emptyList()
+            serviceScope.launch {
+                if (player.mediaItemCount > 0) {
+                    player.clearMediaItems()
+                    progressWriter.flush()
+                }
+                sleepTimer.cancel()
+                updateButtonLabels()
+                Log.i(TAG, "playback error handled: queue cleared, service stopping")
+                stopSelf()
             }
         }
 
@@ -547,6 +600,8 @@ class PlaybackService : MediaSessionService() {
         ): ConnectionResult {
             val sessionCommands = SessionCommands.Builder()
                 .add(SessionCommand(ACTION_SLEEP_TIMER, Bundle.EMPTY))
+                .add(SessionCommand(ACTION_SLEEP_TIMER_SET, Bundle.EMPTY))
+                .add(SessionCommand(ACTION_SLEEP_TIMER_STATE, Bundle.EMPTY))
                 .add(SessionCommand(ACTION_TOGGLE_PROGRESS, Bundle.EMPTY))
                 .build()
             return ConnectionResult.accept(
@@ -568,12 +623,49 @@ class PlaybackService : MediaSessionService() {
                     updateButtonLabels()
                     return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
                 }
+                ACTION_SLEEP_TIMER_SET -> {
+                    handleSleepTimerSet(args)
+                    updateButtonLabels()
+                    return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+                }
+                ACTION_SLEEP_TIMER_STATE -> {
+                    return Futures.immediateFuture(
+                        SessionResult(SessionResult.RESULT_SUCCESS, sleepTimerStateBundle()),
+                    )
+                }
                 ACTION_TOGGLE_PROGRESS -> {
                     toggleProgress()
                     return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
                 }
             }
             return super.onCustomCommand(session, controller, customCommand, args)
+        }
+
+        /**
+         * Task 19 presets from the Task 21 player screen: a countdown duration
+         * (ms), the end-of-track mode, or a cancel — exactly the same
+         * controller [SleepTimerController] the notification toggle drives.
+         */
+        private fun handleSleepTimerSet(args: Bundle) {
+            when {
+                args.getBoolean(EXTRA_SLEEP_TIMER_CANCEL, false) -> {
+                    sleepTimer.cancel()
+                    Log.i(TAG, "sleep timer set: cancelled")
+                }
+                args.getString(EXTRA_SLEEP_TIMER_MODE) == MODE_END_OF_TRACK -> {
+                    sleepTimer.startAtTrackEnd()
+                    Log.i(TAG, "sleep timer set: end-of-track")
+                }
+                else -> {
+                    val ms = args.getLong(EXTRA_SLEEP_TIMER_MS, 0L)
+                    if (ms > 0L) {
+                        sleepTimer.start(ms)
+                        Log.i(TAG, "sleep timer set: ${ms}ms")
+                    } else {
+                        Log.w(TAG, "sleep timer set: no duration/mode/cancel — ignored")
+                    }
+                }
+            }
         }
 
         /**
@@ -613,6 +705,19 @@ class PlaybackService : MediaSessionService() {
         /** Custom command actions (custom layout buttons in the notification). */
         const val ACTION_SLEEP_TIMER = "oneasmr.command.sleep_timer"
         const val ACTION_TOGGLE_PROGRESS = "oneasmr.command.toggle_progress"
+
+        /** Task 21: sleep-timer preset picker command (player screen -> service). */
+        const val ACTION_SLEEP_TIMER_SET = "oneasmr.command.sleep_timer_set"
+        const val EXTRA_SLEEP_TIMER_MS = "sleep_timer_ms"
+        const val EXTRA_SLEEP_TIMER_MODE = "sleep_timer_mode"
+        const val EXTRA_SLEEP_TIMER_CANCEL = "sleep_timer_cancel"
+        const val MODE_END_OF_TRACK = "end_of_track"
+
+        /** Task 21: sleep-timer state (query result + app-local broadcast). */
+        const val ACTION_SLEEP_TIMER_STATE = "oneasmr.app.sleep_timer_state"
+        const val EXTRA_SLEEP_TIMER_ACTIVE = "active"
+        const val EXTRA_SLEEP_TIMER_REMAINING_MS = "remaining_ms"
+        const val EXTRA_SLEEP_TIMER_DISPLAY = "display"
 
         /** Debug sleep-timer hook (plan-mandated; debuggable builds only). */
         const val ACTION_DEBUG_SLEEP_TIMER = "oneasmr.debug.sleep_timer"

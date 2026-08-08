@@ -2,6 +2,7 @@ package com.oneasmr.app.navigation
 
 import android.app.Activity
 import android.content.Intent
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -31,6 +32,7 @@ import com.oneasmr.app.ui.browse.BrowseDimensionScreen
 import com.oneasmr.app.ui.browse.DimensionWorksScreen
 import com.oneasmr.app.ui.library.LibraryScreen
 import com.oneasmr.app.ui.library.SearchScreen
+import com.oneasmr.app.ui.player.MiniPlayerBarHost
 import com.oneasmr.app.ui.player.PlayerScreen
 import com.oneasmr.app.ui.player.VideoPlayerScreen
 import com.oneasmr.app.ui.reviews.ReviewListScreen
@@ -114,18 +116,31 @@ fun OneAsmrNavHost(
     Scaffold(
         modifier = modifier,
         bottomBar = {
-            OneAsmrBottomBar(
-                currentRoute = currentRoute,
-                onNavigate = { route ->
-                    navController.navigate(route) {
-                        popUpTo(navController.graph.findStartDestination().id) {
-                            saveState = true
+            Column {
+                // Global mini player bar (Task 21): visible on every screen
+                // EXCEPT the full player page whenever the media session is
+                // active; tap -> full player, swipe -> stop. Its visibility
+                // is driven by the session connection (single source of truth).
+                if (currentRoute != Routes.PLAYER) {
+                    MiniPlayerBarHost(
+                        onOpenPlayer = { workId, trackIndex ->
+                            navController.navigate(Routes.player(workId, trackIndex))
+                        },
+                    )
+                }
+                OneAsmrBottomBar(
+                    currentRoute = currentRoute,
+                    onNavigate = { route ->
+                        navController.navigate(route) {
+                            popUpTo(navController.graph.findStartDestination().id) {
+                                saveState = true
+                            }
+                            launchSingleTop = true
+                            restoreState = true
                         }
-                        launchSingleTop = true
-                        restoreState = true
-                    }
-                },
-            )
+                    },
+                )
+            }
         },
     ) { innerPadding ->
         NavHost(
@@ -201,7 +216,9 @@ fun OneAsmrNavHost(
                     navDeepLink { uriPattern = "oneasmr://player/{workId}/{trackIndex}" },
                 ),
             ) {
-                PlayerScreen()
+                PlayerScreen(
+                    onBack = { navController.popBackStack() },
+                )
             }
             composable(
                 route = Routes.VIDEO_PLAYER,
