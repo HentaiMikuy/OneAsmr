@@ -5,9 +5,6 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.preferencesDataStoreFile
-import com.oneasmr.app.data.local.keystore.KeystoreDataStore
-import com.oneasmr.app.data.local.keystore.KeystoreKeyCipher
-import com.oneasmr.app.data.local.keystore.KeyCipher
 import com.oneasmr.app.data.local.settings.SettingsStore
 import com.oneasmr.app.data.local.settings.QueueStore
 import com.oneasmr.app.data.repository.AndroidRootDisplayNameResolver
@@ -26,9 +23,9 @@ import javax.inject.Named
 import javax.inject.Singleton
 
 /**
- * Hilt wiring for Task 5 local persistence: the three DataStore files
- * (settings / scan_roots / secure), the settings + scan-root stores, the
- * Keystore-backed secret store, and the SAF permission gate.
+ * Hilt wiring for Task 5 local persistence: the DataStore files (settings /
+ * scan_roots / scan_bookkeeping / queue_state), the settings / scan-root /
+ * queue stores, and the SAF permission gate.
  *
  * Each DataStore is built via [PreferenceDataStoreFactory] over a distinct
  * file so the classes stay JVM-constructible for unit tests (tests build
@@ -49,12 +46,6 @@ object OneAsmrSettingsModule {
     @Named("scan_roots")
     fun provideScanRootsDataStore(@ApplicationContext context: Context): DataStore<Preferences> =
         PreferenceDataStoreFactory.create(produceFile = { context.preferencesDataStoreFile("scan_roots") })
-
-    @Provides
-    @Singleton
-    @Named("secure")
-    fun provideSecureDataStore(@ApplicationContext context: Context): DataStore<Preferences> =
-        PreferenceDataStoreFactory.create(produceFile = { context.preferencesDataStoreFile("secure") })
 
     @Provides
     @Singleton
@@ -88,17 +79,6 @@ object OneAsmrSettingsModule {
     @Singleton
     fun provideScanRootsStore(@Named("scan_roots") dataStore: DataStore<Preferences>): ScanRootsStore =
         ScanRootsStore(dataStore)
-
-    @Provides
-    @Singleton
-    fun provideKeyCipher(): KeyCipher = KeystoreKeyCipher()
-
-    @Provides
-    @Singleton
-    fun provideKeystoreDataStore(
-        @Named("secure") dataStore: DataStore<Preferences>,
-        cipher: KeyCipher,
-    ): KeystoreDataStore = KeystoreDataStore(dataStore, cipher)
 
     @Provides
     @Singleton

@@ -50,6 +50,12 @@ class WorkDaoPagingSourceTest {
         }
     }
 
+    private fun commitWorkWithTitle(rjCode: String, title: String) {
+        runBlocking {
+            RoomScanPersister(db).commitWork(WorkCandidate(rjCode, rjCode, title), "content://tree/rootA", 1_000L)
+        }
+    }
+
     private suspend fun refreshPage(
         source: PagingSource<Int, WorkListItem>,
         loadSize: Int = 10,
@@ -153,5 +159,35 @@ class WorkDaoPagingSourceTest {
         assertEquals(1, page.data.size)
         assertNotNull(page.data.first().rootFolderUri)
         assertEquals("RJ100001", page.data.first().relativeDir)
+    }
+
+    // ---------- search-keyword paging (degraded LIKE path on JVM) ----------
+
+    @Test
+    fun `paging like path escapes percent wildcard in the keyword`() = runBlocking {
+        FtsStatus.available = false // degraded LIKE is the only JVM path
+        commitWorkWithTitle("RJ100001", "100%純粋")
+        commitWork("RJ100002")
+        // A literal '%' keyword must match only the literal-percent row, not
+        // every row (unescaped, LIKE '%'||'%'||'%' matches all).
+        val page = refreshPage(
+            db.workDao().pagingSource(WorkOrder.ID, descending = false, keyword = "%", randomSeed = 1L),
+            loadSize = 10,
+        )
+        assertEquals(listOf("local:RJ100001"), page.data.map { it.id })
+    }
+
+    @Test
+    fun `paging like path escapes underscore wildcard in the keyword`() = runBlocking {
+        FtsStatus.available = false
+        commitWorkWithTitle("RJ100001", "a_b")
+        commitWork("RJ100002")
+        // A literal '_' keyword must match only the literal-underscore row
+        // (unescaped, LIKE '%'||'_'||'%' matches every non-empty row).
+        val page = refreshPage(
+            db.workDao().pagingSource(WorkOrder.ID, descending = false, keyword = "_", randomSeed = 1L),
+            loadSize = 10,
+        )
+        assertEquals(listOf("local:RJ100001"), page.data.map { it.id })
     }
 }

@@ -595,6 +595,24 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
+    /**
+     * Android 13+ resumption snapshot rule (final-wave finding F3): an EMPTY
+     * timeline means the queue was cleared (swipe-dismiss / video-exit) — the
+     * snapshot must be empty too, so [SessionCallback.onPlaybackResumption]
+     * fails cleanly instead of restarting the stale queue. Non-empty
+     * timelines are captured verbatim with their start index.
+     */
+    internal data class ResumptionSnapshot(
+        val items: List<MediaItem>,
+        val startIndex: Int,
+    ) {
+        companion object {
+            fun fromTimeline(items: List<MediaItem>, startIndex: Int): ResumptionSnapshot =
+                if (items.isEmpty()) ResumptionSnapshot(emptyList(), 0)
+                else ResumptionSnapshot(items, startIndex)
+        }
+    }
+
     /** Snapshot of the CURRENT timeline: fills [lastQueue] (Android 13+ resumption) and persists the session. */
     private fun captureSession() {
         val session = mediaSession ?: return
@@ -619,9 +637,12 @@ class PlaybackService : MediaSessionService() {
                 )
             }
         }
-        if (mediaItems.isNotEmpty()) {
-            lastQueue = mediaItems
-            lastStartIndex = session.player.currentMediaItemIndex
+        val snapshot = ResumptionSnapshot.fromTimeline(mediaItems, session.player.currentMediaItemIndex)
+        lastQueue = snapshot.items
+        lastStartIndex = snapshot.startIndex
+        if (mediaItems.isEmpty()) {
+            Log.i(TAG, "queue snapshot cleared (empty timeline)")
+        } else {
             Log.i(TAG, "queue snapshot: ${mediaItems.size} items, start index $lastStartIndex")
         }
         // Task 22: while the attached-video page owns the session, never

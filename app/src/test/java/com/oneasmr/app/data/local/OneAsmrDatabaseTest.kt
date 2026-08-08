@@ -1,11 +1,15 @@
 package com.oneasmr.app.data.local
 
 import androidx.room.Room
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -357,6 +361,22 @@ class OneAsmrDatabaseTest {
 
         // A literal '%' in the query must match only the literal percent row.
         assertEquals(listOf("local:RJ100"), db.workDao().search("100%").map { it.workId })
+    }
+
+    @Test
+    fun `cancelled search rethrows cancellation instead of degrading to LIKE`() = runBlocking {
+        FtsStatus.available = true // arm the FTS->degrade catch; the JVM has no FTS table
+        try {
+            val job = Job()
+            job.cancel()
+            withContext(job) { db.workDao().search("foo") }
+            fail("expected CancellationException")
+        } catch (e: CancellationException) {
+            // expected: cancellation must propagate as-is, never swallowed
+            // into a LIKE-degraded result.
+        } finally {
+            FtsStatus.available = false
+        }
     }
 
     // ---------- key-spec consistency across tables ----------

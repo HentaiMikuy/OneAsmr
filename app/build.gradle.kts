@@ -118,8 +118,6 @@ dependencies {
     implementation(libs.coil.network.okhttp)
 
     implementation(libs.okhttp)
-    implementation(libs.retrofit)
-    implementation(libs.retrofit.converter.kotlinx.serialization)
     implementation(libs.kotlinx.serialization.json)
 
     implementation(libs.kotlinx.coroutines.android)

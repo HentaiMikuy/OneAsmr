@@ -11,6 +11,7 @@ import androidx.room.RawQuery
 import androidx.room.Upsert
 import androidx.sqlite.db.SupportSQLiteProgram
 import androidx.sqlite.db.SupportSQLiteQuery
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -392,7 +393,11 @@ interface WorkDao {
         }
         val args = mutableListOf<Any?>()
         val join = if (searchSql != null) {
-            args += keyword
+            // The LIKE variant is wildcard-sensitive: % and _ in the keyword
+            // must be escaped exactly like [search] does (escapeLike), so a
+            // literal "%" in the keyword cannot match every row — the FTS
+            // MATCH variant binds the raw query.
+            args += if (searchSql == LIKE_SEARCH_SQL && keyword != null) escapeLike(keyword) else keyword
             " JOIN (SELECT DISTINCT workId FROM ($searchSql)) search_hits ON search_hits.workId = w.id"
         } else {
             ""
@@ -490,6 +495,8 @@ interface WorkDao {
         if (FtsStatus.available) {
             return try {
                 searchRaw(SimpleSupportQuery(FTS_SEARCH_SQL, listOf(q)))
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.w(SEARCH_LOG_TAG, "FTS MATCH failed (${e.message}); degrading to LIKE", e)
                 likeSearch(escapeLike(q))
@@ -787,9 +794,11 @@ interface PlaybackStateDao {
  * variant once — the paging equivalent of [WorkDao.search]'s
  * degrade-on-exception contract (documented degraded fallback, Task 4).
  * The LIKE source is pre-built (not per page) so the degrade is a single
- * catch + one extra load.
+ * catch + one extra load. Cancellation is never swallowed by the degrade:
+ * a cancelled load rethrows [CancellationException] instead of falling back
+ * to LIKE (final-wave finding F2).
  */
-private class DegradingPagingSource(
+internal class DegradingPagingSource(
     private val fts: PagingSource<Int, WorkListItem>,
     private val like: PagingSource<Int, WorkListItem>,
 ) : PagingSource<Int, WorkListItem>() {
@@ -799,6 +808,8 @@ private class DegradingPagingSource(
     override suspend fun load(params: LoadParams<Int>): LoadResult<Int, WorkListItem> =
         try {
             fts.load(params)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.w(SEARCH_LOG_TAG, "FTS paging MATCH failed (${e.message}); degraded to LIKE", e)
             like.load(params)

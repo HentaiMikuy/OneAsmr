@@ -2,6 +2,7 @@ package com.oneasmr.app.data.repository
 
 import com.oneasmr.app.data.remote.dlsite.ScrapedWork
 import java.io.File
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -176,6 +177,8 @@ class CoverStore(
             } else {
                 val uri = try {
                     bundledLocator.findBundledCover(rootFolderUri, relativeDir)
+                } catch (e: CancellationException) {
+                    throw e // never swallow cancellation into a null placeholder
                 } catch (e: Exception) {
                     null // unreadable folder / lost grant → fall back to placeholder
                 }
