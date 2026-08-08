@@ -1,5 +1,9 @@
 package com.oneasmr.app.ui.work
 
+import android.os.Build
+import androidx.compose.animation.AnimatedContentScope
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -9,21 +13,39 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.InsertDriveFile
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.outlined.AudioFile
+import androidx.compose.material.icons.outlined.CalendarMonth
+import androidx.compose.material.icons.outlined.CloudDownload
+import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.RateReview
+import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Reviews
+import androidx.compose.material.icons.outlined.Sell
+import androidx.compose.material.icons.outlined.Star
+import androidx.compose.material.icons.outlined.Videocam
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
@@ -39,13 +61,21 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.painter.ColorPainter
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import coil3.compose.AsyncImage
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.oneasmr.app.data.local.KeySpec
@@ -58,7 +88,7 @@ import com.oneasmr.app.data.repository.CoverStore
 import com.oneasmr.app.data.repository.CoverType
 import com.oneasmr.app.data.scanner.TrackNode
 import com.oneasmr.app.data.scanner.TrackNodeType
-import com.oneasmr.app.ui.common.CoverImage
+import com.oneasmr.app.ui.common.sharedWorkCover
 import com.oneasmr.app.ui.library.rememberCoverStore
 
 /**
@@ -68,14 +98,18 @@ import com.oneasmr.app.ui.library.rememberCoverStore
  * viewers, a Task 15 review slot, and the invalid-state + rescan entry for
  * missing/moved works — never a white screen.
  */
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 fun WorkDetailScreen(
     viewModel: WorkDetailViewModel = hiltViewModel(),
+    onBack: () -> Unit,
     onOpenPlayer: (workId: String, trackIndex: Int) -> Unit,
     onOpenVideoPlayer: (workId: String, trackIndex: Int) -> Unit,
     onOpenText: (workId: String, documentUri: String) -> Unit,
     onOpenImage: (workId: String, documentUri: String) -> Unit,
     onOpenBrowse: (dimension: String, id: String) -> Unit,
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedContentScope: AnimatedContentScope? = null,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val coverStore = rememberCoverStore()
@@ -120,6 +154,7 @@ fun WorkDetailScreen(
         else -> DetailContent(
             state = state,
             coverStore = coverStore,
+            onBack = onBack,
             onScrapeClick = {
                 if (work.scrapeStatus == ScrapeStatus.OK) confirmRescrape = true
                 else viewModel.scrape()
@@ -135,6 +170,8 @@ fun WorkDetailScreen(
             onReviewTextChange = viewModel::onReviewTextChange,
             onReviewSaveText = viewModel::saveReviewText,
             onReviewClear = viewModel::clearReview,
+            sharedTransitionScope = sharedTransitionScope,
+            animatedContentScope = animatedContentScope,
         )
     }
 
@@ -237,10 +274,12 @@ private fun InvalidWorkState(
     }
 }
 
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 private fun DetailContent(
     state: WorkDetailUiState,
     coverStore: CoverStore,
+    onBack: () -> Unit,
     onScrapeClick: () -> Unit,
     onToggleFolder: (String) -> Unit,
     onOpenPlayer: (String, Int) -> Unit,
@@ -253,6 +292,8 @@ private fun DetailContent(
     onReviewTextChange: (String) -> Unit,
     onReviewSaveText: () -> Unit,
     onReviewClear: () -> Unit,
+    sharedTransitionScope: SharedTransitionScope?,
+    animatedContentScope: AnimatedContentScope?,
 ) {
     val work = state.work!!
     val treeRows = remember(state.tree) {
@@ -260,7 +301,14 @@ private fun DetailContent(
     }
     LazyColumn(Modifier.fillMaxSize()) {
         item(key = "header") {
-            WorkHeader(state = state, coverStore = coverStore, onScrapeClick = onScrapeClick)
+            WorkHeader(
+                state = state,
+                coverStore = coverStore,
+                onScrapeClick = onScrapeClick,
+                onBack = onBack,
+                sharedTransitionScope = sharedTransitionScope,
+                animatedContentScope = animatedContentScope,
+            )
         }
         item(key = "metadata") {
             MetadataRow(work)
@@ -326,60 +374,157 @@ private fun DetailContent(
     }
 }
 
+/**
+ * Wave C immersive header: the work's own cover doubles as a full-bleed
+ * backdrop. Modifier.blur is RenderEffect-backed and only exists on API 31+,
+ * so below 31 the scrim alone carries the melt-into-the-page effect; the
+ * scrim runs background @ 0.3 (top) → background @ 1.0 (bottom) so backdrop
+ * and page share one surface. The hero cover floats over the backdrop on a
+ * 24dp elevation shadow. Both images share one resolved model (the same
+ * local-first [CoverStore.coverModelFor] resolution [CoverImage] uses — Coil
+ * caches the second decode), because CoverImage does not expose its model.
+ */
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 private fun WorkHeader(
     state: WorkDetailUiState,
     coverStore: CoverStore,
     onScrapeClick: () -> Unit,
+    onBack: () -> Unit,
+    sharedTransitionScope: SharedTransitionScope?,
+    animatedContentScope: AnimatedContentScope?,
 ) {
     val work = state.work!!
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(16.dp),
-        verticalAlignment = Alignment.Top,
-    ) {
-        CoverImage(
-            coverStore = coverStore,
-            rjCode = work.rjCodeText(),
-            type = CoverType.MAIN,
-            rootFolderUri = work.rootFolderUri,
-            relativeDir = work.relativeDir,
-            modifier = Modifier
-                .size(132.dp)
-                .clip(MaterialTheme.shapes.medium),
+    val rjCode = work.rjCodeText()
+    var coverModel by remember(rjCode, work.rootFolderUri, work.relativeDir) {
+        mutableStateOf<Any?>(null)
+    }
+    LaunchedEffect(rjCode, work.rootFolderUri, work.relativeDir) {
+        coverModel = coverStore.coverModelFor(
+            rjCode, CoverType.MAIN, work.rootFolderUri, work.relativeDir,
         )
-        Spacer(Modifier.width(16.dp))
-        Column(Modifier.weight(1f)) {
+    }
+    Column(Modifier.fillMaxWidth()) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(420.dp),
+        ) {
+            val backdropModifier = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                Modifier.fillMaxSize().blur(28.dp)
+            } else {
+                Modifier.fillMaxSize()
+            }
+            AsyncImage(
+                model = coverModel,
+                contentDescription = null,
+                modifier = backdropModifier,
+                contentScale = ContentScale.Crop,
+                alignment = Alignment.TopCenter,
+                placeholder = ColorPainter(MaterialTheme.colorScheme.surfaceVariant),
+                error = ColorPainter(MaterialTheme.colorScheme.surfaceVariant),
+            )
+            // Legibility scrim (see KDoc): backdrop melts into the page.
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(
+                                MaterialTheme.colorScheme.background.copy(alpha = 0.3f),
+                                MaterialTheme.colorScheme.background,
+                            ),
+                        ),
+                    ),
+            )
+            Column(
+                Modifier.fillMaxSize(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Spacer(Modifier.height(72.dp))
+                AsyncImage(
+                    model = coverModel,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .sharedWorkCover(sharedTransitionScope, animatedContentScope, work.id)
+                        .fillMaxWidth(0.62f)
+                        .aspectRatio(1f)
+                        .shadow(24.dp, MaterialTheme.shapes.large)
+                        .clip(MaterialTheme.shapes.large),
+                    contentScale = ContentScale.Crop,
+                    placeholder = ColorPainter(MaterialTheme.colorScheme.surfaceVariant),
+                    error = ColorPainter(MaterialTheme.colorScheme.surfaceVariant),
+                )
+            }
+            // Back affordance over the backdrop: the NavHost provides no top
+            // bar on this route, so without this the only way back was the
+            // system gesture.
+            IconButton(
+                onClick = onBack,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .statusBarsPadding()
+                    .padding(8.dp)
+                    .background(Color.Black.copy(alpha = 0.3f), CircleShape),
+            ) {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "返回",
+                    tint = Color.White,
+                )
+            }
+        }
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
             Text(
                 work.title,
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.headlineSmall,
+                textAlign = TextAlign.Center,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                work.rjCodeText(),
-                style = MaterialTheme.typography.bodyMedium,
+                rjCode,
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = FontFamily.Monospace,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             work.seriesName?.let {
                 Spacer(Modifier.height(2.dp))
                 Text(
                     "系列：$it",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    textAlign = TextAlign.Center,
                 )
             }
-            Spacer(Modifier.height(8.dp))
-            ScrapeStatusChip(status = work.scrapeStatus)
-            Spacer(Modifier.height(8.dp))
-            Button(onClick = onScrapeClick, enabled = !state.scraping, modifier = Modifier.height(36.dp)) {
-                if (state.scraping) {
-                    CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
-                    Spacer(Modifier.width(6.dp))
-                    Text("刮削中…", style = MaterialTheme.typography.labelLarge)
-                } else {
-                    Text("刮削", style = MaterialTheme.typography.labelLarge)
+            Spacer(Modifier.height(12.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                ScrapeStatusChip(status = work.scrapeStatus)
+                Spacer(Modifier.width(12.dp))
+                FilledTonalButton(onClick = onScrapeClick, enabled = !state.scraping) {
+                    if (state.scraping) {
+                        CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(6.dp))
+                        Text("刮削中…", style = MaterialTheme.typography.labelLarge)
+                    } else {
+                        Icon(
+                            imageVector = if (work.scrapeStatus == ScrapeStatus.OK) {
+                                Icons.Outlined.Refresh
+                            } else {
+                                Icons.Outlined.CloudDownload
+                            },
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text("刮削", style = MaterialTheme.typography.labelLarge)
+                    }
                 }
             }
         }
@@ -407,34 +552,48 @@ private fun ScrapeStatusChip(status: ScrapeStatus) {
 @Composable
 private fun MetadataRow(work: Work) {
     val entries = listOfNotNull(
-        work.releaseDate?.let { "发售日" to it },
-        work.dlCount?.let { "DL数" to formatCount(it) },
-        work.price?.let { "价格" to "¥${formatCount(it)}" },
-        work.rateAverage2dp?.let { "评分" to "%.2f".format(it) },
-        work.reviewCount?.let { "评论数" to formatCount(it) },
-        work.rateCount?.let { "评价数" to formatCount(it) },
+        work.releaseDate?.let { MetaEntry("发售日", it, Icons.Outlined.CalendarMonth) },
+        work.dlCount?.let { MetaEntry("DL数", formatCount(it), Icons.Outlined.Download) },
+        work.price?.let { MetaEntry("价格", "¥${formatCount(it)}", Icons.Outlined.Sell) },
+        work.rateAverage2dp?.let { MetaEntry("评分", "%.2f".format(it), Icons.Outlined.Star) },
+        work.reviewCount?.let { MetaEntry("评论数", formatCount(it), Icons.Outlined.Reviews) },
+        work.rateCount?.let { MetaEntry("评价数", formatCount(it), Icons.Outlined.RateReview) },
     )
     if (entries.isEmpty()) return
     FlowRow(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        entries.forEach { (label, value) ->
+        entries.forEach { entry ->
             Surface(
                 shape = MaterialTheme.shapes.small,
-                color = MaterialTheme.colorScheme.surfaceVariant,
+                color = MaterialTheme.colorScheme.secondaryContainer,
+                contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
             ) {
-                Text(
-                    "$label: $value",
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                    style = MaterialTheme.typography.labelMedium,
-                )
+                Row(
+                    Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        imageVector = entry.icon,
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp),
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        "${entry.label}: ${entry.value}",
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                }
             }
         }
     }
 }
+
+private data class MetaEntry(val label: String, val value: String, val icon: ImageVector)
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -445,15 +604,33 @@ private fun CircleAndVaChips(
 ) {
     val circle = state.circleName?.takeIf { work.circleId != null }
     if (circle == null && state.vas.isEmpty()) return
-    FlowRow(
-        modifier = Modifier
+    Column(
+        Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        circle?.let { DimensionChip(label = it, onClick = { onOpenBrowse("circle", work.circleId!!) }) }
-        state.vas.forEach { va -> DimensionChip(label = va.name, onClick = { onOpenBrowse("va", va.id) }) }
+        circle?.let {
+            ChipSectionLabel("社团")
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                DimensionChip(label = it, onClick = { onOpenBrowse("circle", work.circleId!!) })
+            }
+        }
+        if (state.vas.isNotEmpty()) {
+            ChipSectionLabel("声优")
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                state.vas.forEach { va ->
+                    DimensionChip(label = va.name, onClick = { onOpenBrowse("va", va.id) })
+                }
+            }
+        }
     }
 }
 
@@ -461,29 +638,48 @@ private fun CircleAndVaChips(
 @Composable
 private fun TagChips(tags: List<Tag>, onOpenBrowse: (String, String) -> Unit) {
     if (tags.isEmpty()) return
-    FlowRow(
-        modifier = Modifier
+    Column(
+        Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        tags.forEach { tag -> DimensionChip(label = "#${tag.name}", onClick = { onOpenBrowse("tag", tag.id) }) }
+        ChipSectionLabel("标签")
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            tags.forEach { tag ->
+                DimensionChip(label = "#${tag.name}", onClick = { onOpenBrowse("tag", tag.id) })
+            }
+        }
     }
+}
+
+@Composable
+private fun ChipSectionLabel(label: String) {
+    Text(
+        label,
+        modifier = Modifier.padding(top = 4.dp, bottom = 4.dp),
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }
 
 @Composable
 private fun DimensionChip(label: String, onClick: () -> Unit) {
     Surface(
-        shape = CircleShape,
+        shape = MaterialTheme.shapes.small,
         color = MaterialTheme.colorScheme.secondaryContainer,
-        modifier = Modifier.clickable(onClick = onClick),
+        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+        modifier = Modifier
+            .clip(MaterialTheme.shapes.small)
+            .clickable(onClick = onClick),
     ) {
         Text(
             label,
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSecondaryContainer,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            style = MaterialTheme.typography.labelLarge,
         )
     }
 }
@@ -497,12 +693,12 @@ private fun TreeHeader(state: WorkDetailUiState) {
             .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text("音轨", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        Text("音轨", style = MaterialTheme.typography.titleMedium)
         if (count != null) {
             Spacer(Modifier.width(8.dp))
             Text(
                 "$count 个文件",
-                style = MaterialTheme.typography.labelMedium,
+                style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -542,24 +738,30 @@ private fun TreeRowItem(
                 imageVector = if (row.expanded) Icons.Filled.KeyboardArrowDown else Icons.Filled.KeyboardArrowRight,
                 contentDescription = if (row.expanded) "折叠" else "展开",
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp),
             )
+            Spacer(Modifier.width(4.dp))
         } else {
-            Spacer(Modifier.width(24.dp))
+            Icon(
+                imageVector = trackTypeIcon(node.type),
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp),
+            )
+            Spacer(Modifier.width(4.dp))
         }
         Spacer(Modifier.width(2.dp))
-        TypeBadge(node.type)
-        Spacer(Modifier.width(8.dp))
         Column(Modifier.weight(1f)) {
             Text(
                 node.name,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodyLarge,
             )
             if (!node.isFolder) {
                 Text(
                     "#${node.trackIndex} · ${formatBytes(node.size)}",
-                    style = MaterialTheme.typography.labelSmall,
+                    style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -581,25 +783,12 @@ private fun TreeRowItem(
     }
 }
 
-@Composable
-private fun TypeBadge(type: TrackNodeType) {
-    val (label, container, content) = when (type) {
-        TrackNodeType.FOLDER -> Triple("F", MaterialTheme.colorScheme.secondaryContainer, MaterialTheme.colorScheme.onSecondaryContainer)
-        TrackNodeType.AUDIO -> Triple("A", MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.onPrimaryContainer)
-        TrackNodeType.VIDEO -> Triple("V", MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.colorScheme.onTertiaryContainer)
-        TrackNodeType.TEXT -> Triple("T", MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.colorScheme.onSurfaceVariant)
-        TrackNodeType.IMAGE -> Triple("I", MaterialTheme.colorScheme.errorContainer, MaterialTheme.colorScheme.onErrorContainer)
-        TrackNodeType.OTHER -> Triple("?", MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-    Box(
-        modifier = Modifier
-            .size(22.dp)
-            .clip(CircleShape)
-            .background(container),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(label, style = MaterialTheme.typography.labelSmall, color = content)
-    }
+private fun trackTypeIcon(type: TrackNodeType): ImageVector = when (type) {
+    TrackNodeType.AUDIO -> Icons.Outlined.AudioFile
+    TrackNodeType.VIDEO -> Icons.Outlined.Videocam
+    TrackNodeType.TEXT -> Icons.Outlined.Description
+    TrackNodeType.IMAGE -> Icons.Outlined.Image
+    TrackNodeType.FOLDER, TrackNodeType.OTHER -> Icons.AutoMirrored.Outlined.InsertDriveFile
 }
 
 /** One rendered row of the expanded tree. */

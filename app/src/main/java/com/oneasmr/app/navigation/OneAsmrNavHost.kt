@@ -2,7 +2,16 @@ package com.oneasmr.app.navigation
 
 import android.app.Activity
 import android.content.Intent
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.SharedTransitionLayout
+import androidx.compose.animation.core.EaseOut
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -108,6 +117,7 @@ object Routes {
  * deep link) re-runs [NavHostController.handleDeepLink] instead of being
  * silently dropped. Falls back to `activity.intent` when not provided.
  */
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 fun OneAsmrNavHost(
     navController: NavHostController = rememberNavController(),
@@ -119,6 +129,12 @@ fun OneAsmrNavHost(
 
     Scaffold(
         modifier = modifier,
+        // Insets are handled per-screen (safeDrawingPadding) and by the bottom
+        // bar itself; Scaffold's default contentWindowInsets would only add the
+        // status bar height as plain padding WITHOUT consuming the inset, so
+        // every screen padded it a second time (visible double-height blank
+        // strip at the top). Zero it out here instead.
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         bottomBar = {
             Column {
                 // Global mini player bar (Task 21): visible on every screen
@@ -151,16 +167,38 @@ fun OneAsmrNavHost(
             }
         },
     ) { innerPadding ->
-        NavHost(
-            navController = navController,
-            startDestination = Routes.LIBRARY,
+        // Wave E: SharedTransitionLayout enables the library cover → detail
+        // hero shared element (see ui/common/Motion.kt). Transition defaults
+        // below are the PUSH style (slide in from end + fade); the three tab
+        // roots override them with a plain 220ms cross-fade. exit/popEnter
+        // stay fade-only — no parallax hijacks.
+        SharedTransitionLayout(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding),
         ) {
+        NavHost(
+            navController = navController,
+            startDestination = Routes.LIBRARY,
+            modifier = Modifier.fillMaxSize(),
+            enterTransition = {
+                slideInHorizontally(animationSpec = tween(300, easing = EaseOut)) { it } +
+                    fadeIn(animationSpec = tween(300))
+            },
+            exitTransition = { fadeOut(animationSpec = tween(300)) },
+            popEnterTransition = { fadeIn(animationSpec = tween(300)) },
+            popExitTransition = {
+                slideOutHorizontally(animationSpec = tween(300, easing = EaseOut)) { it } +
+                    fadeOut(animationSpec = tween(300))
+            },
+        ) {
             composable(
                 route = Routes.LIBRARY,
                 deepLinks = listOf(navDeepLink { uriPattern = "oneasmr://library" }),
+                enterTransition = { fadeIn(animationSpec = tween(220)) },
+                exitTransition = { fadeOut(animationSpec = tween(220)) },
+                popEnterTransition = { fadeIn(animationSpec = tween(220)) },
+                popExitTransition = { fadeOut(animationSpec = tween(220)) },
             ) {
                 LibraryScreen(
                     onOpenRootFolders = { navController.navigate(Routes.SCAN_ROOTS) },
@@ -169,6 +207,8 @@ fun OneAsmrNavHost(
                     onOpenBrowse = { dimension ->
                         navController.navigate(Routes.browseDimension(dimension))
                     },
+                    sharedTransitionScope = this@SharedTransitionLayout,
+                    animatedContentScope = this,
                 )
             }
             composable(
@@ -182,6 +222,10 @@ fun OneAsmrNavHost(
             composable(
                 route = Routes.SEARCH,
                 deepLinks = listOf(navDeepLink { uriPattern = "oneasmr://search" }),
+                enterTransition = { fadeIn(animationSpec = tween(220)) },
+                exitTransition = { fadeOut(animationSpec = tween(220)) },
+                popEnterTransition = { fadeIn(animationSpec = tween(220)) },
+                popExitTransition = { fadeOut(animationSpec = tween(220)) },
             ) {
                 SearchScreen(
                     onOpenWork = { workId -> navController.navigate(Routes.workDetail(workId)) },
@@ -197,6 +241,7 @@ fun OneAsmrNavHost(
                 ),
             ) {
                 WorkDetailScreen(
+                    onBack = { navController.popBackStack() },
                     onOpenPlayer = { workId, trackIndex ->
                         navController.navigate(Routes.player(workId, trackIndex))
                     },
@@ -212,6 +257,8 @@ fun OneAsmrNavHost(
                     onOpenBrowse = { dimension, id ->
                         navController.navigate(Routes.browse(dimension, id))
                     },
+                    sharedTransitionScope = this@SharedTransitionLayout,
+                    animatedContentScope = this,
                 )
             }
             composable(
@@ -300,6 +347,10 @@ fun OneAsmrNavHost(
             composable(
                 route = Routes.SETTINGS,
                 deepLinks = listOf(navDeepLink { uriPattern = "oneasmr://settings" }),
+                enterTransition = { fadeIn(animationSpec = tween(220)) },
+                exitTransition = { fadeOut(animationSpec = tween(220)) },
+                popEnterTransition = { fadeIn(animationSpec = tween(220)) },
+                popExitTransition = { fadeOut(animationSpec = tween(220)) },
             ) {
                 SettingsScreen(
                     onOpenRootFolders = { navController.navigate(Routes.SCAN_ROOTS) },
@@ -311,6 +362,7 @@ fun OneAsmrNavHost(
             ) {
                 ScanRootsScreen()
             }
+        }
         }
     }
 

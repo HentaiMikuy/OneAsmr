@@ -10,6 +10,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.oneasmr.app.data.local.ProgressState
 import java.text.SimpleDateFormat
@@ -29,21 +30,24 @@ internal fun ProgressState.uiLabel(): String = when (this) {
 /**
  * Tappable 1-5 star rating row. [rating] null renders all stars empty
  * ("未评分"); [onRate] receives 1..5 only — the DAO stays the single
- * enforcement point for the range.
+ * enforcement point for the range. Colors default to the original
+ * tertiary/onSurfaceVariant pairing; callers pass theme roles to re-tint
+ * (Wave C detail page: primary filled, outlineVariant empty).
  */
 @Composable
-internal fun RatingStars(rating: Int?, onRate: (Int) -> Unit) {
+internal fun RatingStars(
+    rating: Int?,
+    onRate: (Int) -> Unit,
+    filledColor: Color = MaterialTheme.colorScheme.tertiary,
+    emptyColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+) {
     Row {
         for (i in 1..5) {
             val filled = rating != null && i <= rating
             Icon(
                 imageVector = if (filled) Icons.Filled.Star else Icons.Outlined.Star,
                 contentDescription = "$i 星",
-                tint = if (filled) {
-                    MaterialTheme.colorScheme.tertiary
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                },
+                tint = if (filled) filledColor else emptyColor,
                 modifier = Modifier
                     .size(32.dp)
                     .clickable { onRate(i) },

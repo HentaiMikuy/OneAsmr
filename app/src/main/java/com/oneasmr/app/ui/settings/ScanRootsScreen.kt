@@ -90,7 +90,7 @@ fun ScanRootsScreen(viewModel: ScanRootsViewModel = hiltViewModel()) {
             .verticalScroll(rememberScrollState())
             .padding(16.dp),
     ) {
-        Text("根文件夹管理", style = MaterialTheme.typography.headlineSmall)
+        Text("根文件夹管理", style = MaterialTheme.typography.displaySmall)
         Spacer(Modifier.height(4.dp))
         Text(
             "通过系统文件夹选择器授权 OneAsmr 读取作品根目录。授权仅用于读取，移除授权不会删除任何文件。",

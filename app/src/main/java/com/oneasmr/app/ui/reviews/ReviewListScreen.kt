@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AssistChip
@@ -75,8 +74,9 @@ fun ReviewListScreen(
     ) {
         Text(
             "我标记的作品",
-            style = MaterialTheme.typography.headlineSmall,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            style = MaterialTheme.typography.displaySmall,
+            maxLines = 1,
+            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 8.dp),
         )
         if (reviews.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -120,7 +120,7 @@ private fun ReviewRow(item: ReviewListItem, onClick: () -> Unit) {
                 relativeDir = item.relativeDir.orEmpty(),
                 modifier = Modifier
                     .size(width = 56.dp, height = 56.dp)
-                    .clip(RoundedCornerShape(6.dp)),
+                    .clip(MaterialTheme.shapes.small),
             )
         }
         Spacer(Modifier.width(12.dp))
@@ -128,7 +128,7 @@ private fun ReviewRow(item: ReviewListItem, onClick: () -> Unit) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = item.title ?: item.rjCode,
-                    style = MaterialTheme.typography.bodyLarge,
+                    style = MaterialTheme.typography.titleMedium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false),
@@ -146,7 +146,7 @@ private fun ReviewRow(item: ReviewListItem, onClick: () -> Unit) {
             }
             Text(
                 text = item.rjCode,
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.labelSmall,
                 fontFamily = FontFamily.Monospace,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

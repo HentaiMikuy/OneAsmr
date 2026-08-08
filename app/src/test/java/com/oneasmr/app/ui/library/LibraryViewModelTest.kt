@@ -370,10 +370,34 @@ class LibraryViewModelTest {
     }
 
     @Test
-    fun `pull refresh stub is a safe no-op`() = runTest(scheduler) {
+    fun `pull refresh starts a rescan when roots exist and the scanner is idle`() = runTest(scheduler) {
+        addRoot("content://tree/primary%3AAsmrLib")
+        awaitState { it.hasRoots }
+
         viewModel.onPullRefresh()
-        val state = awaitState { true }
-        assertEquals(0, state.workCount)
+
+        assertEquals(1, controller.startCalls)
+    }
+
+    @Test
+    fun `pull refresh is a safe no-op without roots`() = runTest(scheduler) {
+        awaitState { true }
+
+        viewModel.onPullRefresh()
+
+        assertEquals(0, controller.startCalls)
+    }
+
+    @Test
+    fun `pull refresh is a safe no-op while a scan is already running`() = runTest(scheduler) {
+        addRoot("content://tree/primary%3AAsmrLib")
+        awaitState { it.hasRoots }
+        ScanProgressStore.begin(1)
+        awaitState { it.progress.phase == com.oneasmr.app.data.scanner.ScanPhase.SCANNING }
+
+        viewModel.onPullRefresh()
+
+        assertEquals(0, controller.startCalls)
     }
 
     @Test

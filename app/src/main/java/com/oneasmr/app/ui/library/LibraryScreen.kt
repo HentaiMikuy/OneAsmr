@@ -1,7 +1,12 @@
 package com.oneasmr.app.ui.library
 
+import androidx.compose.animation.AnimatedContentScope
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.SharedTransitionScope
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -9,6 +14,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -19,13 +25,21 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.FilterList
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.SwapVert
+import androidx.compose.material.icons.outlined.CloudDownload
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Refresh as RefreshOutlined
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
@@ -40,9 +54,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
@@ -58,10 +69,20 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.painter.ColorPainter
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
@@ -95,9 +116,11 @@ import com.oneasmr.app.data.scanner.ScanPhase
 import com.oneasmr.app.data.scanner.ScanProgress
 import com.oneasmr.app.data.scanner.ScanProgressStore
 import com.oneasmr.app.data.scanner.removeWork
-import com.oneasmr.app.ui.common.CoverImage
+import coil3.compose.AsyncImage
 import com.oneasmr.app.ui.common.formatScanSummary
 import com.oneasmr.app.ui.common.progressLabel
+import com.oneasmr.app.ui.common.rememberPressScale
+import com.oneasmr.app.ui.common.sharedWorkCover
 import com.oneasmr.app.ui.common.uiLabel
 import com.oneasmr.app.worker.ScanController
 import dagger.hilt.EntryPoint
@@ -126,12 +149,15 @@ import kotlinx.coroutines.launch
  * Task 8's minimal list is replaced by the paged UI; the missing-grey-out,
  * manual-remove and Task 11 scrape flows carry over.
  */
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 fun LibraryScreen(
     onOpenRootFolders: () -> Unit = {},
     onOpenWork: (String) -> Unit = {},
     onOpenReviews: () -> Unit = {},
     onOpenBrowse: (String) -> Unit = {},
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedContentScope: AnimatedContentScope? = null,
     viewModel: LibraryViewModel = hiltViewModel(),
     scrapeViewModel: ScrapeViewModel = hiltViewModel(),
 ) {
@@ -169,38 +195,15 @@ fun LibraryScreen(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
+                .padding(start = 16.dp, end = 16.dp, top = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
                 "作品库",
-                style = MaterialTheme.typography.headlineSmall,
-                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.displaySmall,
+                maxLines = 1,
             )
-            LibraryViewModeToggle(
-                viewMode = viewMode,
-                onSelect = viewModel::setLibraryViewMode,
-            )
-            if (state.workCount > 0) {
-                SortMenu(
-                    order = sortOrder,
-                    descending = sortDescending,
-                    onSelect = viewModel::setSort,
-                )
-            }
-            if (state.workCount > 0) {
-                FilterMenu(
-                    filter = libraryFilter,
-                    onSelect = viewModel::setFilter,
-                )
-            }
-            if (state.hasRoots && state.progress.phase != ScanPhase.SCANNING) {
-                TextButton(onClick = viewModel::startScan) {
-                    Icon(Icons.Filled.Refresh, contentDescription = null)
-                    Spacer(Modifier.width(4.dp))
-                    Text("扫描")
-                }
-            }
+            Spacer(Modifier.weight(1f))
             Box {
                 IconButton(
                     onClick = { showBatchMenu = true },
@@ -269,6 +272,45 @@ fun LibraryScreen(
                 }
             }
         }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ViewModeButton(
+                selected = viewMode == LibraryViewMode.GRID,
+                icon = Icons.Filled.GridView,
+                contentDescription = "网格视图",
+                onClick = { viewModel.setLibraryViewMode(LibraryViewMode.GRID) },
+            )
+            ViewModeButton(
+                selected = viewMode == LibraryViewMode.LIST,
+                icon = Icons.AutoMirrored.Filled.ViewList,
+                contentDescription = "列表视图",
+                onClick = { viewModel.setLibraryViewMode(LibraryViewMode.LIST) },
+            )
+            if (state.workCount > 0) {
+                SortMenu(
+                    order = sortOrder,
+                    descending = sortDescending,
+                    onSelect = viewModel::setSort,
+                )
+            }
+            if (state.workCount > 0) {
+                FilterMenu(
+                    filter = libraryFilter,
+                    onSelect = viewModel::setFilter,
+                )
+            }
+            if (state.hasRoots && state.progress.phase != ScanPhase.SCANNING) {
+                IconButton(onClick = viewModel::startScan) {
+                    Icon(Icons.Filled.Refresh, contentDescription = "扫描")
+                }
+            }
+        }
 
         if (state.progress.phase == ScanPhase.SCANNING) {
             ScanProgressBanner(progress = state.progress, onCancel = viewModel::cancelScan)
@@ -288,7 +330,7 @@ fun LibraryScreen(
                 if (lastSummary != null) {
                     Text(
                         "上次扫描：${formatScanSummary(lastSummary)}",
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                     )
@@ -297,6 +339,7 @@ fun LibraryScreen(
                     items = viewModel.pagingDataFlow.collectAsLazyPagingItems(),
                     coverStore = coverStore,
                     viewMode = viewMode,
+                    isRefreshing = state.progress.phase == ScanPhase.SCANNING,
                     onOpenWork = onOpenWork,
                     onRemove = { removeCandidate = it },
                     onScrape = { work ->
@@ -305,6 +348,8 @@ fun LibraryScreen(
                     },
                     onRefresh = viewModel::onPullRefresh,
                     scrapingWorkId = scrapeState.scrapingWorkId,
+                    sharedTransitionScope = sharedTransitionScope,
+                    animatedContentScope = animatedContentScope,
                 )
             }
         }
@@ -512,23 +557,26 @@ private fun ScanPrompt(onScan: () -> Unit) {
  * Task 12 paged library content: cover grid or list rows (persisted user
  * preference) driven by [LazyPagingItems] — only the pages around the
  * viewport are ever loaded (plan Must NOT: 一次性加载全库). Wrapped in the
- * pull-to-refresh affordance; [onRefresh] is a stub until Task 11 wires the
- * per-work metadata refresh.
+ * pull-to-refresh affordance: pulling starts an incremental rescan (see
+ * [LibraryViewModel.onPullRefresh]); [isRefreshing] tracks the scan phase.
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalSharedTransitionApi::class)
 @Composable
 private fun LibraryContent(
     items: LazyPagingItems<WorkListItem>,
     coverStore: CoverStore,
     viewMode: LibraryViewMode,
+    isRefreshing: Boolean,
     onOpenWork: (String) -> Unit,
     onRemove: (WorkListItem) -> Unit,
     onScrape: (WorkListItem) -> Unit,
     onRefresh: () -> Unit,
     scrapingWorkId: String?,
+    sharedTransitionScope: SharedTransitionScope?,
+    animatedContentScope: AnimatedContentScope?,
 ) {
     PullToRefreshBox(
-        isRefreshing = false,
+        isRefreshing = isRefreshing,
         onRefresh = onRefresh,
         modifier = Modifier.fillMaxSize(),
     ) {
@@ -553,6 +601,8 @@ private fun LibraryContent(
                             onRemove = { onRemove(item) },
                             onScrape = { onScrape(item) },
                             scraping = scrapingWorkId == item.id,
+                            sharedTransitionScope = sharedTransitionScope,
+                            animatedContentScope = animatedContentScope,
                         )
                     }
                 }
@@ -572,6 +622,8 @@ private fun LibraryContent(
                             onRemove = { onRemove(item) },
                             onScrape = onScrape,
                             scrapingWorkId = scrapingWorkId,
+                            sharedTransitionScope = sharedTransitionScope,
+                            animatedContentScope = animatedContentScope,
                         )
                         HorizontalDivider()
                     }
@@ -582,10 +634,20 @@ private fun LibraryContent(
 }
 
 /**
- * Task 12 grid card: cover with progress badge (top-start) and scrape-status
- * badge (top-end), title / RJ / circle / rating below. Missing works keep the
- * Task 8 grey-out (dimmed cover + 已失效 chip) and a manual remove action.
+ * Wave B cover-forward grid card: no M3 Card chrome — the 1:1 cover (clipped
+ * to [androidx.compose.material3.Shapes.medium]) IS the card. Title + work
+ * code sit on a bottom gradient scrim (transparent → black @ 0.82 keeps the
+ * white overlay text legible over any cover art in the dark-immersive
+ * scheme); the rating rides the top-end corner as a primary pill, stacked
+ * above the Task 11 scrape-status chip. Missing works keep the Task 8 dim +
+ * 已失效 chip and additionally render the cover grayscale ([GrayscaleColorFilter]);
+ * their bottom-end overlay action is the manual remove affordance (previously
+ * a below-cover text button), since they have no scrape flow. Otherwise the
+ * bottom-end action is scrape (cloud = needs scraping, refresh = force
+ * rescrape), replacing the old 重新刮削 text button. Circle name is
+ * deliberately off the card face — it lives on the detail page.
  */
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 private fun WorkGridCard(
     item: WorkListItem,
@@ -594,36 +656,75 @@ private fun WorkGridCard(
     onRemove: () -> Unit,
     onScrape: () -> Unit,
     scraping: Boolean,
+    sharedTransitionScope: SharedTransitionScope?,
+    animatedContentScope: AnimatedContentScope?,
 ) {
     val greyed = item.missing
-    val textColor = if (greyed) {
-        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-    } else {
-        MaterialTheme.colorScheme.onSurface
-    }
+    val (interactionSource, pressScale) = rememberPressScale(0.97f)
     Column(
         modifier = Modifier
-            .clip(RoundedCornerShape(10.dp))
-            .clickable(onClick = onClick),
+            .graphicsLayer { scaleX = pressScale; scaleY = pressScale }
+            .clip(MaterialTheme.shapes.medium)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = LocalIndication.current,
+                onClick = onClick,
+            ),
     ) {
         Box(
             Modifier
+                .sharedWorkCover(sharedTransitionScope, animatedContentScope, item.id)
                 .fillMaxWidth()
-                .aspectRatio(1f),
+                .aspectRatio(1f)
+                .clip(MaterialTheme.shapes.medium),
         ) {
-            CoverImage(
+            LibraryCoverImage(
                 coverStore = coverStore,
                 rjCode = item.rjCode,
                 type = CoverType.THUMB_240,
                 rootFolderUri = item.rootFolderUri,
                 relativeDir = item.relativeDir,
                 modifier = Modifier.fillMaxSize(),
+                colorFilter = if (greyed) GrayscaleColorFilter else null,
             )
+            // Bottom scrim gradient (see KDoc): legibility over any cover art.
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .fillMaxHeight(0.45f)
+                    .align(Alignment.BottomCenter)
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(Color.Transparent, Color.Black.copy(alpha = 0.82f)),
+                        ),
+                    ),
+            )
+            Column(
+                Modifier
+                    .align(Alignment.BottomStart)
+                    .fillMaxWidth()
+                    // The end padding clears the 28dp bottom-end overlay action.
+                    .padding(start = 10.dp, top = 10.dp, bottom = 10.dp, end = 40.dp),
+            ) {
+                Text(
+                    text = item.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Color.White,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = item.rjCode,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = Color.White.copy(alpha = 0.75f),
+                )
+            }
             if (item.progress != null && item.progress != ProgressState.none) {
                 Surface(
                     modifier = Modifier
                         .align(Alignment.TopStart)
-                        .padding(4.dp),
+                        .padding(6.dp),
                     shape = RoundedCornerShape(6.dp),
                     color = MaterialTheme.colorScheme.primaryContainer,
                 ) {
@@ -634,18 +735,44 @@ private fun WorkGridCard(
                     )
                 }
             }
-            when (item.scrapeStatus) {
-                ScrapeStatus.NOT_SCRAPED -> StatusBadge(
-                    label = "未刮削",
-                    modifier = Modifier.align(Alignment.TopEnd).padding(4.dp),
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                )
-                ScrapeStatus.FAILED -> StatusBadge(
-                    label = "刮削失败",
-                    modifier = Modifier.align(Alignment.TopEnd).padding(4.dp),
-                    containerColor = MaterialTheme.colorScheme.errorContainer,
-                )
-                ScrapeStatus.OK -> Unit
+            Column(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(6.dp),
+                horizontalAlignment = Alignment.End,
+            ) {
+                item.rateAverage2dp?.let { rating ->
+                    Text(
+                        "★ ${String.format(java.util.Locale.US, "%.2f", rating)}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier
+                            .background(
+                                MaterialTheme.colorScheme.primary,
+                                RoundedCornerShape(percent = 50),
+                            )
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                    )
+                }
+                when (item.scrapeStatus) {
+                    ScrapeStatus.NOT_SCRAPED -> {
+                        if (item.rateAverage2dp != null) Spacer(Modifier.height(4.dp))
+                        StatusBadge(
+                            label = "未刮削",
+                            modifier = Modifier,
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        )
+                    }
+                    ScrapeStatus.FAILED -> {
+                        if (item.rateAverage2dp != null) Spacer(Modifier.height(4.dp))
+                        StatusBadge(
+                            label = "刮削失败",
+                            modifier = Modifier,
+                            containerColor = MaterialTheme.colorScheme.errorContainer,
+                        )
+                    }
+                    ScrapeStatus.OK -> Unit
+                }
             }
             if (greyed) {
                 Box(
@@ -661,47 +788,68 @@ private fun WorkGridCard(
                         containerColor = MaterialTheme.colorScheme.errorContainer,
                     ),
                 )
-            }
-        }
-        Column(Modifier.padding(horizontal = 6.dp, vertical = 4.dp)) {
-            Text(
-                text = item.title,
-                style = MaterialTheme.typography.bodyMedium,
-                color = textColor,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = item.rjCode,
-                style = MaterialTheme.typography.labelSmall,
-                fontFamily = FontFamily.Monospace,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            if (item.circleName != null) {
-                Text(
-                    text = item.circleName,
-                    style = MaterialTheme.typography.labelSmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                CoverActionButton(
+                    onClick = onRemove,
+                    icon = Icons.Outlined.Delete,
+                    contentDescription = "移除",
+                    modifier = Modifier.align(Alignment.BottomEnd),
+                )
+            } else {
+                CoverActionButton(
+                    onClick = onScrape,
+                    icon = if (item.scrapeStatus == ScrapeStatus.OK) {
+                        Icons.Outlined.RefreshOutlined
+                    } else {
+                        Icons.Outlined.CloudDownload
+                    },
+                    contentDescription = "刮削",
+                    modifier = Modifier.align(Alignment.BottomEnd),
+                    enabled = !scraping,
                 )
             }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                item.rateAverage2dp?.let {
-                    Text(
-                        "★ ${String.format(java.util.Locale.US, "%.2f", it)}",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.tertiary,
-                    )
-                }
-                Spacer(Modifier.weight(1f))
-                if (greyed) {
-                    TextButton(onClick = onRemove) { Text("移除") }
-                } else {
-                    ScrapeButton(item = item, scraping = scraping, onScrape = onScrape)
-                }
+            if (scraping) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.4f)),
+                )
+                CircularProgressIndicator(
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .size(20.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.primary,
+                )
             }
         }
+    }
+}
+
+/**
+ * 28dp overlay action on the cover scrim (scrape / remove). White @ 0.9 keeps
+ * the glyph legible over the scrim without competing with the cover art.
+ */
+@Composable
+private fun CoverActionButton(
+    onClick: () -> Unit,
+    icon: ImageVector,
+    contentDescription: String,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+) {
+    IconButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier
+            .padding(6.dp)
+            .size(28.dp),
+    ) {
+        Icon(
+            icon,
+            contentDescription = contentDescription,
+            tint = Color.White.copy(alpha = 0.9f),
+            modifier = Modifier.size(16.dp),
+        )
     }
 }
 
@@ -725,7 +873,17 @@ private fun StatusBadge(
     }
 }
 
-/** Task 12 list row — delegates to the shared row (browse pages reuse it too). */
+/**
+ * Wave B list row (library-local; the shared [com.oneasmr.app.ui.common.WorkListRow]
+ * stays untouched for the browse pages): 56dp cover thumb clipped to
+ * [androidx.compose.material3.Shapes.small], title + mono work code / circle
+ * line, then end-aligned rating, scrape action, and — for missing works only —
+ * the Task 8 已失效 chip + manual remove button. Missing rows share the grid's
+ * visual language: grayscale thumb ([GrayscaleColorFilter]) + dimmed title.
+ * A FAILED scrape tints the cloud icon error, the list-row counterpart of the
+ * grid's 刮削失败 chip.
+ */
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 private fun WorkListRow(
     item: WorkListItem,
@@ -734,53 +892,147 @@ private fun WorkListRow(
     onRemove: () -> Unit,
     onScrape: (WorkListItem) -> Unit,
     scrapingWorkId: String?,
+    sharedTransitionScope: SharedTransitionScope?,
+    animatedContentScope: AnimatedContentScope?,
 ) {
-    com.oneasmr.app.ui.common.WorkListRow(
-        item = item,
-        coverStore = coverStore,
-        onClick = onClick,
-        onRemove = { onRemove() },
-        onScrape = onScrape,
-        scrapingWorkId = scrapingWorkId,
-    )
-}
-
-/** Compact card-form scrape button (grid mode). */
-@Composable
-private fun ScrapeButton(item: WorkListItem, scraping: Boolean, onScrape: () -> Unit) {
-    val label = when (item.scrapeStatus) {
-        ScrapeStatus.OK -> "重新刮削"
-        ScrapeStatus.FAILED -> "重试"
-        ScrapeStatus.NOT_SCRAPED -> "刮削"
+    val greyed = item.missing
+    val contentColor = if (greyed) {
+        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+    } else {
+        MaterialTheme.colorScheme.onSurface
     }
-    TextButton(onClick = onScrape, enabled = !scraping) {
-        if (scraping) {
-            CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+    val busy = scrapingWorkId == item.id
+    val (interactionSource, pressScale) = rememberPressScale(0.97f)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .graphicsLayer { scaleX = pressScale; scaleY = pressScale }
+            .clickable(
+                interactionSource = interactionSource,
+                indication = LocalIndication.current,
+                onClick = onClick,
+            )
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        LibraryCoverImage(
+            coverStore = coverStore,
+            rjCode = item.rjCode,
+            type = CoverType.THUMB_240,
+            rootFolderUri = item.rootFolderUri,
+            relativeDir = item.relativeDir,
+            modifier = Modifier
+                .sharedWorkCover(sharedTransitionScope, animatedContentScope, item.id)
+                .size(56.dp)
+                .clip(MaterialTheme.shapes.small),
+            colorFilter = if (greyed) GrayscaleColorFilter else null,
+        )
+        Column(
+            Modifier
+                .weight(1f)
+                .padding(start = 12.dp),
+        ) {
+            Text(
+                text = item.title,
+                style = MaterialTheme.typography.titleMedium,
+                color = contentColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = buildAnnotatedString {
+                    withStyle(SpanStyle(fontFamily = FontFamily.Monospace)) { append(item.rjCode) }
+                    item.circleName?.let { append(" · $it") }
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        item.rateAverage2dp?.let {
+            Text(
+                "★ ${String.format(java.util.Locale.US, "%.2f", it)}",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(end = 4.dp),
+            )
+        }
+        if (greyed) {
+            AssistChip(
+                onClick = {},
+                label = { Text("已失效", style = MaterialTheme.typography.labelMedium) },
+                colors = AssistChipDefaults.assistChipColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                ),
+            )
+            Spacer(Modifier.width(4.dp))
+            TextButton(onClick = onRemove) { Text("移除") }
         } else {
-            Text(label)
+            IconButton(onClick = { onScrape(item) }, enabled = !busy) {
+                if (busy) {
+                    CircularProgressIndicator(
+                        Modifier.size(20.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                } else {
+                    Icon(
+                        if (item.scrapeStatus == ScrapeStatus.OK) {
+                            Icons.Outlined.RefreshOutlined
+                        } else {
+                            Icons.Outlined.CloudDownload
+                        },
+                        contentDescription = "刮削",
+                        tint = if (item.scrapeStatus == ScrapeStatus.FAILED) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                }
+            }
         }
     }
 }
 
-/** Grid/list toggle; the selection persists via the DataStore-backed ViewModel. */
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * Grayscale matrix applied to missing works' covers (grid card + list thumb)
+ * — the Wave B replacement for relying on the dim overlay alone.
+ */
+private val GrayscaleColorFilter =
+    ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0f) })
+
+/**
+ * [com.oneasmr.app.ui.common.CoverImage] variant that accepts a [ColorFilter]
+ * (missing works render grayscale). The model resolution mirrors CoverImage's
+ * local-first contract (cached file → bundled-folder cover → placeholder) —
+ * duplicated here rather than extending CoverImage because the redesign scope
+ * is this file only.
+ */
 @Composable
-private fun LibraryViewModeToggle(
-    viewMode: LibraryViewMode,
-    onSelect: (LibraryViewMode) -> Unit,
+private fun LibraryCoverImage(
+    coverStore: CoverStore,
+    rjCode: String,
+    type: CoverType,
+    rootFolderUri: String?,
+    relativeDir: String?,
+    modifier: Modifier = Modifier,
+    colorFilter: ColorFilter? = null,
 ) {
-    SingleChoiceSegmentedButtonRow(Modifier.padding(end = 8.dp)) {
-        SegmentedButton(
-            selected = viewMode == LibraryViewMode.GRID,
-            onClick = { onSelect(LibraryViewMode.GRID) },
-            shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
-        ) { Text("网格") }
-        SegmentedButton(
-            selected = viewMode == LibraryViewMode.LIST,
-            onClick = { onSelect(LibraryViewMode.LIST) },
-            shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
-        ) { Text("列表") }
+    var model by remember(rjCode, type, rootFolderUri, relativeDir) { mutableStateOf<Any?>(null) }
+    LaunchedEffect(rjCode, type, rootFolderUri, relativeDir) {
+        model = coverStore.coverModelFor(rjCode, type, rootFolderUri, relativeDir)
     }
+    AsyncImage(
+        model = model,
+        contentDescription = null,
+        modifier = modifier,
+        contentScale = ContentScale.Crop,
+        placeholder = ColorPainter(MaterialTheme.colorScheme.surfaceVariant),
+        error = ColorPainter(MaterialTheme.colorScheme.surfaceVariant),
+        colorFilter = colorFilter,
+    )
 }
 
 /**
@@ -862,10 +1114,13 @@ internal fun <T : Any> LazyPagingItems<T>.safeItemKey(key: (T) -> Any): (Int) ->
 }
 
 /**
- * Task 13 sort menu: pick an order field (or the seeded random order) and
- * toggle the direction (ascending/descending; direction is irrelevant for
- * [WorkOrder.RANDOM]). The selection persists via the DataStore-backed
- * ViewModel and is shared with the search page.
+ * Task 13 sort menu with the Wave B compact trigger: an [Icons.Filled.SwapVert]
+ * icon button opening the same dropdown as before; a 6dp primary dot marks a
+ * non-default selection (order ≠ [WorkOrder.ID] or descending). Picking a
+ * different field starts ascending; picking the current field toggles the
+ * direction (direction is irrelevant for [WorkOrder.RANDOM]). The selection
+ * persists via the DataStore-backed ViewModel and is shared with the search
+ * page, which reuses this composable.
  */
 @Composable
 internal fun SortMenu(
@@ -876,15 +1131,19 @@ internal fun SortMenu(
 ) {
     var expanded by remember { mutableStateOf(false) }
     Box(modifier) {
-        TextButton(onClick = { expanded = true }) {
-            Text(
-                order.label() + if (order == WorkOrder.RANDOM) {
-                    ""
-                } else {
-                    if (descending) " ↓" else " ↑"
-                },
-            )
-            Icon(Icons.Filled.ArrowDropDown, contentDescription = null)
+        IconButton(onClick = { expanded = true }) {
+            Box {
+                Icon(Icons.Filled.SwapVert, contentDescription = "排序")
+                if (order != WorkOrder.ID || descending) {
+                    Box(
+                        Modifier
+                            .align(Alignment.TopEnd)
+                            .size(6.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primary),
+                    )
+                }
+            }
         }
         DropdownMenu(
             expanded = expanded,
@@ -925,9 +1184,12 @@ internal fun SortMenu(
 }
 
 /**
- * Task 15 library filter menu: no filter ("全部") / rated-only ("已评分") /
- * one entry per progress state. The selection is DAO-level (a WHERE predicate
- * in the paging query, see [WorkDao.pagingSource]) — never in-memory.
+ * Task 15 library filter menu with the Wave B compact trigger: an
+ * [Icons.Filled.FilterList] icon button opening the same dropdown as before —
+ * no filter ("全部") / rated-only ("已评分") / one entry per progress state;
+ * a 6dp primary dot marks an active filter. The selection is DAO-level (a
+ * WHERE predicate in the paging query, see [WorkDao.pagingSource]) — never
+ * in-memory.
  */
 @Composable
 internal fun FilterMenu(
@@ -937,9 +1199,19 @@ internal fun FilterMenu(
 ) {
     var expanded by remember { mutableStateOf(false) }
     Box(modifier) {
-        TextButton(onClick = { expanded = true }) {
-            Text(filterLabel(filter))
-            Icon(Icons.Filled.ArrowDropDown, contentDescription = null)
+        IconButton(onClick = { expanded = true }) {
+            Box {
+                Icon(Icons.Filled.FilterList, contentDescription = "筛选")
+                if (filter != null) {
+                    Box(
+                        Modifier
+                            .align(Alignment.TopEnd)
+                            .size(6.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primary),
+                    )
+                }
+            }
         }
         DropdownMenu(
             expanded = expanded,
@@ -988,11 +1260,29 @@ internal fun FilterMenu(
     }
 }
 
-/** FilterMenu button label. */
-internal fun filterLabel(filter: WorkFilter?): String = when (filter) {
-    null -> "筛选"
-    WorkFilter.Rated -> "已评分"
-    is WorkFilter.Progress -> "进度：${filter.state.uiLabel()}"
+/**
+ * Compact header view-mode button (Wave B): the active mode tints
+ * [ColorScheme.primary], the inactive one onSurfaceVariant. The selection
+ * persists via the DataStore-backed ViewModel.
+ */
+@Composable
+private fun ViewModeButton(
+    selected: Boolean,
+    icon: ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+) {
+    IconButton(onClick = onClick) {
+        Icon(
+            icon,
+            contentDescription = contentDescription,
+            tint = if (selected) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+        )
+    }
 }
 
 /**
@@ -1081,12 +1371,18 @@ class LibraryViewModel @Inject constructor(
     }
 
     /**
-     * Pull-to-refresh STUB (plan Task 12: "下拉刷新触发单作品元数据刷新占位"):
-     * the pull affordance is real, the handler is intentionally a no-op —
-     * per-work metadata refresh lands with Task 11's scrape wiring (ScrapeViewModel),
-     * which must not be duplicated here.
+     * Pull-to-refresh: triggers an incremental rescan of the authorized
+     * roots — the same entry as the 扫描 button (the gesture means "refresh
+     * the library from disk"; metadata scraping stays on its own explicit
+     * per-work / batch entries in ScrapeViewModel). Gated exactly like the
+     * button: no roots or a scan already running makes it a safe no-op.
      */
-    fun onPullRefresh() = Unit
+    fun onPullRefresh() {
+        val state = uiState.value
+        if (state.hasRoots && state.progress.phase != ScanPhase.SCANNING) {
+            scanController.startScan()
+        }
+    }
 
     fun startScan() {
         scanController.startScan()

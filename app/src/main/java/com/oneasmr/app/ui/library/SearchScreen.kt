@@ -16,17 +16,17 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -34,8 +34,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
@@ -275,6 +279,12 @@ fun SearchScreen(
             .fillMaxSize()
             .safeDrawingPadding(),
     ) {
+        Text(
+            "搜索",
+            style = MaterialTheme.typography.displaySmall,
+            maxLines = 1,
+            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp),
+        )
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -297,6 +307,13 @@ fun SearchScreen(
                     null
                 },
                 singleLine = true,
+                shape = MaterialTheme.shapes.extraLarge,
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    unfocusedBorderColor = Color.Transparent,
+                    disabledBorderColor = Color.Transparent,
+                ),
             )
             SortMenu(
                 order = sortOrder,
@@ -380,7 +397,8 @@ private fun RecentSearches(terms: List<String>, onPick: (String) -> Unit, onClea
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     "最近搜索",
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f),
                 )
                 TextButton(onClick = onClear) { Text("清除") }
@@ -390,7 +408,20 @@ private fun RecentSearches(terms: List<String>, onPick: (String) -> Unit, onClea
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 terms.forEach { term ->
-                    AssistChip(onClick = { onPick(term) }, label = { Text(term) })
+                    Surface(
+                        shape = MaterialTheme.shapes.small,
+                        color = MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                        modifier = Modifier
+                            .clip(MaterialTheme.shapes.small)
+                            .clickable { onPick(term) },
+                    ) {
+                        Text(
+                            term,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                    }
                 }
             }
         }
@@ -420,7 +451,7 @@ private fun CenteredMessage(title: String?, message: String?, loading: Boolean =
     }
 }
 
-/** Result row (also used for the direct-code hit): cover + title + code + circle + rating. */
+/** Result row (also used for the direct-code hit): Wave B row anatomy. */
 @Composable
 private fun WorkSearchRow(item: WorkListItem, onClick: () -> Unit) {
     val coverStore = rememberCoverStore()
@@ -439,38 +470,33 @@ private fun WorkSearchRow(item: WorkListItem, onClick: () -> Unit) {
             relativeDir = item.relativeDir,
             modifier = Modifier
                 .size(width = 56.dp, height = 56.dp)
-                .clip(RoundedCornerShape(6.dp)),
+                .clip(MaterialTheme.shapes.small),
         )
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(
                 text = item.title,
-                style = MaterialTheme.typography.bodyLarge,
+                style = MaterialTheme.typography.titleMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = item.rjCode,
-                style = MaterialTheme.typography.bodySmall,
-                fontFamily = FontFamily.Monospace,
+                text = buildAnnotatedString {
+                    withStyle(SpanStyle(fontFamily = FontFamily.Monospace)) { append(item.rjCode) }
+                    item.circleName?.let { append(" · $it") }
+                },
+                style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
-            if (item.circleName != null) {
-                Text(
-                    text = item.circleName,
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            item.rateAverage2dp?.let {
-                Text(
-                    "★ ${String.format(java.util.Locale.US, "%.2f", it)}",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.tertiary,
-                )
-            }
+        }
+        item.rateAverage2dp?.let {
+            Text(
+                "★ ${String.format(java.util.Locale.US, "%.2f", it)}",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+            )
         }
     }
 }

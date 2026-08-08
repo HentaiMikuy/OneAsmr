@@ -15,6 +15,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
@@ -31,6 +32,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -81,6 +83,9 @@ fun SettingsScreen(
     val batchFailed by viewModel.batchFailedCount.collectAsStateWithLifecycle()
     val clearCacheDialogVisible by viewModel.clearCoverCacheDialogVisible.collectAsStateWithLifecycle()
     val clearProgressDialogVisible by viewModel.clearPlaybackProgressDialogVisible.collectAsStateWithLifecycle()
+    val asmrOneFallbackEnabled by viewModel.asmrOneFallbackEnabled.collectAsStateWithLifecycle()
+    val asmrOneBaseUrl by viewModel.asmrOneBaseUrl.collectAsStateWithLifecycle()
+    val asmrOneMirrorDialogVisible by viewModel.asmrOneMirrorDialogVisible.collectAsStateWithLifecycle()
 
     var licensesVisible by remember { mutableStateOf(false) }
 
@@ -91,11 +96,11 @@ fun SettingsScreen(
             .verticalScroll(rememberScrollState())
             .padding(16.dp),
     ) {
-        Text("设置", style = MaterialTheme.typography.headlineSmall)
+        Text("设置", style = MaterialTheme.typography.displaySmall)
         Spacer(Modifier.height(16.dp))
 
         // ---- theme ----
-        Text("主题", style = MaterialTheme.typography.titleMedium)
+        SettingsSectionHeader("主题")
         Spacer(Modifier.height(8.dp))
         SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
             ThemeMode.entries.forEachIndexed { index, mode ->
@@ -133,7 +138,7 @@ fun SettingsScreen(
         Spacer(Modifier.height(24.dp))
 
         // ---- scraping ----
-        Text("刮削", style = MaterialTheme.typography.titleMedium)
+        SettingsSectionHeader("刮削")
         Spacer(Modifier.height(8.dp))
         SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
             ScrapingLanguage.entries.forEachIndexed { index, language ->
@@ -147,6 +152,42 @@ fun SettingsScreen(
             }
         }
         Spacer(Modifier.height(8.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { viewModel.setAsmrOneFallbackEnabled(!asmrOneFallbackEnabled) }
+                .padding(vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("asmr.one 备用源", style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    "DLsite 刮削失败时使用 asmr.one 补全（仅 RJ 作品）",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(
+                checked = asmrOneFallbackEnabled,
+                onCheckedChange = { viewModel.setAsmrOneFallbackEnabled(it) },
+            )
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { viewModel.showAsmrOneMirrorDialog() }
+                .padding(vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("asmr.one 镜像地址", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+            Text(
+                asmrOneBaseUrl.ifBlank { "默认" },
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
         Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("批量刮削入口", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
             Text(
@@ -172,7 +213,7 @@ fun SettingsScreen(
                 .padding(vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("根文件夹管理", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            Text("根文件夹管理", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
             Text(
                 if (rootEntries.isEmpty()) "未添加" else "${rootEntries.size} 个",
                 style = MaterialTheme.typography.bodyMedium,
@@ -182,7 +223,7 @@ fun SettingsScreen(
         HorizontalDivider()
         Spacer(Modifier.height(16.dp))
 
-        Text("已授权根文件夹", style = MaterialTheme.typography.titleMedium)
+        SettingsSectionHeader("已授权根文件夹")
         Spacer(Modifier.height(4.dp))
         if (rootEntries.isEmpty()) {
             Text(
@@ -199,7 +240,7 @@ fun SettingsScreen(
         Spacer(Modifier.height(24.dp))
 
         // ---- cover cache ----
-        Text("封面缓存", style = MaterialTheme.typography.titleMedium)
+        SettingsSectionHeader("封面缓存")
         Spacer(Modifier.height(8.dp))
         Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("当前占用", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
@@ -248,7 +289,7 @@ fun SettingsScreen(
         Spacer(Modifier.height(24.dp))
 
         // ---- resume policy ----
-        Text("续播策略", style = MaterialTheme.typography.titleMedium)
+        SettingsSectionHeader("续播策略")
         Spacer(Modifier.height(8.dp))
         SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
             ResumeMode.entries.forEachIndexed { index, mode ->
@@ -272,7 +313,7 @@ fun SettingsScreen(
         Spacer(Modifier.height(24.dp))
 
         // ---- data management ----
-        Text("数据管理", style = MaterialTheme.typography.titleMedium)
+        SettingsSectionHeader("数据管理")
         Spacer(Modifier.height(4.dp))
         Row(
             modifier = Modifier
@@ -300,7 +341,7 @@ fun SettingsScreen(
         Spacer(Modifier.height(24.dp))
 
         // ---- about ----
-        Text("关于", style = MaterialTheme.typography.titleMedium)
+        SettingsSectionHeader("关于")
         Spacer(Modifier.height(4.dp))
         Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("版本", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
@@ -358,6 +399,30 @@ fun SettingsScreen(
         )
     }
 
+    if (asmrOneMirrorDialogVisible) {
+        var mirrorInput by remember { mutableStateOf(asmrOneBaseUrl) }
+        AlertDialog(
+            onDismissRequest = { viewModel.cancelAsmrOneMirrorDialog() },
+            title = { Text("asmr.one 镜像地址") },
+            text = {
+                OutlinedTextField(
+                    value = mirrorInput,
+                    onValueChange = { mirrorInput = it },
+                    label = { Text("镜像地址") },
+                    placeholder = { Text("https://api.asmr.one") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { viewModel.setAsmrOneBaseUrl(mirrorInput) }) { Text("确定") }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.cancelAsmrOneMirrorDialog() }) { Text("取消") }
+            },
+        )
+    }
+
     if (licensesVisible) {
         AlertDialog(
             onDismissRequest = { licensesVisible = false },
@@ -368,6 +433,16 @@ fun SettingsScreen(
             },
         )
     }
+}
+
+@Composable
+private fun SettingsSectionHeader(label: String) {
+    Text(
+        label,
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        letterSpacing = 0.5.sp,
+    )
 }
 
 @Composable
@@ -458,6 +533,10 @@ class SettingsViewModel @Inject constructor(
         .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, ScrapingLanguage.ZH)
     val cacheCapMb: StateFlow<Int> = settingsStore.cacheSizeCapMb
         .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, SettingsStore.DEFAULT_CACHE_CAP_MB)
+    val asmrOneFallbackEnabled: StateFlow<Boolean> = settingsStore.asmrOneFallbackEnabled
+        .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, true)
+    val asmrOneBaseUrl: StateFlow<String> = settingsStore.asmrOneBaseUrl
+        .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, "")
 
     private val _cacheUsageBytes = MutableStateFlow(0L)
     val cacheUsageBytes: StateFlow<Long> = _cacheUsageBytes.asStateFlow()
@@ -476,6 +555,9 @@ class SettingsViewModel @Inject constructor(
 
     private val _clearPlaybackProgressDialogVisible = MutableStateFlow(false)
     val clearPlaybackProgressDialogVisible: StateFlow<Boolean> = _clearPlaybackProgressDialogVisible.asStateFlow()
+
+    private val _asmrOneMirrorDialogVisible = MutableStateFlow(false)
+    val asmrOneMirrorDialogVisible: StateFlow<Boolean> = _asmrOneMirrorDialogVisible.asStateFlow()
 
     private val _batchPendingCount = MutableStateFlow(0)
     val batchPendingCount: StateFlow<Int> = _batchPendingCount.asStateFlow()
@@ -506,6 +588,26 @@ class SettingsViewModel @Inject constructor(
 
     fun setScrapingLanguage(language: ScrapingLanguage) {
         viewModelScope.launch { settingsStore.setScrapingLanguage(language) }
+    }
+
+    fun setAsmrOneFallbackEnabled(enabled: Boolean) {
+        viewModelScope.launch { settingsStore.setAsmrOneFallbackEnabled(enabled) }
+    }
+
+    // ---- asmr.one mirror base-url: dialog-gated text input ----
+
+    fun showAsmrOneMirrorDialog() {
+        _asmrOneMirrorDialogVisible.value = true
+    }
+
+    fun cancelAsmrOneMirrorDialog() {
+        _asmrOneMirrorDialogVisible.value = false
+    }
+
+    /** Confirms the dialog input; blank restores the default host. */
+    fun setAsmrOneBaseUrl(url: String) {
+        _asmrOneMirrorDialogVisible.value = false
+        viewModelScope.launch { settingsStore.setAsmrOneBaseUrl(url) }
     }
 
     /** Steps the cache cap by [delta] MB; the store clamps to [1, 100_000]. */

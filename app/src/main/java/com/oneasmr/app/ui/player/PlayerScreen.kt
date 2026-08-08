@@ -17,13 +17,16 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -32,7 +35,7 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -61,6 +64,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -74,15 +78,23 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.painter.ColorPainter
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import coil3.compose.AsyncImage
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
@@ -117,7 +129,7 @@ import com.oneasmr.app.player.SessionConnection
 import com.oneasmr.app.player.toMedia3
 import com.oneasmr.app.player.toMediaItem
 import com.oneasmr.app.player.toRepeatMode
-import com.oneasmr.app.ui.common.CoverImage
+import com.oneasmr.app.ui.common.rememberPressScale
 import com.oneasmr.app.ui.work.DocumentFsFactory
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
@@ -800,6 +812,13 @@ private fun rememberPlayerCoverStore(): CoverStore {
  * (Task 20 — entry hidden when the track has no .lrc) and the queue bottom
  * sheet (Task 18 reorder surface). Lock-screen styling is the MediaSession
  * notification (Task 17) — no custom work here.
+ *
+ * Wave D visual pass (cover-forward, dark-immersive): the current track's
+ * cover doubles as a blurred full-bleed backdrop under a heavier scrim (see
+ * [PlayerBackdrop]); the hero cover floats centered on a 32dp shadow;
+ * play/pause is a 64dp primary circle flanked by shuffle/prev/next/repeat;
+ * secondary actions (speed, sleep, lyrics, queue) are tonal pills. All
+ * playback behavior, session flows and semantics strings are unchanged.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -839,11 +858,30 @@ fun PlayerScreen(
         failureDismissed = state.playbackFailed == null
     }
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .safeDrawingPadding(),
-    ) {
+    // Wave D: ONE cover model shared by the full-bleed backdrop and the hero
+    // cover (the same local-first CoverStore.coverModelFor resolution
+    // CoverImage runs internally — Coil caches the second decode). Hoisted
+    // here because CoverImage does not expose its model (Wave C pattern).
+    val currentRjCode = state.currentRjCode
+    var coverModel by remember(currentRjCode) { mutableStateOf<Any?>(null) }
+    LaunchedEffect(currentRjCode) {
+        coverModel = if (currentRjCode.isNullOrBlank()) {
+            null
+        } else {
+            coverStore.coverModelFor(currentRjCode, CoverType.MAIN, null, null)
+        }
+    }
+    val overBackdrop = !currentRjCode.isNullOrBlank()
+
+    Box(Modifier.fillMaxSize()) {
+        if (overBackdrop) {
+            PlayerBackdrop(coverModel)
+        }
+        Column(
+            Modifier
+                .fillMaxSize()
+                .safeDrawingPadding(),
+        ) {
         Row(
             Modifier
                 .fillMaxWidth()
@@ -851,11 +889,18 @@ fun PlayerScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "返回",
+                    // White over the immersive backdrop (Wave C language);
+                    // default content color when no cover backs the page.
+                    tint = if (overBackdrop) Color.White else Color.Unspecified,
+                )
             }
             Text(
                 state.workTitle.ifEmpty { "播放" },
                 style = MaterialTheme.typography.titleMedium,
+                color = if (overBackdrop) Color.White else Color.Unspecified,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -916,7 +961,7 @@ fun PlayerScreen(
                     onToggleLyrics = { showLyrics = !showLyrics },
                     rotateCover = rotateCover,
                     onToggleRotate = { rotateCover = !rotateCover },
-                    coverStore = coverStore,
+                    coverModel = coverModel,
                     onSeek = viewModel::seekTo,
                     onPrev = viewModel::prevTrack,
                     onTogglePlayPause = viewModel::togglePlayPause,
@@ -929,6 +974,7 @@ fun PlayerScreen(
                     onSeekToLyric = viewModel::seekToLyric,
                 )
             }
+        }
         }
     }
 
@@ -962,6 +1008,43 @@ fun PlayerScreen(
     }
 }
 
+/**
+ * Wave D backdrop: the current track's own cover, full-bleed and blurred.
+ * Modifier.blur is RenderEffect-backed and only exists on API 31+, so below
+ * 31 the scrim alone carries the melt-into-the-page effect. The scrim runs
+ * background @ 0.55 (top) → background @ 0.85 (bottom) — darker than Wave C's
+ * 0.3 → 1.0 because transport controls and lyrics sit directly on it and
+ * need guaranteed contrast over any cover art.
+ */
+@Composable
+private fun PlayerBackdrop(coverModel: Any?) {
+    val backdropModifier = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        Modifier.fillMaxSize().blur(32.dp)
+    } else {
+        Modifier.fillMaxSize()
+    }
+    AsyncImage(
+        model = coverModel,
+        contentDescription = null,
+        modifier = backdropModifier,
+        contentScale = ContentScale.Crop,
+        placeholder = ColorPainter(MaterialTheme.colorScheme.surfaceVariant),
+        error = ColorPainter(MaterialTheme.colorScheme.surfaceVariant),
+    )
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        MaterialTheme.colorScheme.background.copy(alpha = 0.55f),
+                        MaterialTheme.colorScheme.background.copy(alpha = 0.85f),
+                    ),
+                ),
+            ),
+    )
+}
+
 @Composable
 private fun PlayerContent(
     state: PlayerUiState,
@@ -971,7 +1054,7 @@ private fun PlayerContent(
     onToggleLyrics: () -> Unit,
     rotateCover: Boolean,
     onToggleRotate: () -> Unit,
-    coverStore: CoverStore,
+    coverModel: Any?,
     onSeek: (Long) -> Unit,
     onPrev: () -> Unit,
     onTogglePlayPause: () -> Unit,
@@ -991,30 +1074,48 @@ private fun PlayerContent(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         PlayerCover(
-            rjCode = state.currentRjCode,
-            workTitle = state.workTitle,
-            coverStore = coverStore,
+            coverModel = coverModel,
+            hasCover = !state.currentRjCode.isNullOrBlank(),
             rotate = rotateCover,
             onToggleRotate = onToggleRotate,
         )
 
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(20.dp))
         Text(
             state.trackTitle,
-            style = MaterialTheme.typography.titleLarge,
+            style = MaterialTheme.typography.headlineSmall,
             textAlign = TextAlign.Center,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
-        Spacer(Modifier.height(4.dp))
-        Text(
-            state.workTitle,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        Spacer(Modifier.height(6.dp))
+        // Mono work code + circle (Wave B/C card language) in one muted line.
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (!state.currentRjCode.isNullOrBlank()) {
+                Text(
+                    state.currentRjCode,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (state.workTitle.isNotEmpty()) {
+                    Text(
+                        "  ·  ",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            if (state.workTitle.isNotEmpty()) {
+                Text(
+                    state.workTitle,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
 
         Spacer(Modifier.height(16.dp))
 
@@ -1023,7 +1124,10 @@ private fun PlayerContent(
             progress = { state.bufferedFraction },
             modifier = Modifier
                 .fillMaxWidth()
+                .height(2.dp)
                 .semantics { contentDescription = "buffered ${(state.bufferedFraction * 100).toInt()}%" },
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+            trackColor = Color.Transparent,
         )
         var dragPosition by remember { mutableFloatStateOf(-1f) }
         Slider(
@@ -1036,6 +1140,11 @@ private fun PlayerContent(
                 }
             },
             valueRange = 0f..(state.durationMs.coerceAtLeast(1L).toFloat()),
+            colors = SliderDefaults.colors(
+                thumbColor = MaterialTheme.colorScheme.primary,
+                activeTrackColor = MaterialTheme.colorScheme.primary,
+                inactiveTrackColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
+            ),
             modifier = Modifier.semantics {
                 contentDescription = "player position=${state.positionMs} duration=${state.durationMs}"
             },
@@ -1054,31 +1163,74 @@ private fun PlayerContent(
             )
         }
 
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(12.dp))
+        // Transport row: shuffle/repeat flank prev/play/next; play-pause is
+        // the 64dp primary FAB-style circle.
+        val (playPauseInteractionSource, playPauseScale) = rememberPressScale(0.92f)
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             IconButton(
+                onClick = onToggleShuffle,
+                modifier = Modifier.semantics {
+                    contentDescription = "shuffle=${if (state.shuffleEnabled) "on" else "off"}"
+                },
+            ) {
+                Icon(
+                    Icons.Filled.Shuffle,
+                    contentDescription = null,
+                    tint = if (state.shuffleEnabled) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
+            IconButton(
                 onClick = onPrev,
                 enabled = state.queueSize > 0,
                 modifier = Modifier.semantics { contentDescription = "prev track" },
             ) {
-                Icon(Icons.Filled.SkipPrevious, contentDescription = null, Modifier.size(36.dp))
+                Icon(
+                    Icons.Filled.SkipPrevious,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(42.dp),
+                )
             }
-            IconButton(
-                onClick = onTogglePlayPause,
-                enabled = state.queueSize > 0,
-                modifier = Modifier
-                    .size(72.dp)
+            Box(
+                Modifier
+                    .size(64.dp)
+                    .graphicsLayer { scaleX = playPauseScale; scaleY = playPauseScale }
+                    .clip(CircleShape)
+                    .background(
+                        if (state.queueSize > 0) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
+                        },
+                    )
+                    .clickable(
+                        interactionSource = playPauseInteractionSource,
+                        indication = LocalIndication.current,
+                        enabled = state.queueSize > 0,
+                        onClick = onTogglePlayPause,
+                    )
                     .semantics {
                         contentDescription = if (state.isPlaying) "player pause" else "player play"
                     },
+                contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                     contentDescription = null,
-                    modifier = Modifier.size(48.dp),
+                    tint = if (state.queueSize > 0) {
+                        MaterialTheme.colorScheme.onPrimary
+                    } else {
+                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                    },
+                    modifier = Modifier.size(32.dp),
                 )
             }
             IconButton(
@@ -1086,15 +1238,13 @@ private fun PlayerContent(
                 enabled = state.queueSize > 0,
                 modifier = Modifier.semantics { contentDescription = "next track" },
             ) {
-                Icon(Icons.Filled.SkipNext, contentDescription = null, Modifier.size(36.dp))
+                Icon(
+                    Icons.Filled.SkipNext,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(42.dp),
+                )
             }
-        }
-
-        Spacer(Modifier.height(8.dp))
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
             IconButton(
                 onClick = onCycleRepeat,
                 modifier = Modifier.semantics {
@@ -1116,63 +1266,53 @@ private fun PlayerContent(
                     },
                 )
             }
-            IconButton(
-                onClick = onToggleShuffle,
-                modifier = Modifier.semantics {
-                    contentDescription = "shuffle=${if (state.shuffleEnabled) "on" else "off"}"
-                },
-            ) {
-                Icon(
-                    Icons.Filled.Shuffle,
-                    contentDescription = null,
-                    tint = if (state.shuffleEnabled) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                )
-            }
-            TextButton(
+        }
+
+        Spacer(Modifier.height(12.dp))
+        // Secondary actions as tonal pills (secondaryContainer, shapes.small).
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+        ) {
+            TonalPill(
                 onClick = onSpeedClick,
                 modifier = Modifier.semantics { contentDescription = "speed=${state.speed}" },
             ) {
                 Icon(Icons.Filled.Speed, contentDescription = null, Modifier.size(18.dp))
-                Spacer(Modifier.width(4.dp))
-                Text("${state.speed}x")
+                Text("${state.speed}x", style = MaterialTheme.typography.labelLarge)
             }
-            IconButton(
+            TonalPill(
                 onClick = onSleepClick,
+                active = sleepTimer.active,
                 modifier = Modifier.semantics {
                     contentDescription = "sleep timer active=${sleepTimer.active} display=${sleepTimer.display}"
                 },
             ) {
-                Icon(Icons.Filled.Timer, contentDescription = null, Modifier.size(22.dp))
+                Icon(Icons.Filled.Timer, contentDescription = null, Modifier.size(18.dp))
+                if (sleepTimer.active && sleepTimer.display.isNotEmpty()) {
+                    Text(sleepTimer.display, style = MaterialTheme.typography.labelLarge)
+                }
             }
             if (lyricsState.lyrics != null) {
-                IconButton(
+                TonalPill(
                     onClick = onToggleLyrics,
+                    active = showLyrics,
                     modifier = Modifier.semantics {
                         contentDescription = "lyrics panel=${if (showLyrics) "on" else "off"}"
                     },
                 ) {
-                    Icon(
-                        Icons.Filled.Subtitles,
-                        contentDescription = null,
-                        tint = if (showLyrics) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                    )
+                    Icon(Icons.Filled.Subtitles, contentDescription = null, Modifier.size(18.dp))
                 }
             }
-            IconButton(
+            TonalPill(
                 onClick = onQueueClick,
                 modifier = Modifier.semantics {
                     contentDescription = "queue panel items=${state.queueSize}"
                 },
             ) {
-                Icon(Icons.Filled.QueueMusic, contentDescription = null, Modifier.size(22.dp))
+                Icon(Icons.Filled.QueueMusic, contentDescription = null, Modifier.size(18.dp))
+                Text("${state.queueSize}", style = MaterialTheme.typography.labelLarge)
             }
         }
 
@@ -1197,11 +1337,18 @@ private fun PlayerContent(
     }
 }
 
+/**
+ * Wave D hero cover: centered, 78% of the width, 1:1, [MaterialTheme.shapes.large]
+ * on a 32dp elevation shadow — it shares the backdrop's resolved model (Coil
+ * caches the second decode), so no second CoverStore query runs here. The
+ * rotate affordance is preserved; it floats over the cover on a translucent
+ * dark circle (Wave C top-bar language) since onSurfaceVariant is illegible
+ * over arbitrary cover art.
+ */
 @Composable
 private fun PlayerCover(
-    rjCode: String?,
-    workTitle: String,
-    coverStore: CoverStore,
+    coverModel: Any?,
+    hasCover: Boolean,
     rotate: Boolean,
     onToggleRotate: () -> Unit,
 ) {
@@ -1213,36 +1360,40 @@ private fun PlayerCover(
         label = "coverSpinAngle",
     )
     Box(contentAlignment = Alignment.Center) {
-        if (rjCode.isNullOrBlank()) {
+        if (!hasCover) {
             // No current item (e.g. the session was cleared after a playback
             // error) — render the placeholder surface, never a blank-rjCode
             // CoverStore call (it requires a non-blank code).
             Box(
                 Modifier
                     .padding(top = 16.dp)
-                    .size(240.dp)
-                    .clip(RoundedCornerShape(16.dp))
+                    .fillMaxWidth(0.78f)
+                    .aspectRatio(1f)
+                    .clip(MaterialTheme.shapes.large)
                     .background(MaterialTheme.colorScheme.surfaceVariant),
             )
         } else {
-            CoverImage(
-                coverStore = coverStore,
-                rjCode = rjCode,
-                type = CoverType.MAIN,
-                rootFolderUri = null,
-                relativeDir = null,
+            AsyncImage(
+                model = coverModel,
+                contentDescription = null,
                 modifier = Modifier
                     .padding(top = 16.dp)
-                    .size(240.dp)
-                    .clip(RoundedCornerShape(16.dp))
+                    .fillMaxWidth(0.78f)
+                    .aspectRatio(1f)
+                    .shadow(32.dp, MaterialTheme.shapes.large)
+                    .clip(MaterialTheme.shapes.large)
                     .graphicsLayer { rotationZ = if (rotate) rotation else 0f },
+                contentScale = ContentScale.Crop,
+                placeholder = ColorPainter(MaterialTheme.colorScheme.surfaceVariant),
+                error = ColorPainter(MaterialTheme.colorScheme.surfaceVariant),
             )
         }
         IconButton(
             onClick = onToggleRotate,
             modifier = Modifier
                 .align(Alignment.BottomEnd)
-                .padding(8.dp)
+                .padding(20.dp)
+                .background(Color.Black.copy(alpha = 0.3f), CircleShape)
                 .semantics { contentDescription = "cover rotation=${if (rotate) "on" else "off"}" },
         ) {
             Icon(
@@ -1251,10 +1402,42 @@ private fun PlayerCover(
                 tint = if (rotate) {
                     MaterialTheme.colorScheme.primary
                 } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
+                    Color.White.copy(alpha = 0.75f)
                 },
             )
         }
+    }
+}
+
+/** Tonal pill for the secondary action row (speed / sleep / lyrics / queue). */
+@Composable
+private fun TonalPill(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    active: Boolean = false,
+    content: @Composable RowScope.() -> Unit,
+) {
+    Surface(
+        onClick = onClick,
+        color = if (active) {
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+        } else {
+            MaterialTheme.colorScheme.secondaryContainer
+        },
+        contentColor = if (active) {
+            MaterialTheme.colorScheme.primary
+        } else {
+            MaterialTheme.colorScheme.onSecondaryContainer
+        },
+        shape = MaterialTheme.shapes.small,
+        modifier = modifier,
+    ) {
+        Row(
+            Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            content = content,
+        )
     }
 }
 
@@ -1367,7 +1550,17 @@ private fun QueuePanelSheet(
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 2.dp),
+                    .padding(vertical = 2.dp)
+                    .clip(MaterialTheme.shapes.small)
+                    // Wave D tonal language: the current row reads as a tonal
+                    // pill instead of only a colored "▶".
+                    .background(
+                        if (item.isCurrent) {
+                            MaterialTheme.colorScheme.secondaryContainer
+                        } else {
+                            Color.Transparent
+                        },
+                    ),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
@@ -1378,7 +1571,9 @@ private fun QueuePanelSheet(
                     } else {
                         MaterialTheme.colorScheme.onSurfaceVariant
                     },
-                    modifier = Modifier.width(28.dp),
+                    modifier = Modifier
+                        .padding(start = 8.dp)
+                        .width(28.dp),
                 )
                 Column(
                     Modifier
@@ -1389,6 +1584,11 @@ private fun QueuePanelSheet(
                     Text(
                         item.trackTitle,
                         style = MaterialTheme.typography.bodyMedium,
+                        color = if (item.isCurrent) {
+                            MaterialTheme.colorScheme.onSurface
+                        } else {
+                            Color.Unspecified
+                        },
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -1400,25 +1600,26 @@ private fun QueuePanelSheet(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
+                val actionTint = MaterialTheme.colorScheme.onSurfaceVariant
                 IconButton(
                     onClick = { onMove(item.index, item.index - 1) },
                     enabled = item.index > 0,
                     modifier = Modifier.semantics { contentDescription = "move up ${item.index}" },
                 ) {
-                    Icon(Icons.Filled.KeyboardArrowUp, contentDescription = null)
+                    Icon(Icons.Filled.KeyboardArrowUp, contentDescription = null, tint = actionTint)
                 }
                 IconButton(
                     onClick = { onMove(item.index, item.index + 1) },
                     enabled = item.index < queuePanel.items.lastIndex,
                     modifier = Modifier.semantics { contentDescription = "move down ${item.index}" },
                 ) {
-                    Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null)
+                    Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null, tint = actionTint)
                 }
                 IconButton(
                     onClick = { onRemove(item.index) },
                     modifier = Modifier.semantics { contentDescription = "remove ${item.index}" },
                 ) {
-                    Icon(Icons.Filled.Clear, contentDescription = null)
+                    Icon(Icons.Filled.Clear, contentDescription = null, tint = actionTint)
                 }
             }
         }

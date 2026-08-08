@@ -255,7 +255,7 @@ private fun BrowseHeader(title: String, onBack: () -> Unit) {
         }
         Text(
             title,
-            style = MaterialTheme.typography.headlineSmall,
+            style = MaterialTheme.typography.displaySmall,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )

@@ -7,16 +7,18 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.SwipeToDismissBox
@@ -33,6 +35,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -95,6 +98,17 @@ fun MiniPlayerBarHost(
     )
 }
 
+/**
+ * Wave D visual pass: the bar is now a FLOATING pill (12dp horizontal / 8dp
+ * bottom margins, [MaterialTheme.shapes.extraLarge] fully-rounded container,
+ * surfaceContainerHigh with an 8dp shadow) instead of a full-width strip.
+ * Content is a 44dp circle cover thumb, title + mono work code, and a
+ * primary-tinted play/pause button; a 3dp playback-position line rides the
+ * pill's bottom edge (clipped to the pill shape by the Surface). The dismiss
+ * backdrop mirrors the pill silhouette so the errorContainer flash during the
+ * swipe tracks the same footprint. Data sources and interactions are
+ * unchanged: tap -> open player, swipe -> stop, button -> play/pause.
+ */
 @Composable
 private fun MiniPlayerBar(
     snapshot: PlayerSnapshot,
@@ -116,67 +130,87 @@ private fun MiniPlayerBar(
 
     SwipeToDismissBox(
         state = dismissState,
+        modifier = Modifier
+            .padding(horizontal = 12.dp)
+            .padding(bottom = 8.dp),
         backgroundContent = {
             Box(
                 Modifier
-                    .fillMaxWidth()
-                    .height(56.dp)
+                    .fillMaxSize()
+                    .clip(MaterialTheme.shapes.extraLarge)
                     .background(MaterialTheme.colorScheme.errorContainer),
             )
         },
     ) {
         Surface(
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
-            shape = RoundedCornerShape(topStart = 0.dp, topEnd = 0.dp),
-            tonalElevation = 3.dp,
+            shape = MaterialTheme.shapes.extraLarge,
+            shadowElevation = 8.dp,
         ) {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .height(56.dp)
-                    .clickable(onClick = onTap)
-                    .semantics { contentDescription = "mini player ${snapshot.trackTitle} playing=${snapshot.isPlaying}" },
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                snapshot.rjCode?.let { rjCode ->
-                    CoverImage(
-                        coverStore = coverStore,
-                        rjCode = rjCode,
-                        type = CoverType.MAIN,
-                        rootFolderUri = null,
-                        relativeDir = null,
-                        modifier = Modifier
-                            .padding(horizontal = 12.dp)
-                            .size(40.dp)
-                            .clip(RoundedCornerShape(6.dp)),
-                    )
-                }
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        snapshot.trackTitle,
-                        style = MaterialTheme.typography.bodyMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        snapshot.workTitle,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                IconButton(
-                    onClick = onTogglePlayPause,
-                    modifier = Modifier.semantics {
-                        contentDescription = if (snapshot.isPlaying) "mini pause" else "mini play"
-                    },
+            Box(Modifier.fillMaxWidth()) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(64.dp)
+                        .clickable(onClick = onTap)
+                        .semantics { contentDescription = "mini player ${snapshot.trackTitle} playing=${snapshot.isPlaying}" },
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Icon(
-                        if (snapshot.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                        contentDescription = null,
-                    )
+                    snapshot.rjCode?.let { rjCode ->
+                        CoverImage(
+                            coverStore = coverStore,
+                            rjCode = rjCode,
+                            type = CoverType.MAIN,
+                            rootFolderUri = null,
+                            relativeDir = null,
+                            modifier = Modifier
+                                .padding(start = 10.dp, end = 12.dp)
+                                .size(44.dp)
+                                .clip(CircleShape),
+                        )
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            snapshot.trackTitle,
+                            style = MaterialTheme.typography.titleMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        // Mono work code matches the Wave B/C card language;
+                        // the work title is the fallback when no code exists.
+                        Text(
+                            snapshot.rjCode ?: snapshot.workTitle,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontFamily = if (snapshot.rjCode != null) FontFamily.Monospace else null,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    IconButton(
+                        onClick = onTogglePlayPause,
+                        modifier = Modifier.semantics {
+                            contentDescription = if (snapshot.isPlaying) "mini pause" else "mini play"
+                        },
+                    ) {
+                        Icon(
+                            if (snapshot.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(28.dp),
+                        )
+                    }
                 }
+                // Thin playback-position line along the pill's bottom edge.
+                LinearProgressIndicator(
+                    progress = { snapshot.progressFraction },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(3.dp)
+                        .align(Alignment.BottomCenter),
+                    color = MaterialTheme.colorScheme.primary,
+                    trackColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f),
+                )
             }
         }
     }

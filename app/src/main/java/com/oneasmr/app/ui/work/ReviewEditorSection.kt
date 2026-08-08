@@ -1,17 +1,16 @@
 package com.oneasmr.app.ui.work
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -34,7 +33,6 @@ import com.oneasmr.app.ui.common.uiLabel
  * the invalid/missing-work state, so a review of a missing work stays
  * viewable and clearable (plan failure path).
  */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun ReviewEditorSection(
     state: WorkDetailUiState,
@@ -47,7 +45,7 @@ internal fun ReviewEditorSection(
     val review = state.review
     Surface(
         shape = MaterialTheme.shapes.medium,
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        color = MaterialTheme.colorScheme.surfaceContainer,
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 8.dp),
@@ -61,7 +59,12 @@ internal fun ReviewEditorSection(
             }
             Spacer(Modifier.height(4.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                RatingStars(rating = review?.rating, onRate = onRating)
+                RatingStars(
+                    rating = review?.rating,
+                    onRate = onRating,
+                    filledColor = MaterialTheme.colorScheme.primary,
+                    emptyColor = MaterialTheme.colorScheme.outlineVariant,
+                )
                 Spacer(Modifier.width(8.dp))
                 Text(
                     when (review?.rating) {
@@ -77,16 +80,34 @@ internal fun ReviewEditorSection(
                 }
             }
             Spacer(Modifier.height(8.dp))
-            FlowRow(
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 ProgressState.entries.forEach { p ->
-                    FilterChip(
-                        selected = (review?.progress ?: ProgressState.none) == p,
+                    val selected = (review?.progress ?: ProgressState.none) == p
+                    Surface(
                         onClick = { onProgress(p) },
-                        label = { Text(p.uiLabel()) },
-                    )
+                        shape = CircleShape,
+                        color = if (selected) {
+                            MaterialTheme.colorScheme.primaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.surfaceContainerHighest
+                        },
+                    ) {
+                        Text(
+                            p.uiLabel(),
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = if (selected) {
+                                MaterialTheme.colorScheme.onPrimaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                    }
                 }
             }
             Spacer(Modifier.height(8.dp))
@@ -97,6 +118,7 @@ internal fun ReviewEditorSection(
                 label = { Text("评语") },
                 minLines = 2,
                 maxLines = 5,
+                shape = MaterialTheme.shapes.small,
             )
             Row(
                 Modifier.fillMaxWidth(),

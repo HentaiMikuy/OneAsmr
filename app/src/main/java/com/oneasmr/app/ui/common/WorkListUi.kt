@@ -13,14 +13,18 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import com.oneasmr.app.data.local.ProgressState
 import com.oneasmr.app.data.local.ScrapeStatus
@@ -29,11 +33,14 @@ import com.oneasmr.app.data.repository.CoverStore
 import com.oneasmr.app.data.repository.CoverType
 
 /**
- * Task 12 list row (Task 8 style preserved): cover thumb + text + badges/actions.
- * Shared verbatim by the library page and the Task 16 dimension-works browse
- * pages (reuse, never duplicate). [showActions] gates the per-row scrape /
- * remove buttons — the library screen owns those flows; browse pages render
- * read-only rows (missing works still show the 已失效 badge).
+ * Task 12 list row, restyled to the Wave B row anatomy (Wave F): 56dp cover
+ * thumb clipped to [androidx.compose.material3.Shapes.small], titleMedium
+ * title + labelSmall mono work code / circle line, trailing primary rating
+ * and a tonal progress pill. Shared verbatim by the browse pages (reuse,
+ * never duplicate; the library page owns its own Wave B row). [showActions]
+ * gates the per-row scrape / remove buttons — the library screen owns those
+ * flows; browse pages render read-only rows (missing works still show the
+ * 已失效 badge).
  */
 @Composable
 internal fun WorkListRow(
@@ -66,51 +73,51 @@ internal fun WorkListRow(
             relativeDir = item.relativeDir,
             modifier = Modifier
                 .size(width = 56.dp, height = 56.dp)
-                .clip(RoundedCornerShape(6.dp)),
+                .clip(MaterialTheme.shapes.small),
         )
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(
                 text = item.title,
-                style = MaterialTheme.typography.bodyLarge,
+                style = MaterialTheme.typography.titleMedium,
                 color = contentColor,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = item.rjCode,
-                style = MaterialTheme.typography.bodySmall,
-                fontFamily = FontFamily.Monospace,
+                text = buildAnnotatedString {
+                    withStyle(SpanStyle(fontFamily = FontFamily.Monospace)) { append(item.rjCode) }
+                    item.circleName?.let { append(" · $it") }
+                },
+                style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
-            if (item.circleName != null) {
+        }
+        item.rateAverage2dp?.let {
+            Text(
+                "★ ${String.format(java.util.Locale.US, "%.2f", it)}",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+        if (item.progress != null && item.progress != ProgressState.none) {
+            Spacer(Modifier.width(6.dp))
+            Surface(
+                shape = RoundedCornerShape(6.dp),
+                color = MaterialTheme.colorScheme.primaryContainer,
+                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+            ) {
                 Text(
-                    text = item.circleName,
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    progressLabel(item.progress),
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
                 )
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                item.rateAverage2dp?.let {
-                    Text(
-                        "★ ${String.format(java.util.Locale.US, "%.2f", it)}",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.tertiary,
-                    )
-                }
-                if (item.progress != null && item.progress != ProgressState.none) {
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        progressLabel(item.progress),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                }
             }
         }
         if (greyed) {
+            Spacer(Modifier.width(8.dp))
             AssistChip(
                 onClick = {},
                 label = { Text("已失效", style = MaterialTheme.typography.labelMedium) },
@@ -123,6 +130,7 @@ internal fun WorkListRow(
                 TextButton(onClick = { onRemove(item) }) { Text("移除") }
             }
         } else if (showActions) {
+            Spacer(Modifier.width(8.dp))
             ScrapeRowActions(
                 item = item,
                 scrapingWorkId = scrapingWorkId,

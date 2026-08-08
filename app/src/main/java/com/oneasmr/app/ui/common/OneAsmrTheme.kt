@@ -3,16 +3,21 @@ package com.oneasmr.app.ui.common
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
 
 /**
- * App-wide Material3 theme. Light/dark follows the system by default;
- * dynamic color (Android 12+) is on unless disabled by a future setting.
+ * App-wide Material3 theme. Light/dark follows the system by default.
+ *
+ * Dynamic color stays opt-in per the settings toggle: when enabled on
+ * Android 12+, the wallpaper-derived dynamic scheme is used exactly as
+ * before; otherwise the custom OneAsmr schemes (see [OneAsmrDarkColorScheme]
+ * / [OneAsmrLightColorScheme]) apply, together with [OneAsmrTypography] and
+ * [OneAsmrShapes]. Note that typography and shapes intentionally apply in
+ * BOTH branches — dynamic color is a color-only feature in M3, so the
+ * redesign's type/shape tokens hold even under wallpaper-derived colors.
  */
 @Composable
 fun OneAsmrTheme(
@@ -25,8 +30,13 @@ fun OneAsmrTheme(
             val context = LocalContext.current
             if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         }
-        darkTheme -> darkColorScheme()
-        else -> lightColorScheme()
+        darkTheme -> OneAsmrDarkColorScheme
+        else -> OneAsmrLightColorScheme
     }
-    MaterialTheme(colorScheme = colorScheme, content = content)
+    MaterialTheme(
+        colorScheme = colorScheme,
+        typography = OneAsmrTypography,
+        shapes = OneAsmrShapes,
+        content = content,
+    )
 }
