@@ -31,13 +31,7 @@ data class PlayQueueItem(
     val uri: String,
     /** Total duration in ms when known (null until a playback pass). */
     val durationMs: Long? = null,
-) {
-    /**
-     * Whether this item plays from a remote URL. The MediaItem mapper routes
-     * both through the same setUri; remote support is exercised in Task 26.
-     */
-    val isRemote: Boolean get() = uri.startsWith("http://") || uri.startsWith("https://")
-}
+)
 
 /**
  * Immutable playback queue: all [items] of a work plus the index playback

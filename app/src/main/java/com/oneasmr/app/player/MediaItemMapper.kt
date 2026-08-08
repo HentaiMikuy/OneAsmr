@@ -12,8 +12,8 @@ import com.oneasmr.app.domain.player.PlayQueueItem
  * The mediaId is the NORMATIVE trackKey "{sourceScope}:{rjCode}:{trackIndex}"
  * built exclusively through [KeySpec] — the single source of truth for keys
  * (plan Task 4; Task 19 reads position memory back through the same key).
- * The uri is passed through verbatim: SAF content:// for local works, http(s)
- * stream urls for remote works (Task 26 wires remote streaming on top).
+ * The uri is passed through verbatim — the local SAF content:// document uri
+ * of the track file (the app is local-only; no remote streaming sources).
  */
 fun PlayQueueItem.toMediaItem(): MediaItem = MediaItem.Builder()
     .setMediaId(KeySpec.trackKey(sourceScope, rjCode, trackIndex))

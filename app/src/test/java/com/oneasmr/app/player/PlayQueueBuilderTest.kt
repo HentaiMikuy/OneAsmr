@@ -106,7 +106,6 @@ class PlayQueueBuilderTest {
         assertEquals("local", item.sourceScope)
         assertEquals("RJ100200", item.rjCode)
         assertEquals("content://doc/t2", item.uri)
-        assertFalse(item.isRemote)
         // The mapper derives the normative trackKey from these fields.
         assertEquals("local:RJ100200:2", item.toMediaItem().mediaId)
     }

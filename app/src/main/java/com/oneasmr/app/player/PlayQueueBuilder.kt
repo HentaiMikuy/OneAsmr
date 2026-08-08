@@ -15,8 +15,8 @@ import com.oneasmr.app.domain.player.PlayQueueItem
  *   queue order == the detail page's "#N" order (kikoeru hash semantics).
  * - The queue carries ALL audio tracks of the work; playback starts at the
  *   item whose trackIndex matches the tapped node ([startTrackIndex]).
- * - [uri] passthrough: local SAF document uris today, remote stream urls in
- *   Task 26 — the model supports both (see [PlayQueueItem.isRemote]).
+ * - [uri] passthrough: local SAF content:// document uris only (the app is
+ *   local-only; there are no remote streaming sources).
  *
  * Pure JVM — no Android types, unit-tested with synthetic [TrackNode] trees.
  */

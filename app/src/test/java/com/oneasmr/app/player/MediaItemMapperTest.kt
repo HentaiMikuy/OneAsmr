@@ -4,8 +4,6 @@ import androidx.media3.common.MediaItem
 import com.oneasmr.app.domain.player.PlayQueue
 import com.oneasmr.app.domain.player.PlayQueueItem
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -13,8 +11,8 @@ import org.robolectric.annotation.Config
 
 /**
  * MediaItem construction from the domain PlayQueue model (plan Task 17:
- * mediaId = normative trackKey via KeySpec; SAF content:// uri or remote
- * stream url both ride through setUri — remote is wired in Task 26).
+ * mediaId = normative trackKey via KeySpec; the local SAF content:// uri
+ * rides through setUri — the app is local-only).
  *
  * Robolectric provides the real android.net.Uri implementation.
  */
@@ -43,18 +41,16 @@ class MediaItemMapperTest {
             "content://com.android.externalstorage.documents/document/primary%3AAsmrLib%2FRJ100200%2Ftrack3.wav",
             mediaItem.localConfiguration?.uri.toString(),
         )
-        assertFalse(item("content://doc/t3").isRemote)
     }
 
     @Test
-    fun `remote stream url passes through for Task 26`() {
+    fun `arbitrary uri string passes through verbatim`() {
         val mediaItem: MediaItem =
-            item("https://kikoeru.example/api/media/stream/123/3?token=abc").toMediaItem()
+            item("https://example.com/any/uri").toMediaItem()
         assertEquals(
-            "https://kikoeru.example/api/media/stream/123/3?token=abc",
+            "https://example.com/any/uri",
             mediaItem.localConfiguration?.uri.toString(),
         )
-        assertTrue(item("https://kikoeru.example/x.mp3").isRemote)
     }
 
     @Test
