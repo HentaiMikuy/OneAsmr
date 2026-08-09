@@ -962,13 +962,18 @@ private fun WorkListRow(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        item.rateAverage2dp?.let {
-            Text(
-                "★ ${String.format(java.util.Locale.US, "%.2f", it)}",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary,
+        if (item.progress != null && item.progress != ProgressState.none) {
+            Surface(
+                shape = RoundedCornerShape(6.dp),
+                color = MaterialTheme.colorScheme.primaryContainer,
                 modifier = Modifier.padding(end = 4.dp),
-            )
+            ) {
+                Text(
+                    progressLabel(item.progress),
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
+                )
+            }
         }
         if (greyed) {
             AssistChip(
