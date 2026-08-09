@@ -6,6 +6,7 @@ import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.core.EaseOut
 import androidx.compose.animation.core.animate
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -236,6 +237,14 @@ fun OneAsmrNavHost(
         }
     }
 
+    // 非根路由：底簇不自动隐藏，内容底边上移簇高以免列表末尾被迷你播放器
+    // 遮住；根路由必须保持 0（全高），滚动隐藏底栏时才不留死区。
+    val contentBottomPadding by animateDpAsState(
+        targetValue = if (isRootRoute) 0.dp else clusterHeightDp.value,
+        animationSpec = tween(250, easing = EaseOut),
+        label = "contentBottomPadding",
+    )
+
     Scaffold(
         modifier = modifier,
         // Insets are handled per-screen (safeDrawingPadding) and by the bottom
@@ -261,7 +270,9 @@ fun OneAsmrNavHost(
         // roots override them with a plain 220ms cross-fade. exit/popEnter
         // stay fade-only — no parallax hijacks.
         SharedTransitionLayout(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(bottom = contentBottomPadding),
         ) {
         NavHost(
             navController = navController,
