@@ -1,6 +1,7 @@
 package com.oneasmr.app.ui.player
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -50,6 +51,8 @@ fun LyricsPanel(
         modifier = modifier
             .height(280.dp)
             .semantics { contentDescription = "lyrics activeLine=$activeIndex" },
+        // contentPadding 而非外层 padding：留白随内容滚动，不影响活动行居中。
+        contentPadding = PaddingValues(vertical = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         itemsIndexed(lyrics.lines) { index, line ->

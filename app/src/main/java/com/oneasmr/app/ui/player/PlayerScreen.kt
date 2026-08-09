@@ -12,6 +12,7 @@ import android.os.Bundle
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -819,6 +820,11 @@ private fun rememberPlayerCoverStore(): CoverStore {
  * play/pause is a 64dp primary circle flanked by shuffle/prev/next/repeat;
  * secondary actions (speed, sleep, lyrics, queue) are tonal pills. All
  * playback behavior, session flows and semantics strings are unchanged.
+ *
+ * 布局为上下两段式：中区 weight(1f) 承载封面/标题（可滚动）或全屏歌词
+ * （卡拉OK模式，封面/标题隐藏），未展开歌词时以单行实时歌词条作为入口；
+ * 缓冲条/滑杆/时间/传输键/功能丸组成底部控制簇固定停靠屏幕底部——标准
+ * 音乐播放器布局，消除了高屏下功能丸下方的大片空白。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -885,7 +891,20 @@ fun PlayerScreen(
         Row(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 4.dp),
+                // 浅色封面下白色返回键/标题会融进去：沉浸背景时垫黑->透明 scrim。
+                .then(
+                    if (overBackdrop) {
+                        Modifier.background(
+                            Brush.verticalGradient(
+                                listOf(Color.Black.copy(alpha = 0.45f), Color.Transparent),
+                            ),
+                        )
+                    } else {
+                        Modifier
+                    },
+                )
+                .padding(horizontal = 8.dp, vertical = 4.dp)
+                .padding(bottom = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onBack) {
@@ -1066,13 +1085,41 @@ private fun PlayerContent(
     onQueueClick: () -> Unit,
     onSeekToLyric: (Long) -> Unit,
 ) {
+    // 上下两段式（原整列 verticalScroll 顶部对齐，高屏下功能丸下方留大片空白）：
+    // 中区 weight(1f) 吃掉所有剩余高度，底部控制簇固定停靠屏幕底部。
     Column(
         Modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
             .padding(horizontal = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        // 中区：歌词模式整体换成 LyricsPanel（卡拉OK视图，封面/标题隐藏，
+        // Apple Music 式全屏歌词）；否则保留可滚动的封面+标题区（小屏仍可滚）。
+        Box(
+            Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+        ) {
+            Crossfade(
+                targetState = showLyrics && lyricsState.lyrics != null,
+                label = "lyricsMode",
+            ) { lyricsMode ->
+                if (lyricsMode) {
+                    // LyricsPanel 的默认 280dp 高度会被这里的 fillMaxSize 约束
+                    // 覆盖（后声明的 height 被外层固定约束钳制），无需改动面板。
+                    LyricsPanel(
+                        lyrics = lyricsState.lyrics!!,
+                        activeIndex = lyricsState.activeIndex,
+                        onLineClick = onSeekToLyric,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else {
+                    Column(
+                        Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState()),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
         PlayerCover(
             coverModel = coverModel,
             hasCover = !state.currentRjCode.isNullOrBlank(),
@@ -1117,6 +1164,27 @@ private fun PlayerContent(
             }
         }
 
+        // 单行实时歌词条：有歌词且未展开面板时跟随播放位置显示当前行，
+        // 点击进入全屏歌词模式（比角落里的功能丸更显眼）。
+        if (lyricsState.lyrics != null && !showLyrics) {
+            Spacer(Modifier.height(8.dp))
+            LyricsStrip(lyricsState = lyricsState, onClick = onToggleLyrics)
+        }
+        // 面板已展开但歌词仍在加载（如 rememberSaveable 恢复后重载）的占位文案。
+        if (showLyrics && lyricsState.lyrics == null && lyricsState.loading) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "正在加载歌词…",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+                    }
+                }
+            }
+        }
+
+        // ---- 底部控制簇（不参与中区滚动，始终钉在屏幕底部）----
         Spacer(Modifier.height(16.dp))
 
         // Buffered + played positions (Media3 bufferedPosition drives the fill).
@@ -1316,24 +1384,47 @@ private fun PlayerContent(
             }
         }
 
-        if (showLyrics) {
-            Spacer(Modifier.height(8.dp))
-            when {
-                lyricsState.loading -> Text(
-                    "正在加载歌词…",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                lyricsState.lyrics != null -> LyricsPanel(
-                    lyrics = lyricsState.lyrics!!,
-                    activeIndex = lyricsState.activeIndex,
-                    onLineClick = onSeekToLyric,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-        }
-
         Spacer(Modifier.height(16.dp))
+    }
+}
+
+/**
+ * 单行实时歌词：解析当前播放行（activeIndex 越界/为负时回落到第一行），
+ * 行切换用 Crossfade 淡入淡出。整条可点击进入全屏歌词模式；clickable 会
+ * 合并子节点语义，因此 "lyrics strip" 节点上同时带当前行文本。
+ */
+@Composable
+private fun LyricsStrip(
+    lyricsState: LyricsUiState,
+    onClick: () -> Unit,
+) {
+    val lyrics = lyricsState.lyrics ?: return
+    if (lyrics.lines.isEmpty()) return
+    val lineIndex = if (lyricsState.activeIndex in lyrics.lines.indices) {
+        lyricsState.activeIndex
+    } else {
+        0
+    }
+    Crossfade(
+        targetState = lineIndex,
+        label = "lyricsStripLine",
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.small)
+            .clickable(onClick = onClick)
+            .semantics { contentDescription = "lyrics strip" },
+    ) { index ->
+        Text(
+            lyrics.lines[index].text.ifEmpty { "♪" },
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.primary,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp),
+        )
     }
 }
 
