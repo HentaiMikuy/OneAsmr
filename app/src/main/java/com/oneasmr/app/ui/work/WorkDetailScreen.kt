@@ -4,8 +4,10 @@ import android.os.Build
 import androidx.compose.animation.AnimatedContentScope
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,6 +23,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -46,6 +49,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -60,6 +64,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -91,6 +96,9 @@ import com.oneasmr.app.data.repository.CoverStore
 import com.oneasmr.app.data.repository.CoverType
 import com.oneasmr.app.data.scanner.TrackNode
 import com.oneasmr.app.data.scanner.TrackNodeType
+import com.oneasmr.app.domain.trackgroup.TrackGroup
+import com.oneasmr.app.domain.trackgroup.TrackGroupResult
+import com.oneasmr.app.domain.trackgroup.TrackGrouper
 import com.oneasmr.app.ui.common.sharedWorkCover
 import com.oneasmr.app.ui.library.rememberCoverStore
 
@@ -302,6 +310,13 @@ private fun DetailContent(
     val treeRows = remember(state.tree) {
         (state.tree as? TrackTreeUiState.Ready)?.let { flattenTree(it.root, it.expanded) }
     }
+    // 分组/树状视图状态：仅本屏 rememberSaveable（不落盘），默认分组。
+    // 分组数据与 treeRows 一样在屏内从 state.tree 派生，不进 ViewModel。
+    var groupedTrackView by rememberSaveable { mutableStateOf(true) }
+    var selectedTrackGroup by rememberSaveable { mutableStateOf<String?>(null) }
+    val trackGroups = remember(state.tree) {
+        (state.tree as? TrackTreeUiState.Ready)?.let { TrackGrouper.group(it.root) }.orEmpty()
+    }
     LazyColumn(Modifier.fillMaxSize()) {
         item(key = "header") {
             WorkHeader(
@@ -331,7 +346,11 @@ private fun DetailContent(
             )
         }
         item(key = "tree_header") {
-            TreeHeader(state = state)
+            TreeHeader(
+                state = state,
+                groupedView = groupedTrackView,
+                onViewModeChange = { groupedTrackView = it },
+            )
         }
         when (val tree = state.tree) {
             is TrackTreeUiState.Loading -> item(key = "tree_loading") {
@@ -353,6 +372,47 @@ private fun DetailContent(
                 )
             }
             is TrackTreeUiState.Ready -> {
+                if (groupedTrackView) {
+                    // 分组模式：筹码行 + 选中组的平铺文件行。选中组持久化的是
+                    // 组键；失效（重扫后该组消失）时回落到第一个音频组，
+                    // 没有音频组则取第一组。
+                    val selected = trackGroups.firstOrNull { it.group.name == selectedTrackGroup }
+                        ?: trackGroups.firstOrNull { it.group.isAudio }
+                        ?: trackGroups.firstOrNull()
+                    if (selected != null) {
+                        item(key = "track_group_chips") {
+                            TrackGroupChipRow(
+                                groups = trackGroups,
+                                selected = selected.group,
+                                onSelect = { selectedTrackGroup = it.name },
+                            )
+                        }
+                        val files = selected.files
+                        items(
+                            count = files.size,
+                            key = { "group:${files[it].relativePath}" },
+                        ) { index ->
+                            val node = files[index]
+                            TreeRowItem(
+                                row = TreeRow(node, depth = 0, expanded = false),
+                                workId = work.id,
+                                progress = if (node.type == TrackNodeType.AUDIO) {
+                                    node.trackIndex?.let { state.trackProgress[it] }
+                                } else {
+                                    null
+                                },
+                                onToggleFolder = onToggleFolder,
+                                onOpenPlayer = onOpenPlayer,
+                                onOpenVideoPlayer = onOpenVideoPlayer,
+                                onOpenText = onOpenText,
+                                onOpenImage = onOpenImage,
+                                parentPath = node.relativePath
+                                    .substringBeforeLast('/', "")
+                                    .takeIf { it.isNotEmpty() },
+                            )
+                        }
+                    }
+                } else {
                 val rows = treeRows.orEmpty()
                 items(count = rows.size, key = { rows[it].node.relativePath }) { index ->
                     val row = rows[index]
@@ -370,6 +430,7 @@ private fun DetailContent(
                         onOpenText = onOpenText,
                         onOpenImage = onOpenImage,
                     )
+                }
                 }
             }
             TrackTreeUiState.Idle -> Unit
@@ -746,7 +807,11 @@ private fun DimensionChip(label: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun TreeHeader(state: WorkDetailUiState) {
+private fun TreeHeader(
+    state: WorkDetailUiState,
+    groupedView: Boolean,
+    onViewModeChange: (Boolean) -> Unit,
+) {
     val count = (state.tree as? TrackTreeUiState.Ready)?.let { tree -> countFiles(tree.root) }
     Row(
         Modifier
@@ -763,7 +828,45 @@ private fun TreeHeader(state: WorkDetailUiState) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+        Spacer(Modifier.weight(1f))
+        // 分组/树状切换只在树就绪后渲染（加载/失败/Idle 态无可切内容）。
+        if (state.tree is TrackTreeUiState.Ready) {
+            ViewModeToggle(grouped = groupedView, onChange = onViewModeChange)
+        }
     }
+}
+
+// M3 SegmentedButton 过高且带勾选图标，标题行里视觉过重，改用双色小胶囊。
+@Composable
+private fun ViewModeToggle(grouped: Boolean, onChange: (Boolean) -> Unit) {
+    Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surfaceVariant) {
+        Row(Modifier.padding(3.dp)) {
+            ViewModeOption("分组", selected = grouped) { onChange(true) }
+            ViewModeOption("树状", selected = !grouped) { onChange(false) }
+        }
+    }
+}
+
+@Composable
+private fun ViewModeOption(label: String, selected: Boolean, onClick: () -> Unit) {
+    val container by animateColorAsState(
+        targetValue = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
+        label = "viewModeOptionBg",
+    )
+    Text(
+        label,
+        modifier = Modifier
+            .clip(CircleShape)
+            .background(container)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 5.dp),
+        style = MaterialTheme.typography.labelMedium,
+        color = if (selected) {
+            MaterialTheme.colorScheme.onSecondaryContainer
+        } else {
+            MaterialTheme.colorScheme.onSurfaceVariant
+        },
+    )
 }
 
 @Composable
@@ -776,6 +879,9 @@ private fun TreeRowItem(
     onOpenVideoPlayer: (String, Int) -> Unit,
     onOpenText: (String, String) -> Unit,
     onOpenImage: (String, String) -> Unit,
+    // 分组平铺模式才传：父目录路径（树状模式靠缩进层级表达 SEなし 等
+    // 变体信息，平铺后必须显式给出，否则不同目录的同名音轨无法区分）。
+    parentPath: String? = null,
 ) {
     val node = row.node
     val onClick: (() -> Unit)? = when (node.type) {
@@ -825,6 +931,15 @@ private fun TreeRowItem(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                if (!parentPath.isNullOrEmpty()) {
+                    Text(
+                        parentPath,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
             // Task 19: remembered-position progress bar on audio rows
             // (playback_state-driven; live via Room invalidation). The
@@ -840,6 +955,34 @@ private fun TreeRowItem(
                     trackColor = MaterialTheme.colorScheme.surfaceVariant,
                 )
             }
+        }
+    }
+}
+
+/**
+ * 分组筹码行：横向滚动，只渲染非空组（顺序即 [TrackGroup] 声明序，
+ * 特典靠后）。默认只展示选中组的文件，其余组折叠在筹码后面——避免
+ * 拍平全部文件导致多结局作品被剧透（见 TrackGrouper KDoc）。
+ */
+@Composable
+private fun TrackGroupChipRow(
+    groups: List<TrackGroupResult>,
+    selected: TrackGroup,
+    onSelect: (TrackGroup) -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        groups.forEach { result ->
+            FilterChip(
+                selected = result.group == selected,
+                onClick = { onSelect(result.group) },
+                label = { Text("${result.group.label} · ${result.files.size}") },
+            )
         }
     }
 }
