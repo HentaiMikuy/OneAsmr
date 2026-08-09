@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -31,9 +30,11 @@ import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.AudioFile
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.CloudDownload
+import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.RateReview
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Reviews
@@ -43,7 +44,8 @@ import androidx.compose.material.icons.outlined.Videocam
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -69,6 +71,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.ColorPainter
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
@@ -93,8 +96,8 @@ import com.oneasmr.app.ui.library.rememberCoverStore
 
 /**
  * Task 14 work detail page: cover, title, RJ code, circle/CV/tags (tappable →
- * Task 16 browse route), dynamic metadata, series, scrape status + manual
- * scrape entry (Task 11 ScrapeRepository), the live track tree with per-type
+ * Task 16 browse route), dynamic metadata, series, subtle scrape-status hint +
+ * manual scrape entry in a top-right overflow menu (Task 11 ScrapeRepository), the live track tree with per-type
  * viewers, a Task 15 review slot, and the invalid-state + rescan entry for
  * missing/moved works — never a white screen.
  */
@@ -380,7 +383,11 @@ private fun DetailContent(
  * so below 31 the scrim alone carries the melt-into-the-page effect; the
  * scrim runs background @ 0.3 (top) → background @ 1.0 (bottom) so backdrop
  * and page share one surface. The hero cover floats over the backdrop on a
- * 24dp elevation shadow. Both images share one resolved model (the same
+ * 24dp elevation shadow. The backdrop height is derived from the cover size
+ * (72dp top gap + cover + 24dp melt band) rather than a fixed constant, so
+ * cover and backdrop never drift apart across screen widths — a fixed height
+ * against a fractional-width cover left a variable blank gap above the title.
+ * Both images share one resolved model (the same
  * local-first [CoverStore.coverModelFor] resolution [CoverImage] uses — Coil
  * caches the second decode), because CoverImage does not expose its model.
  */
@@ -396,6 +403,7 @@ private fun WorkHeader(
 ) {
     val work = state.work!!
     val rjCode = work.rjCodeText()
+    var scrapeMenuExpanded by remember { mutableStateOf(false) }
     var coverModel by remember(rjCode, work.rootFolderUri, work.relativeDir) {
         mutableStateOf<Any?>(null)
     }
@@ -404,11 +412,14 @@ private fun WorkHeader(
             rjCode, CoverType.MAIN, work.rootFolderUri, work.relativeDir,
         )
     }
+    // 封面边长显式取屏宽 0.62 份，背景高度随之推导（见 KDoc），
+    // 不再用固定 420dp 去凑按宽度比例变化的封面。
+    val coverSize = (LocalConfiguration.current.screenWidthDp * 0.62f).dp
     Column(Modifier.fillMaxWidth()) {
         Box(
             Modifier
                 .fillMaxWidth()
-                .height(420.dp),
+                .height(72.dp + coverSize + 24.dp),
         ) {
             val backdropModifier = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 Modifier.fillMaxSize().blur(28.dp)
@@ -447,8 +458,7 @@ private fun WorkHeader(
                     contentDescription = null,
                     modifier = Modifier
                         .sharedWorkCover(sharedTransitionScope, animatedContentScope, work.id)
-                        .fillMaxWidth(0.62f)
-                        .aspectRatio(1f)
+                        .size(coverSize)
                         .shadow(24.dp, MaterialTheme.shapes.large)
                         .clip(MaterialTheme.shapes.large),
                     contentScale = ContentScale.Crop,
@@ -472,6 +482,57 @@ private fun WorkHeader(
                     contentDescription = "返回",
                     tint = Color.White,
                 )
+            }
+            // 刮削动作收进右上角溢出菜单（与左上角返回键同款半透明圆底样式），
+            // 避免在标题下方摆一行醒目的 Chip + 按钮。点击语义不变：
+            // 已刮削先弹确认对话框，否则直接触发刮削（见 onScrapeClick）。
+            Box(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .statusBarsPadding()
+                    .padding(8.dp),
+            ) {
+                IconButton(
+                    onClick = { scrapeMenuExpanded = true },
+                    modifier = Modifier.background(Color.Black.copy(alpha = 0.3f), CircleShape),
+                ) {
+                    Icon(
+                        Icons.Outlined.MoreVert,
+                        contentDescription = "更多操作",
+                        tint = Color.White,
+                    )
+                }
+                DropdownMenu(
+                    expanded = scrapeMenuExpanded,
+                    onDismissRequest = { scrapeMenuExpanded = false },
+                ) {
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                when {
+                                    state.scraping -> "刮削中…"
+                                    work.scrapeStatus == ScrapeStatus.OK -> "重新刮削"
+                                    else -> "刮削"
+                                },
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = if (work.scrapeStatus == ScrapeStatus.OK) {
+                                    Icons.Outlined.Refresh
+                                } else {
+                                    Icons.Outlined.CloudDownload
+                                },
+                                contentDescription = null,
+                            )
+                        },
+                        enabled = !state.scraping,
+                        onClick = {
+                            scrapeMenuExpanded = false
+                            onScrapeClick()
+                        },
+                    )
+                }
             }
         }
         Column(
@@ -503,48 +564,48 @@ private fun WorkHeader(
                     textAlign = TextAlign.Center,
                 )
             }
-            Spacer(Modifier.height(12.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                ScrapeStatusChip(status = work.scrapeStatus)
-                Spacer(Modifier.width(12.dp))
-                FilledTonalButton(onClick = onScrapeClick, enabled = !state.scraping) {
-                    if (state.scraping) {
-                        CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
-                        Spacer(Modifier.width(6.dp))
-                        Text("刮削中…", style = MaterialTheme.typography.labelLarge)
-                    } else {
-                        Icon(
-                            imageVector = if (work.scrapeStatus == ScrapeStatus.OK) {
-                                Icons.Outlined.Refresh
-                            } else {
-                                Icons.Outlined.CloudDownload
-                            },
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp),
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text("刮削", style = MaterialTheme.typography.labelLarge)
-                    }
-                }
-            }
+            ScrapeStatusHint(status = work.scrapeStatus, scraping = state.scraping)
         }
     }
 }
 
+/**
+ * 刮削状态提示：已刮削时不显示任何内容（元数据本身即说明），仅在
+ * 未刮削 / 失败 / 刮削中 时以一行小字低强调呈现，实际动作入口在右上角菜单。
+ */
 @Composable
-private fun ScrapeStatusChip(status: ScrapeStatus) {
-    val (label, container, content) = when (status) {
-        ScrapeStatus.OK -> Triple("已刮削", MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.onPrimaryContainer)
-        ScrapeStatus.FAILED -> Triple("刮削失败", MaterialTheme.colorScheme.errorContainer, MaterialTheme.colorScheme.onErrorContainer)
-        ScrapeStatus.NOT_SCRAPED -> Triple("未刮削", MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.colorScheme.onSurfaceVariant)
+private fun ScrapeStatusHint(status: ScrapeStatus, scraping: Boolean) {
+    val tint: Color
+    val text: String
+    when {
+        scraping -> {
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
+            text = "刮削中…"
+        }
+        status == ScrapeStatus.FAILED -> {
+            tint = MaterialTheme.colorScheme.error
+            text = "刮削失败，可在菜单中重试"
+        }
+        status == ScrapeStatus.NOT_SCRAPED -> {
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
+            text = "未刮削，可从右上角菜单刮削元数据"
+        }
+        else -> return
     }
-    Surface(shape = CircleShape, color = container) {
-        Text(
-            label,
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp),
-            style = MaterialTheme.typography.labelSmall,
-            color = content,
-        )
+    Spacer(Modifier.height(6.dp))
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        if (scraping) {
+            CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = tint)
+        } else {
+            Icon(
+                Icons.Outlined.CloudOff,
+                contentDescription = null,
+                modifier = Modifier.size(14.dp),
+                tint = tint,
+            )
+        }
+        Spacer(Modifier.width(4.dp))
+        Text(text, style = MaterialTheme.typography.bodySmall, color = tint)
     }
 }
 
