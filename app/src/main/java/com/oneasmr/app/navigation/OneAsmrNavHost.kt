@@ -5,14 +5,18 @@ import android.content.Intent
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.core.EaseOut
+import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
@@ -24,10 +28,31 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.Velocity
+import androidx.compose.ui.unit.dp
+import kotlin.math.roundToInt
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
@@ -100,9 +125,24 @@ object Routes {
     fun reviews(): String = "reviews"
 }
 
+/** 底部簇松手吸附动画时长（毫秒）。 */
+private const val BOTTOM_BAR_SETTLE_MS = 250
+
 /**
- * Single NavHost for the whole app, wrapped in a Material3 [Scaffold] with a
- * bottom-navigation skeleton (Library / Search / Settings).
+ * 底部悬浮簇（mini player 胶囊 + 底部导航栏）的实测高度。覆盖层布局下
+ * 内容不再从 Scaffold 获得底部 padding，三个根 Tab 的滚动容器改从这里
+ * 读取高度作为底部留白，保证最后一项不被悬浮簇遮住。
+ */
+val LocalBottomClusterHeight = compositionLocalOf { 0.dp }
+
+/**
+ * Single NavHost for the whole app, wrapped in a Material3 [Scaffold].
+ *
+ * 底部导航（库/搜索/设置）+ 全局 mini player 以「覆盖层」形式浮在内容之上，
+ * 而不是 Scaffold 的 bottomBar：bottomBar 即使被平移隐藏也依然通过
+ * innerPadding 占位，底部会留下一条不可用的死区；覆盖层让内容真正全高，
+ * 滚动时整簇下移隐藏即可把空间还给列表。导航栏只在三个根 Tab 路由渲染，
+ * 且在根路由上随下滚隐藏、上滚回显，松手吸附到较近端点。
  *
  * Deep links: every route also registers a literal `oneasmr://<route>` deep
  * link, and `work/{workId}` the parameterized `oneasmr://work/{workId}`
@@ -127,6 +167,75 @@ fun OneAsmrNavHost(
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
 
+    // 三个根 Tab 路由：只有它们渲染底部导航栏，也只有它们响应滚动隐藏。
+    val isRootRoute = currentRoute == Routes.LIBRARY ||
+        currentRoute == Routes.SEARCH ||
+        currentRoute == Routes.SETTINGS
+
+    // 滚动隐藏状态：0f = 完全显示，clusterHeightPx = 完全隐藏（整簇向下平移）。
+    // 位移用 offset lambda 应用（只动图形层，不触发每帧重组/重排）；
+    // 簇高度由 onSizeChanged 实测，同时折算成 dp 供根 Tab 列表做底部留白。
+    val clusterHeightPx = remember { mutableIntStateOf(0) }
+    val clusterHeightDp = remember { mutableStateOf(0.dp) }
+    val bottomBarOffsetPx = remember { mutableFloatStateOf(0f) }
+    val density = LocalDensity.current
+    val scope = rememberCoroutineScope()
+    val settleJob = remember { mutableStateOf<Job?>(null) }
+    val isRootRouteState = rememberUpdatedState(isRootRoute)
+
+    // 离开根路由时清零位移，避免把"隐藏中"的状态带回根 Tab。
+    LaunchedEffect(isRootRoute) {
+        if (!isRootRoute) {
+            settleJob.value?.cancel()
+            bottomBarOffsetPx.floatValue = 0f
+        }
+    }
+
+    // 松手吸附：动画到较近端点（全显 0f 或全隐 clusterHeightPx）。
+    val snapBottomBar: () -> Unit = {
+        val height = clusterHeightPx.intValue.toFloat()
+        if (height > 0f) {
+            val target = if (bottomBarOffsetPx.floatValue < height / 2f) 0f else height
+            settleJob.value = scope.launch {
+                animate(
+                    initialValue = bottomBarOffsetPx.floatValue,
+                    targetValue = target,
+                    animationSpec = tween(BOTTOM_BAR_SETTLE_MS, easing = EaseOut),
+                ) { value, _ -> bottomBarOffsetPx.floatValue = value }
+            }
+        }
+    }
+
+    // 只跟踪不消费：把列表的纵向滚动增量 1:1 转成底部簇的下滑位移，
+    // 返回 Offset.Zero / Velocity.Zero，列表自身的滚动行为完全不变。
+    val bottomBarScrollConnection = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (isRootRouteState.value) {
+                    val height = clusterHeightPx.intValue.toFloat()
+                    if (height > 0f && available.y != 0f) {
+                        settleJob.value?.cancel()
+                        bottomBarOffsetPx.floatValue =
+                            (bottomBarOffsetPx.floatValue - available.y).coerceIn(0f, height)
+                    }
+                }
+                return Offset.Zero
+            }
+
+            override suspend fun onPreFling(available: Velocity): Velocity {
+                if (isRootRouteState.value) snapBottomBar()
+                return Velocity.Zero
+            }
+
+            override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
+                // onPreFling 触发的吸附会被随后的惯性滚动增量取消（onPreScroll
+                // 里 cancel），所以惯性结束后再吸附一次，保证位移不停在半截。
+                if (isRootRouteState.value) snapBottomBar()
+                return Velocity.Zero
+            }
+        }
+    }
+
     Scaffold(
         modifier = modifier,
         // Insets are handled per-screen (safeDrawingPadding) and by the bottom
@@ -135,47 +244,24 @@ fun OneAsmrNavHost(
         // every screen padded it a second time (visible double-height blank
         // strip at the top). Zero it out here instead.
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
-        bottomBar = {
-            Column {
-                // Global mini player bar (Task 21): visible on every screen
-                // EXCEPT the full player page and the attached-video page
-                // (Task 22: the video page owns the session — its exit path
-                // must run through the back handler, not nav-bar navigation);
-                // tap -> full player, swipe -> stop. Its visibility is driven
-                // by the session connection (single source of truth).
-                if (currentRoute != Routes.PLAYER && currentRoute != Routes.VIDEO_PLAYER) {
-                    MiniPlayerBarHost(
-                        onOpenPlayer = { workId, trackIndex ->
-                            navController.navigate(Routes.player(workId, trackIndex))
-                        },
-                    )
-                }
-                if (currentRoute != Routes.VIDEO_PLAYER) {
-                    OneAsmrBottomBar(
-                        currentRoute = currentRoute,
-                        onNavigate = { route ->
-                            navController.navigate(route) {
-                                popUpTo(navController.graph.findStartDestination().id) {
-                                    saveState = true
-                                }
-                                launchSingleTop = true
-                                restoreState = true
-                            }
-                        },
-                    )
-                }
-            }
-        },
     ) { innerPadding ->
+        // 内容 + 底部悬浮簇同层叠加：簇对齐 Box 底部、盖在内容之上，
+        // 因此内容不再从 Scaffold 拿底部 padding（全高），根 Tab 列表的
+        // 底部留白由 [LocalBottomClusterHeight] 提供。
+        Box(
+            Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .nestedScroll(bottomBarScrollConnection),
+        ) {
+        CompositionLocalProvider(LocalBottomClusterHeight provides clusterHeightDp.value) {
         // Wave E: SharedTransitionLayout enables the library cover → detail
         // hero shared element (see ui/common/Motion.kt). Transition defaults
         // below are the PUSH style (slide in from end + fade); the three tab
         // roots override them with a plain 220ms cross-fade. exit/popEnter
         // stay fade-only — no parallax hijacks.
         SharedTransitionLayout(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding),
+            modifier = Modifier.fillMaxSize(),
         ) {
         NavHost(
             navController = navController,
@@ -361,6 +447,52 @@ fun OneAsmrNavHost(
                 deepLinks = listOf(navDeepLink { uriPattern = "oneasmr://scan_roots" }),
             ) {
                 ScanRootsScreen()
+            }
+        }
+        }
+        }
+
+        // 底部悬浮簇：mini player 胶囊 + 底部导航栏，实测高度写入
+        // [LocalBottomClusterHeight]，滚动隐藏位移用 offset lambda 应用。
+        Column(
+            Modifier
+                .align(Alignment.BottomCenter)
+                .onSizeChanged {
+                    clusterHeightPx.intValue = it.height
+                    clusterHeightDp.value = with(density) { it.height.toDp() }
+                }
+                .offset { IntOffset(0, bottomBarOffsetPx.floatValue.roundToInt()) },
+        ) {
+            // Global mini player bar (Task 21): visible on every screen
+            // EXCEPT the full player page and the attached-video page
+            // (Task 22: the video page owns the session — its exit path
+            // must run through the back handler, not nav-bar navigation);
+            // tap -> full player, swipe -> stop. Its visibility is driven
+            // by the session connection (single source of truth).
+            if (currentRoute != Routes.PLAYER && currentRoute != Routes.VIDEO_PLAYER) {
+                // 非根路由没有导航栏兜底系统手势条高度，胶囊自己让开。
+                Box(if (isRootRoute) Modifier else Modifier.navigationBarsPadding()) {
+                    MiniPlayerBarHost(
+                        onOpenPlayer = { workId, trackIndex ->
+                            navController.navigate(Routes.player(workId, trackIndex))
+                        },
+                    )
+                }
+            }
+            // 导航栏只在三个根 Tab 路由渲染；非根路由彻底不显示（原仅视频页隐藏）。
+            if (isRootRoute) {
+                OneAsmrBottomBar(
+                    currentRoute = currentRoute,
+                    onNavigate = { route ->
+                        navController.navigate(route) {
+                            popUpTo(navController.graph.findStartDestination().id) {
+                                saveState = true
+                            }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    },
+                )
             }
         }
         }

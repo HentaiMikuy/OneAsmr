@@ -49,6 +49,7 @@ import com.oneasmr.app.data.repository.CoverStore
 import com.oneasmr.app.data.repository.RootGrantStatus
 import com.oneasmr.app.data.repository.ScanRootEntry
 import com.oneasmr.app.data.repository.ScanRootRepository
+import com.oneasmr.app.navigation.LocalBottomClusterHeight
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -94,7 +95,9 @@ fun SettingsScreen(
             .fillMaxSize()
             .safeDrawingPadding()
             .verticalScroll(rememberScrollState())
-            .padding(16.dp),
+            .padding(16.dp)
+            // 底部导航为覆盖层不占位，末尾补实测簇高度的留白，避免最后一项被遮住。
+            .padding(bottom = LocalBottomClusterHeight.current),
     ) {
         Text("设置", style = MaterialTheme.typography.displaySmall)
         Spacer(Modifier.height(16.dp))

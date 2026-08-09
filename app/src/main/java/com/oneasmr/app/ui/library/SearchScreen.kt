@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -58,6 +59,7 @@ import com.oneasmr.app.data.local.WorkListItem
 import com.oneasmr.app.data.local.WorkOrder
 import com.oneasmr.app.data.local.WorkPagingSourceFactory
 import com.oneasmr.app.data.local.settings.SettingsStore
+import com.oneasmr.app.navigation.LocalBottomClusterHeight
 import com.oneasmr.app.data.repository.CoverType
 import com.oneasmr.app.ui.common.CoverImage
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -363,7 +365,12 @@ fun SearchScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                             )
-                            LazyColumn(Modifier.fillMaxSize()) {
+                            // 底部导航为覆盖层不占位，用实测簇高度补底部留白，
+                            // 保证最后一条结果不被遮住。
+                            LazyColumn(
+                                Modifier.fillMaxSize(),
+                                contentPadding = PaddingValues(bottom = LocalBottomClusterHeight.current),
+                            ) {
                                 items(
                                     count = itemCount,
                                     key = lazyItems.safeItemKey { it.id },

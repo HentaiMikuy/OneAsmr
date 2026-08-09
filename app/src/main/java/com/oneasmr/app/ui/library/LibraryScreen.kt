@@ -116,6 +116,7 @@ import com.oneasmr.app.data.scanner.ScanPhase
 import com.oneasmr.app.data.scanner.ScanProgress
 import com.oneasmr.app.data.scanner.ScanProgressStore
 import com.oneasmr.app.data.scanner.removeWork
+import com.oneasmr.app.navigation.LocalBottomClusterHeight
 import coil3.compose.AsyncImage
 import com.oneasmr.app.ui.common.formatScanSummary
 import com.oneasmr.app.ui.common.progressLabel
@@ -584,7 +585,14 @@ private fun LibraryContent(
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(minSize = 136.dp),
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 16.dp),
+                // 底部导航改为覆盖层后不再占 layout 空间，用实测簇高度补底部
+                // 留白，保证最后一行卡片不被悬浮的 mini player + 导航栏遮住。
+                contentPadding = PaddingValues(
+                    start = 12.dp,
+                    end = 12.dp,
+                    top = 4.dp,
+                    bottom = 16.dp + LocalBottomClusterHeight.current,
+                ),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
@@ -608,7 +616,11 @@ private fun LibraryContent(
                 }
             }
         } else {
-            LazyColumn(Modifier.fillMaxSize()) {
+            LazyColumn(
+                Modifier.fillMaxSize(),
+                // 同上网格分支：为覆盖层底部簇预留底部留白。
+                contentPadding = PaddingValues(bottom = LocalBottomClusterHeight.current),
+            ) {
                 items(
                     count = items.itemCount,
                     key = items.safeItemKey { it.id },
