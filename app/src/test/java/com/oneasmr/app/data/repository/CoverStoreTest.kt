@@ -386,6 +386,86 @@ class CoverStoreTest {
         assertNull(h.store.coverModelFor("RJ000000", CoverType.MAIN, null, null))
     }
 
+    @Test
+    fun `repeat coverModelFor with identical args does not re-run the SAF locator`() = runBlocking {
+        val h = harness()
+        h.locator.result = "content://tree/RJ9/cover.jpg"
+
+        val first = h.store.coverModelFor("RJ999999", CoverType.MAIN, "content://tree", "RJ999999")
+        val second = h.store.coverModelFor("RJ999999", CoverType.MAIN, "content://tree", "RJ999999")
+
+        assertEquals("content://tree/RJ9/cover.jpg", first)
+        assertEquals(first, second)
+        assertEquals(1, h.locator.lookups) // repeat resolution does zero SAF work
+    }
+
+    @Test
+    fun `repeat coverModelFor serves the cached file even after the file is deleted from disk`() = runBlocking {
+        val h = harness()
+        h.store.downloadCover("RJ123456", CoverType.THUMB_240, "u240")
+
+        val first = h.store.coverModelFor("RJ123456", CoverType.THUMB_240, "content://tree", "RJ123456")
+        assertEquals(h.file("RJ123456", CoverType.THUMB_240), first)
+
+        // resolvedLocalCache 命中路径零磁盘:即使文件被外部删除,重复解析
+        // 仍返回缓存结果(证明第二跳没有重新 isFile 探测)。
+        h.file("RJ123456", CoverType.THUMB_240).delete()
+        assertEquals(first, h.store.coverModelFor("RJ123456", CoverType.THUMB_240, "content://tree", "RJ123456"))
+    }
+
+    @Test
+    fun `fresh download overrides a stale fallback resolution`() = runBlocking {
+        val h = harness()
+        // MAIN 未下载:coverModelFor(MAIN) 经跨尺寸回退命中 THUMB_240,并
+        // 以 (rjCode, MAIN) 为键缓存该回退结果。
+        h.store.downloadCover("RJ123456", CoverType.THUMB_240, "u240")
+        assertEquals(
+            h.file("RJ123456", CoverType.THUMB_240),
+            h.store.coverModelFor("RJ123456", CoverType.MAIN, "content://tree", "RJ123456"),
+        )
+
+        // 现在 MAIN 到位:downloadOne 的写回必须覆盖旧的回退缓存,否则
+        // 上面的陈旧条目会一直遮蔽新下载的主图。
+        h.store.downloadCovers(scrapedWork("RJ123456", DlsiteCovers("http://x/main.jpg", null, null, null)))
+        assertEquals(
+            h.file("RJ123456", CoverType.MAIN),
+            h.store.coverModelFor("RJ123456", CoverType.MAIN, "content://tree", "RJ123456"),
+        )
+    }
+
+    @Test
+    fun `clearAll invalidates resolved resolutions - next call re-resolves`() = runBlocking {
+        val h = harness()
+        h.locator.result = "content://tree/RJ9/cover.jpg"
+        h.store.downloadCover("RJ123456", CoverType.MAIN, "u1")
+        h.store.coverModelFor("RJ123456", CoverType.MAIN, "content://tree", "RJ123456") // local hit, no locator
+        assertEquals(0, h.locator.lookups)
+
+        h.store.clearAll()
+
+        // 缓存已清空 + 文件已删:重新解析 → 本地链落空 → bundled 回退 → locator 被再次咨询。
+        assertEquals(
+            "content://tree/RJ9/cover.jpg",
+            h.store.coverModelFor("RJ123456", CoverType.MAIN, "content://tree", "RJ123456"),
+        )
+        assertEquals(1, h.locator.lookups)
+    }
+
+    @Test
+    fun `cap eviction flushes stale resolutions of evicted covers`() = runBlocking {
+        val h = harness(capBytes = 150) // 两个 100B 文件超限 → 驱逐最老的
+        h.clock.now = 1_000
+        h.store.downloadCover("RJ111111", CoverType.MAIN, "u1")
+        h.clock.now = 2_000
+        h.store.coverModelFor("RJ111111", CoverType.MAIN, "content://tree", "RJ111111") // 进 resolvedLocalCache
+        h.clock.now = 3_000
+        h.store.downloadCover("RJ222222", CoverType.MAIN, "u2") // 驱逐 RJ111111 → 解析缓存必须清空
+        assertFalse(h.file("RJ111111", CoverType.MAIN).exists())
+
+        // 若不失效,这里会返回指向已删除文件的陈旧缓存 → 断言失败。
+        assertNull(h.store.coverModelFor("RJ111111", CoverType.MAIN, "content://tree", "RJ111111"))
+    }
+
     // ---- referer ---------------------------------------------------------
 
     @Test

@@ -3,8 +3,10 @@ package com.oneasmr.app.data.repository
 import com.oneasmr.app.data.remote.dlsite.ScrapedWork
 import java.io.File
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 /**
  * The four cover sizes DLsite serves; the directory-name part of the kikoeru
@@ -33,6 +35,10 @@ enum class CoverType(val dirName: String) {
  *   (Task 11) is unaffected, and the UI falls back to the placeholder.
  * - [localCoverFile]: cached file for (rjCode, type), updating the LRU
  *   last-access timestamp.
+ * - [coverModelFor]: positive local resolutions cached per (rjCode, type)
+ *   in a bounded LRU — re-scrolling an already-resolved cover is one map
+ *   lookup, zero disk/SAF; invalidated at every write path (fresh download,
+ *   [clearAll], real cap-eviction).
  * - [bundledCoverUri]: pre-scrape fallback — cover files bundled inside the
  *   work folder (cover.jpg / folder.jpg / 封面*). Results are cached per work
  *   in a BOUNDED LRU map so list scrolling never repeats SAF IO per frame.
@@ -44,6 +50,9 @@ enum class CoverType(val dirName: String) {
  * Threading: the whole public surface is serialized on a [Mutex]. Batch
  * scraping (Task 11) is serial anyway, and the single lock guarantees no two
  * downloads race on the same target file or the LRU bookkeeping.
+ * [coverModelFor] additionally runs its body on Dispatchers.IO — Coil asks
+ * on the main thread never perform disk/SAF work (list scrolling stays
+ * smooth).
  *
  * JVM-pure by construction: [coversDir], [downloader], [bundledLocator],
  * [cacheCapBytes] and [clock] are injected — unit tests use a temp dir, fake
@@ -71,6 +80,17 @@ class CoverStore(
      * results too (no repeated SAF listing during list scrolling).
      */
     private val bundledCache = BoundedLruCache<String, String?>()
+
+    /**
+     * [coverModelFor] 的本地解析结果缓存:(rjCode, type) → 已解析的本地
+     * [File]。列表滚动中重复解析同一封面 = 一次 HashMap 查询 + 一次内存
+     * LRU 触摸,零磁盘/SAF 工作。只缓存 POSITIVE 命中 —— 负结果由
+     * [bundledCoverUri] 自己的缓存负责,绝不在此缓存 null。失效点与写路径
+     * 一一对应:[downloadOne] 成功写回(新下载覆盖旧的跨尺寸回退结果)、
+     * [clearAll] 清空、[enforceCapLocked] 真实驱逐时清空(被删文件不得
+     * 从缓存复活)。
+     */
+    private val resolvedLocalCache = BoundedLruCache<Pair<String, CoverType>, File>()
 
     /**
      * LRU bookkeeping keyed by absolute file path. accessOrder=true: iteration
@@ -123,6 +143,9 @@ class CoverStore(
                         val now = clock()
                         // Read the size from target: tmp is gone after the rename.
                         entries[target.path] = Entry(target, now, target.length())
+                        // 新下载立即覆盖 resolvedLocalCache 中可能存在的旧回退
+                        // 结果(如 MAIN 缺失时按 THUMB_240 解析的陈旧缓存)。
+                        resolvedLocalCache[Pair(rjCode, type)] = target
                         enforceCapLocked()
                         target
                     } else {
@@ -171,38 +194,70 @@ class CoverStore(
     suspend fun bundledCoverUri(rootFolderUri: String?, relativeDir: String?): String? {
         if (rootFolderUri.isNullOrBlank() || relativeDir.isNullOrBlank()) return null
         val key = "$rootFolderUri\u0000$relativeDir"
-        return lock.withLock {
+        // 性能关键:SAF 遍历(跨进程 IPC,几十毫秒级)在锁外执行 —— 早期
+        // 版本抱着全局 Mutex 做查找,一个未缓存作品的 IPC 会让所有其他
+        // 封面解析(哪怕磁盘命中)排队等锁,是列表滚动卡顿的主因之一。
+        // 并发双查同一作品无害:双检写回,首个结果胜。
+        lock.withLock {
             if (bundledCache.contains(key)) {
-                bundledCache[key] // cached value may legitimately be null (no bundled cover)
-            } else {
-                val uri = try {
-                    bundledLocator.findBundledCover(rootFolderUri, relativeDir)
-                } catch (e: CancellationException) {
-                    throw e // never swallow cancellation into a null placeholder
-                } catch (e: Exception) {
-                    null // unreadable folder / lost grant → fall back to placeholder
-                }
-                bundledCache[key] = uri
-                uri
+                return bundledCache[key] // cached value may legitimately be null (no bundled cover)
             }
+        }
+        val uri = try {
+            bundledLocator.findBundledCover(rootFolderUri, relativeDir)
+        } catch (e: CancellationException) {
+            throw e // never swallow cancellation into a null placeholder
+        } catch (e: Exception) {
+            null // unreadable folder / lost grant → fall back to placeholder
+        }
+        return lock.withLock {
+            if (!bundledCache.contains(key)) bundledCache[key] = uri
+            bundledCache[key]
         }
     }
 
     // ---- Coil model ------------------------------------------------------
 
     /**
-     * The Coil model for a cover: the local cached [File] first, else the
-     * bundled cover's content uri, else null — the caller renders the
-     * placeholder for null. "Local file first, placeholder when missing".
+     * The Coil model for a cover: the local cached [File] of the requested
+     * size first;缺失时回退同 RJ 的其他已缓存尺寸(四种尺寸独立下载、
+     * 各自可失败 —— 240 缩略图在部分作品页取不到、asmr.one 备源常只有
+     * 主图,列表若死守 THUMB_240 会出现"详情有图列表没图");再退
+     * bundled 封面;全无 → null,调用方画占位。回退优先顺序:小图在前
+     * (列表缩略图用途,加载成本低),主图兜底。
+     *
+     * 性能:整个解析体在 Dispatchers.IO 上执行 —— 调用方(Coil 主线程)
+     * 永远不做磁盘/SAF 工作。本地命中结果按 (rjCode, type) 缓存于
+     * [resolvedLocalCache]:重复解析已命中的封面 = 一次 HashMap 查询 + 一次
+     * 内存 LRU 触摸,零 IO;只缓存本地命中(负结果由 [bundledCoverUri] 的
+     * 缓存负责)。失效:新下载写回覆盖、[clearAll] 与真实驱逐清空 —— 被删
+     * 文件绝不从缓存复活。
      */
     suspend fun coverModelFor(
         rjCode: String,
         type: CoverType,
         rootFolderUri: String?,
         relativeDir: String?,
-    ): Any? {
-        localCoverFile(rjCode, type)?.let { return it }
-        return bundledCoverUri(rootFolderUri, relativeDir)
+    ): Any? = withContext(Dispatchers.IO) {
+        val key = Pair(rjCode, type)
+        resolvedLocalCache[key]?.let { file ->
+            // 缓存命中:零磁盘/SAF,仅 touch LRU 记账(锁内内存 map),保证
+            // 封顶驱逐的 LRU 顺序对"从缓存服务"的封面依然准确。
+            lock.withLock { entries[file.path]?.accessTime = clock() }
+            return@withContext file
+        }
+        localCoverFile(rjCode, type)?.let { file ->
+            resolvedLocalCache[key] = file
+            return@withContext file
+        }
+        for (fallback in FALLBACK_ORDER) {
+            if (fallback == type) continue
+            localCoverFile(rjCode, fallback)?.let { file ->
+                resolvedLocalCache[key] = file
+                return@withContext file
+            }
+        }
+        bundledCoverUri(rootFolderUri, relativeDir)
     }
 
     // ---- cache management (Task 27 surfaces this in Settings) -------------
@@ -234,6 +289,8 @@ class CoverStore(
                 if (file.isFile) file.delete()
             }
             entries.clear()
+            // 文件已全部删除:解析缓存一并清空,coverModelFor 必须重新解析。
+            resolvedLocalCache.clear()
         }
     }
 
@@ -257,6 +314,10 @@ class CoverStore(
      *    evict the least-recently-accessed file (explicit accessTime sort —
      *    never via an accessOrder map, whose reads reorder entries). At least
      *    one file is always kept: a single cover may exceed a tiny cap.
+     * 4. When an eviction actually deletes file(s), flush [resolvedLocalCache]:
+     *    cached resolutions must never outlive the deleted files. Nothing
+     *    evicted → cache untouched (batch scraping calls enforceCap after
+     *    every download; flushing on every call would defeat the cache).
      */
     private fun enforceCapLocked() {
         val cap = cacheCapBytes().coerceAtLeast(0)
@@ -274,18 +335,25 @@ class CoverStore(
         }
         var total = entries.values.sumOf { it.sizeBytes }
         val lruOrder = entries.values.sortedBy { it.accessTime }.toMutableList()
+        var evictedAny = false
         while (total > cap && entries.size > 1) {
             val eldest = lruOrder.removeAt(0)
             total -= eldest.sizeBytes
             eldest.file.delete()
             entries.remove(eldest.file.path)
+            evictedAny = true
         }
+        // 真实驱逐过文件:清掉解析缓存,被删封面不得再从缓存复活。
+        if (evictedAny) resolvedLocalCache.clear()
     }
 
     private companion object {
         const val TAG = "OneAsmrCover"
         /** In-flight download suffix; never counts toward the cap listing. */
         const val PART_SUFFIX = ".part"
+
+        /** [coverModelFor] 的跨尺寸回退顺序:小图优先,主图兜底。 */
+        val FALLBACK_ORDER = listOf(CoverType.THUMB_240, CoverType.THUMB_360, CoverType.SAM, CoverType.MAIN)
     }
 }
 

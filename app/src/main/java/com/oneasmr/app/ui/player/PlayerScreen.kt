@@ -173,19 +173,12 @@ data class PlayerUiState(
     val shuffleEnabled: Boolean = false,
     val speed: Float = 1f,
     val playbackState: Int = Player.STATE_IDLE,
-    val positionMs: Long = 0L,
-    val bufferedPositionMs: Long = 0L,
-    val durationMs: Long = 0L,
     val currentIndex: Int = 0,
     val currentRjCode: String? = null,
     val playbackFailed: String? = null,
 ) {
     val ready: Boolean get() = !loading && error == null
     val isBuffering: Boolean get() = playbackState == Player.STATE_BUFFERING
-    val progressFraction: Float
-        get() = if (durationMs > 0L) (positionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
-    val bufferedFraction: Float
-        get() = if (durationMs > 0L) (bufferedPositionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
 }
 
 /** Task 20 lyrics state (unchanged semantics from Task 20). */
@@ -231,6 +224,14 @@ class PlayerViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow(PlayerUiState())
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
+
+    // 500ms ticker 的专用进度流：与 PlayerUiState 解耦，只让 SeekRow 订阅。
+    private val _positionMs = MutableStateFlow(0L)
+    val positionMs: StateFlow<Long> = _positionMs.asStateFlow()
+    private val _bufferedPositionMs = MutableStateFlow(0L)
+    val bufferedPositionMs: StateFlow<Long> = _bufferedPositionMs.asStateFlow()
+    private val _durationMs = MutableStateFlow(0L)
+    val durationMs: StateFlow<Long> = _durationMs.asStateFlow()
 
     private val _lyricsUi = MutableStateFlow(LyricsUiState())
     val lyricsUi: StateFlow<LyricsUiState> = _lyricsUi.asStateFlow()
@@ -496,6 +497,9 @@ class PlayerViewModel @Inject constructor(
         val c = controller ?: return
         val current = c.currentMediaItem
         val parts = current?.mediaId?.let(KeySpec::parseTrackKey)
+        _positionMs.value = c.currentPosition
+        _bufferedPositionMs.value = c.bufferedPosition
+        _durationMs.value = c.duration
         _uiState.update {
             it.copy(
                 loading = false,
@@ -507,9 +511,6 @@ class PlayerViewModel @Inject constructor(
                 shuffleEnabled = c.shuffleModeEnabled,
                 speed = c.playbackParameters.speed,
                 playbackState = c.playbackState,
-                positionMs = c.currentPosition,
-                bufferedPositionMs = c.bufferedPosition,
-                durationMs = c.duration,
                 currentIndex = c.currentMediaItemIndex,
                 currentRjCode = parts?.rjCode,
             )
@@ -517,19 +518,16 @@ class PlayerViewModel @Inject constructor(
     }
 
     /** 500ms position/buffer ticker — the media-session getters are
-     *  main-thread affine; the ViewModel scope runs on Main.immediate. */
+     *  main-thread affine; the ViewModel scope runs on Main.immediate.
+     *  只写三个进度流，PlayerUiState 不参与，避免整页每 500ms 重组。 */
     private fun startTicker() {
         tickerJob?.cancel()
         tickerJob = viewModelScope.launch {
             while (isActive) {
                 val c = controller ?: break
-                _uiState.update {
-                    it.copy(
-                        positionMs = c.currentPosition,
-                        bufferedPositionMs = c.bufferedPosition,
-                        durationMs = c.duration.coerceAtLeast(0L),
-                    )
-                }
+                _positionMs.value = c.currentPosition
+                _bufferedPositionMs.value = c.bufferedPosition
+                _durationMs.value = c.duration.coerceAtLeast(0L)
                 delay(POSITION_TICK_MS)
             }
         }
@@ -589,13 +587,12 @@ class PlayerViewModel @Inject constructor(
                 return@launch
             }
             _lyricsUi.update { it.copy(loading = false, lyrics = lyrics) }
-            while (isActive) {
-                val positionMs = controller?.currentPosition ?: 0L
-                val index = lyrics.indexAt(positionMs)
+            // 高亮跟随 positionMs 流（500ms 节拍），不再 100ms 轮询 MediaController。
+            positionMs.collect { pos ->
+                val index = lyrics.indexAt(pos)
                 if (index != _lyricsUi.value.activeIndex) {
                     _lyricsUi.update { it.copy(activeIndex = index) }
                 }
-                delay(LYRICS_TICK_MS)
             }
         }
     }
@@ -759,7 +756,6 @@ class PlayerViewModel @Inject constructor(
     companion object {
         private const val TAG = "PlayerViewModel"
         private const val POSITION_TICK_MS = 500L
-        private const val LYRICS_TICK_MS = 100L
         private const val RESTORE_SETTLE_MS = 2_000L
         private const val RESTORE_POLL_MS = 100L
     }
@@ -981,6 +977,9 @@ fun PlayerScreen(
                     rotateCover = rotateCover,
                     onToggleRotate = { rotateCover = !rotateCover },
                     coverModel = coverModel,
+                    positionMs = viewModel.positionMs,
+                    bufferedPositionMs = viewModel.bufferedPositionMs,
+                    durationMs = viewModel.durationMs,
                     onSeek = viewModel::seekTo,
                     onPrev = viewModel::prevTrack,
                     onTogglePlayPause = viewModel::togglePlayPause,
@@ -1074,6 +1073,9 @@ private fun PlayerContent(
     rotateCover: Boolean,
     onToggleRotate: () -> Unit,
     coverModel: Any?,
+    positionMs: StateFlow<Long>,
+    bufferedPositionMs: StateFlow<Long>,
+    durationMs: StateFlow<Long>,
     onSeek: (Long) -> Unit,
     onPrev: () -> Unit,
     onTogglePlayPause: () -> Unit,
@@ -1187,49 +1189,13 @@ private fun PlayerContent(
         // ---- 底部控制簇（不参与中区滚动，始终钉在屏幕底部）----
         Spacer(Modifier.height(16.dp))
 
-        // Buffered + played positions (Media3 bufferedPosition drives the fill).
-        LinearProgressIndicator(
-            progress = { state.bufferedFraction },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(2.dp)
-                .semantics { contentDescription = "buffered ${(state.bufferedFraction * 100).toInt()}%" },
-            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-            trackColor = Color.Transparent,
+        SeekRow(
+            positionMs = positionMs,
+            bufferedPositionMs = bufferedPositionMs,
+            durationMs = durationMs,
+            isBuffering = state.isBuffering,
+            onSeek = onSeek,
         )
-        var dragPosition by remember { mutableFloatStateOf(-1f) }
-        Slider(
-            value = if (dragPosition >= 0f) dragPosition else state.positionMs.toFloat(),
-            onValueChange = { dragPosition = it },
-            onValueChangeFinished = {
-                if (dragPosition >= 0f) {
-                    onSeek(dragPosition.toLong())
-                    dragPosition = -1f
-                }
-            },
-            valueRange = 0f..(state.durationMs.coerceAtLeast(1L).toFloat()),
-            colors = SliderDefaults.colors(
-                thumbColor = MaterialTheme.colorScheme.primary,
-                activeTrackColor = MaterialTheme.colorScheme.primary,
-                inactiveTrackColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
-            ),
-            modifier = Modifier.semantics {
-                contentDescription = "player position=${state.positionMs} duration=${state.durationMs}"
-            },
-        )
-        Row(Modifier.fillMaxWidth()) {
-            Text(
-                formatTime(state.positionMs),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.weight(1f))
-            Text(
-                if (state.isBuffering) "缓冲中…" else formatTime(state.durationMs),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
 
         Spacer(Modifier.height(12.dp))
         // Transport row: shuffle/repeat flank prev/play/next; play-pause is
@@ -1385,6 +1351,68 @@ private fun PlayerContent(
         }
 
         Spacer(Modifier.height(16.dp))
+    }
+}
+
+/**
+ * 进度区（缓冲条 + 拖动条 + 时间）：三个进度流在内部订阅，
+ * 500ms 节拍只重组这一小块，不波及整页。
+ */
+@Composable
+private fun SeekRow(
+    positionMs: StateFlow<Long>,
+    bufferedPositionMs: StateFlow<Long>,
+    durationMs: StateFlow<Long>,
+    isBuffering: Boolean,
+    onSeek: (Long) -> Unit,
+) {
+    val positionMs by positionMs.collectAsStateWithLifecycle()
+    val bufferedPositionMs by bufferedPositionMs.collectAsStateWithLifecycle()
+    val durationMs by durationMs.collectAsStateWithLifecycle()
+    val bufferedFraction = if (durationMs > 0L) (bufferedPositionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
+
+    // Buffered + played positions (Media3 bufferedPosition drives the fill).
+    LinearProgressIndicator(
+        progress = { bufferedFraction },
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(2.dp)
+            .semantics { contentDescription = "buffered ${(bufferedFraction * 100).toInt()}%" },
+        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+        trackColor = Color.Transparent,
+    )
+    var dragPosition by remember { mutableFloatStateOf(-1f) }
+    Slider(
+        value = if (dragPosition >= 0f) dragPosition else positionMs.toFloat(),
+        onValueChange = { dragPosition = it },
+        onValueChangeFinished = {
+            if (dragPosition >= 0f) {
+                onSeek(dragPosition.toLong())
+                dragPosition = -1f
+            }
+        },
+        valueRange = 0f..(durationMs.coerceAtLeast(1L).toFloat()),
+        colors = SliderDefaults.colors(
+            thumbColor = MaterialTheme.colorScheme.primary,
+            activeTrackColor = MaterialTheme.colorScheme.primary,
+            inactiveTrackColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
+        ),
+        modifier = Modifier.semantics {
+            contentDescription = "player position=$positionMs duration=$durationMs"
+        },
+    )
+    Row(Modifier.fillMaxWidth()) {
+        Text(
+            formatTime(positionMs),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.weight(1f))
+        Text(
+            if (isBuffering) "缓冲中…" else formatTime(durationMs),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
