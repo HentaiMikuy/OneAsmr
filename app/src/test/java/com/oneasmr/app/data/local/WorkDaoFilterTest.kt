@@ -17,8 +17,8 @@ import org.robolectric.annotation.Config
 /**
  * Task 15 filter dimension of the library paging query (DAO-level, never
  * in-memory): rated-only, per-progress-state, "none" (incl. review-less
- * works), and composition with search + sort — all through the REAL Room
- * PagingSource.
+ * works), per manual age rating (全年龄/R15/R18), and composition with search
+ * + sort — all through the REAL Room PagingSource.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -128,6 +128,49 @@ class WorkDaoFilterTest {
         // "RJ100001" as a title hit (LIKE fallback path on Robolectric).
         val hits = loadAll(filter = WorkFilter.Rated, keyword = "RJ100001")
         assertEquals(listOf("local:RJ100001"), hits.map { it.id })
+    }
+
+    @Test
+    fun `all-ages filter returns only works marked ALL_AGES`() = runBlocking {
+        commitWork("RJ100001")
+        commitWork("RJ100002")
+        commitWork("RJ100003")
+        commitWork("RJ100004")
+        db.workDao().updateAgeRating("local:RJ100001", AgeRating.ALL_AGES, 1_000L)
+        db.workDao().updateAgeRating("local:RJ100002", AgeRating.R15, 1_000L)
+        db.workDao().updateAgeRating("local:RJ100003", AgeRating.R18, 1_000L)
+        // RJ100004: no manual age rating at all — excluded too.
+
+        val allAges = loadAll(filter = WorkFilter.Age(AgeRating.ALL_AGES))
+        assertEquals(listOf("local:RJ100001"), allAges.map { it.id })
+    }
+
+    @Test
+    fun `r15 filter returns only works marked R15`() = runBlocking {
+        commitWork("RJ100001")
+        commitWork("RJ100002")
+        commitWork("RJ100003")
+        commitWork("RJ100004")
+        db.workDao().updateAgeRating("local:RJ100001", AgeRating.ALL_AGES, 1_000L)
+        db.workDao().updateAgeRating("local:RJ100002", AgeRating.R15, 1_000L)
+        db.workDao().updateAgeRating("local:RJ100003", AgeRating.R18, 1_000L)
+
+        val r15 = loadAll(filter = WorkFilter.Age(AgeRating.R15))
+        assertEquals(listOf("local:RJ100002"), r15.map { it.id })
+    }
+
+    @Test
+    fun `r18 filter returns only works marked R18`() = runBlocking {
+        commitWork("RJ100001")
+        commitWork("RJ100002")
+        commitWork("RJ100003")
+        commitWork("RJ100004")
+        db.workDao().updateAgeRating("local:RJ100001", AgeRating.ALL_AGES, 1_000L)
+        db.workDao().updateAgeRating("local:RJ100002", AgeRating.R15, 1_000L)
+        db.workDao().updateAgeRating("local:RJ100003", AgeRating.R18, 1_000L)
+
+        val r18 = loadAll(filter = WorkFilter.Age(AgeRating.R18))
+        assertEquals(listOf("local:RJ100003"), r18.map { it.id })
     }
 
     @Test

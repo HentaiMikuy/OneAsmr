@@ -110,6 +110,9 @@ class SettingsViewModelTest {
             throw UnsupportedOperationException("not used by SettingsViewModel")
         override suspend fun getListItemById(id: String): com.oneasmr.app.data.local.WorkListItem? = null
         override suspend fun markMissingInternal(ids: List<String>, now: Long) = Unit
+        override suspend fun updateAgeRating(workId: String, rating: com.oneasmr.app.data.local.AgeRating?, now: Long) {
+            rows[workId]?.let { rows[workId] = it.copy(ageRating = rating, updatedAt = now) }
+        }
         override suspend fun getPageRaw(query: androidx.sqlite.db.SupportSQLiteQuery): List<Work> = emptyList()
         override suspend fun searchRaw(query: androidx.sqlite.db.SupportSQLiteQuery): List<com.oneasmr.app.data.local.WorkSearchHit> = emptyList()
         override suspend fun getWorksByCircle(circleId: String): List<Work> = emptyList()

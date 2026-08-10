@@ -86,10 +86,14 @@ data class WorkListItem(
  * - [Progress]: works whose progress state equals [state]. `none` matches
  *   BOTH explicit `progress = 'none'` rows and works without any review row
  *   (a no-review work is trivially "no progress yet" — kikoeru's default).
+ * - [Age]: works the user manually age-rated (全年龄/R15/R18). Works with a
+ *   different rating OR no rating at all are excluded.
  */
 sealed interface WorkFilter {
     data object Rated : WorkFilter
     data class Progress(val state: ProgressState) : WorkFilter
+    /** 手动年龄分级筛选(全年龄/R15/R18)。 */
+    data class Age(val rating: AgeRating) : WorkFilter
 }
 
 /**
@@ -296,6 +300,10 @@ interface WorkDao {
     @Query("SELECT COUNT(*) FROM work WHERE NOT missing AND scrapeStatus = :status")
     suspend fun countByScrapeStatus(status: ScrapeStatus): Int
 
+    /** 手动年龄分级(可传 null 清除);只改本列与 updatedAt。 */
+    @Query("UPDATE work SET ageRating = :rating, updatedAt = :now WHERE id = :workId")
+    suspend fun updateAgeRating(workId: String, rating: AgeRating?, now: Long)
+
     /**
      * Paged library source (Task 12/13): work + circle name + user progress in
      * ONE indexed query. Room's built-in PagingSource (LimitOffsetPagingSource)
@@ -327,7 +335,9 @@ interface WorkDao {
      * unavailable), UNIONed across the four dimensions exactly like
      * [search]; the order is applied by the database. Task 15 adds the
      * review-join [filter] predicate (progress state / rated-only) as a
-     * third composition axis — all three combine in one SQL statement.
+     * third composition axis; the manual age-rating filter (全年龄/R15/R18)
+     * rides the same axis over `w.ageRating` — all combine in one SQL
+     * statement.
      *
      * Ordering rules:
      * - every deterministic order appends `work.id` as tiebreaker, so works
@@ -418,6 +428,10 @@ interface WorkDao {
                     args += filter.state.name
                     " WHERE r.progress = :stateName"
                 }
+            is WorkFilter.Age -> {
+                args += filter.rating.name
+                " WHERE w.ageRating = :ageRating"
+            }
         }
         val orderBy = when (order) {
             WorkOrder.RANDOM -> "${seededRandomKey(randomSeed)} ASC, w.id ASC"

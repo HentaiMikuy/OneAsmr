@@ -4,6 +4,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.oneasmr.app.data.local.CircleDao
+import com.oneasmr.app.data.local.AgeRating
 import com.oneasmr.app.data.local.KeySpec
 import com.oneasmr.app.data.local.OneAsmrDatabase
 import com.oneasmr.app.data.local.ProgressState
@@ -263,6 +264,15 @@ class WorkDetailViewModel @Inject constructor(
         viewModelScope.launch {
             reviewDao.upsert(Review(workId = workId, rating = rating, reviewText = _uiState.value.reviewText, progress = progress, updatedAt = clock()))
         }
+    }
+
+    /**
+     * 手动年龄分级:写入 work.ageRating;null 清除。行流(getByIdFlow)自动
+     * 重发,uiState.work 随之刷新,无需手动更新状态。
+     */
+    fun setAgeRating(rating: AgeRating?) {
+        val work = _uiState.value.work ?: return
+        viewModelScope.launch { workDao.updateAgeRating(work.id, rating, clock()) }
     }
 
     fun toggleFolder(relativePath: String) {

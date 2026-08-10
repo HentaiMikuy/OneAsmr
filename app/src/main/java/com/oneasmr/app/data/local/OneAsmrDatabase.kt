@@ -13,7 +13,8 @@ import androidx.sqlite.driver.bundled.BundledSQLiteDriver
  * Local Room database. Migration baseline version 1 (committed schema
  * app/schemas/.../1.json); version 2 adds `work.missing` (Task 7 incremental
  * rescan + missing-work detection); version 3 adds the single-file library
- * (single_file / collection / collection_item — 单文件库与收藏夹体系).
+ * (single_file / collection / collection_item — 单文件库与收藏夹体系);
+ * version 4 adds `work.ageRating` (手动年龄分级, 用户标记非刮削).
  *
  * Opened with [BundledSQLiteDriver] in production — the bundled SQLite
  * (>= 3.42) is the only reliable source of FTS5 + the trigram tokenizer; the
@@ -35,7 +36,7 @@ import androidx.sqlite.driver.bundled.BundledSQLiteDriver
         Collection::class,
         CollectionItem::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -124,6 +125,17 @@ abstract class OneAsmrDatabase : RoomDatabase() {
         }
 
         /**
+         * v3 → v4: `work.ageRating` column (手动年龄分级, nullable TEXT). 纯增量:
+         * 不加 NOT NULL 就不需要 DEFAULT,老行自动为 NULL(未设置)。不触碰 FTS
+         * 触发器和虚拟表。
+         */
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE work ADD COLUMN ageRating TEXT")
+            }
+        }
+
+        /**
          * Production builder: BundledSQLiteDriver (FTS5) + FTS index callback.
          * Tests build their own in-memory instances without the bundled driver
          * so the degraded fallback path is exercised on the JVM.
@@ -131,7 +143,7 @@ abstract class OneAsmrDatabase : RoomDatabase() {
         fun build(context: Context): OneAsmrDatabase =
             Room.databaseBuilder(context, OneAsmrDatabase::class.java, NAME)
                 .setDriver(BundledSQLiteDriver())
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .addCallback(FtsCallback())
                 .build()
     }

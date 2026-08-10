@@ -86,6 +86,7 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.oneasmr.app.data.local.AgeRating
 import com.oneasmr.app.data.local.KeySpec
 import com.oneasmr.app.data.local.ProgressState
 import com.oneasmr.app.data.local.ScrapeStatus
@@ -181,6 +182,7 @@ fun WorkDetailScreen(
             onReviewTextChange = viewModel::onReviewTextChange,
             onReviewSaveText = viewModel::saveReviewText,
             onReviewClear = viewModel::clearReview,
+            onSetAgeRating = viewModel::setAgeRating,
             sharedTransitionScope = sharedTransitionScope,
             animatedContentScope = animatedContentScope,
         )
@@ -303,6 +305,7 @@ private fun DetailContent(
     onReviewTextChange: (String) -> Unit,
     onReviewSaveText: () -> Unit,
     onReviewClear: () -> Unit,
+    onSetAgeRating: (AgeRating?) -> Unit,
     sharedTransitionScope: SharedTransitionScope?,
     animatedContentScope: AnimatedContentScope?,
 ) {
@@ -330,6 +333,9 @@ private fun DetailContent(
         }
         item(key = "metadata") {
             MetadataRow(work)
+        }
+        item(key = "age_rating") {
+            AgeRatingEditor(work = work, onSelect = onSetAgeRating)
         }
         item(key = "chips") {
             CircleAndVaChips(work = work, state = state, onOpenBrowse = onOpenBrowse)
@@ -716,6 +722,34 @@ private fun MetadataRow(work: Work) {
 }
 
 private data class MetaEntry(val label: String, val value: String, val icon: ImageVector)
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AgeRatingEditor(work: Work, onSelect: (AgeRating?) -> Unit) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+    ) {
+        ChipSectionLabel("年龄分级")
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            AgeRating.entries.forEach { rating ->
+                FilterChip(
+                    selected = work.ageRating == rating,
+                    onClick = {
+                        // 点已选中项 = 清除(回到未设置);点其他项 = 设置。
+                        onSelect(if (work.ageRating == rating) null else rating)
+                    },
+                    label = { Text(rating.label) },
+                )
+            }
+        }
+    }
+}
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable

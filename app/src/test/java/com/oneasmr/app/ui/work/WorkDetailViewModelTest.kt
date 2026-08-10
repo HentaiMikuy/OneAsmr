@@ -3,6 +3,7 @@ package com.oneasmr.app.ui.work
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import androidx.room.Room
+import com.oneasmr.app.data.local.AgeRating
 import com.oneasmr.app.data.local.Circle
 import com.oneasmr.app.data.local.OneAsmrDatabase
 import com.oneasmr.app.data.local.PlaybackState
@@ -524,6 +525,34 @@ class WorkDetailViewModelTest {
         assertEquals(ProgressState.listened, row.progress)
         assertEquals(2, row.rating)
         assertEquals("还行", row.reviewText)
+    }
+
+    @Test
+    fun `setAgeRating persists the manual rating through the dao`() = runTest(scheduler) {
+        seedWork()
+        scheduler.advanceUntilIdle()
+        viewModel.uiState.first { it.work != null }
+
+        viewModel.setAgeRating(AgeRating.R18)
+        // The row flow re-emits with the DB write: updatedAt = injectable clock.
+        val state = viewModel.uiState.first { it.work?.updatedAt == 1_000_000L }
+        assertEquals(AgeRating.R18, state.work?.ageRating)
+        val row = kotlinx.coroutines.runBlocking { db.workDao().getById(workId)!! }
+        assertEquals(AgeRating.R18, row.ageRating)
+        assertEquals(1_000_000L, row.updatedAt)
+    }
+
+    @Test
+    fun `setAgeRating null clears the manual rating`() = runTest(scheduler) {
+        seedWork()
+        kotlinx.coroutines.runBlocking { db.workDao().updateAgeRating(workId, AgeRating.R15, 500L) }
+        scheduler.advanceUntilIdle()
+        viewModel.uiState.first { it.work?.ageRating == AgeRating.R15 }
+
+        viewModel.setAgeRating(null)
+        val state = viewModel.uiState.first { it.work?.updatedAt == 1_000_000L }
+        assertNull(state.work?.ageRating)
+        assertNull(kotlinx.coroutines.runBlocking { db.workDao().getById(workId)!!.ageRating })
     }
 
     @Test

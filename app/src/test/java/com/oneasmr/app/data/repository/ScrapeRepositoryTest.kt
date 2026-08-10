@@ -3,6 +3,7 @@ package com.oneasmr.app.data.repository
 import androidx.sqlite.db.SupportSQLiteQuery
 import com.oneasmr.app.data.local.Circle
 import com.oneasmr.app.data.local.CircleDao
+import com.oneasmr.app.data.local.AgeRating
 import com.oneasmr.app.data.local.DimensionListItem
 import com.oneasmr.app.data.local.ScrapeStatus
 import com.oneasmr.app.data.local.Tag
@@ -156,6 +157,9 @@ class ScrapeRepositoryTest {
         ): PagingSource<Int, WorkListItem> = throw UnsupportedOperationException("not used by ScrapeRepository")
         override suspend fun getListItemById(id: String): WorkListItem? = null
         override suspend fun markMissingInternal(ids: List<String>, now: Long) = Unit
+        override suspend fun updateAgeRating(workId: String, rating: AgeRating?, now: Long) {
+            rows[workId]?.let { rows[workId] = it.copy(ageRating = rating, updatedAt = now) }
+        }
         override suspend fun getPageRaw(query: SupportSQLiteQuery): List<Work> = emptyList()
         override suspend fun searchRaw(query: SupportSQLiteQuery): List<WorkSearchHit> = emptyList()
         override suspend fun getWorksByCircle(circleId: String): List<Work> = emptyList()

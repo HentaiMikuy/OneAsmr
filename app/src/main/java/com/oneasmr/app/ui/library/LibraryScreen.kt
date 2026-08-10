@@ -95,6 +95,7 @@ import androidx.paging.PagingSource
 import androidx.paging.cachedIn
 import androidx.paging.compose.LazyPagingItems
 import androidx.paging.compose.collectAsLazyPagingItems
+import com.oneasmr.app.data.local.AgeRating
 import com.oneasmr.app.data.local.OneAsmrDatabase
 import com.oneasmr.app.data.local.ProgressState
 import com.oneasmr.app.data.local.ScrapeStatus
@@ -1224,10 +1225,10 @@ internal fun SortMenu(
 /**
  * Task 15 library filter menu with the Wave B compact trigger: an
  * [Icons.Filled.FilterList] icon button opening the same dropdown as before —
- * no filter ("全部") / rated-only ("已评分") / one entry per progress state;
- * a 6dp primary dot marks an active filter. The selection is DAO-level (a
- * WHERE predicate in the paging query, see [WorkDao.pagingSource]) — never
- * in-memory.
+ * no filter ("全部") / rated-only ("已评分") / one entry per progress state /
+ * one entry per manual age rating (全年龄/R15/R18, "分级：…"); a 6dp primary
+ * dot marks an active filter. The selection is DAO-level (a WHERE predicate
+ * in the paging query, see [WorkDao.pagingSource]) — never in-memory.
  */
 @Composable
 internal fun FilterMenu(
@@ -1291,6 +1292,21 @@ internal fun FilterMenu(
                     onClick = {
                         expanded = false
                         onSelect(WorkFilter.Progress(state))
+                    },
+                )
+            }
+            HorizontalDivider()
+            AgeRating.entries.forEach { rating ->
+                DropdownMenuItem(
+                    text = { Text("分级：${rating.label}") },
+                    trailingIcon = if (filter == WorkFilter.Age(rating)) {
+                        { Icon(Icons.Filled.Check, contentDescription = null) }
+                    } else {
+                        null
+                    },
+                    onClick = {
+                        expanded = false
+                        onSelect(WorkFilter.Age(rating))
                     },
                 )
             }

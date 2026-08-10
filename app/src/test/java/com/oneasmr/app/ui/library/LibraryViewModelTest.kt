@@ -6,6 +6,7 @@ import androidx.paging.PagingSource
 import androidx.paging.PagingState
 import androidx.paging.asItemSnapshotListFlow
 import androidx.room.Room
+import com.oneasmr.app.data.local.AgeRating
 import com.oneasmr.app.data.local.OneAsmrDatabase
 import com.oneasmr.app.data.local.PlaybackState
 import com.oneasmr.app.data.local.ProgressState
@@ -475,6 +476,22 @@ class LibraryViewModelTest {
         scheduler.advanceUntilIdle()
 
         assertEquals(WorkFilter.Progress(ProgressState.listening), lastFactoryFilter)
+        assertTrue(awaitPagedItems(30).isNotEmpty())
+
+        viewModel.setFilter(null)
+        scheduler.advanceUntilIdle()
+        assertEquals(null, lastFactoryFilter)
+    }
+
+    @Test
+    fun `age filter forwards the rating to the paging source factory`() = runTest(scheduler) {
+        newViewModel(sampleItems(30))
+        awaitPagedItems(30)
+
+        viewModel.setFilter(WorkFilter.Age(AgeRating.R18))
+        scheduler.advanceUntilIdle()
+
+        assertEquals(WorkFilter.Age(AgeRating.R18), lastFactoryFilter)
         assertTrue(awaitPagedItems(30).isNotEmpty())
 
         viewModel.setFilter(null)

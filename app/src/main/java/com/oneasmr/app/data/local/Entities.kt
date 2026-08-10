@@ -14,6 +14,13 @@ enum class ScrapeStatus { NOT_SCRAPED, OK, FAILED }
 /** Six-state listening progress (aligned with kikoeru t_review semantics). */
 enum class ProgressState { none, marked, listening, listened, replay, postponed }
 
+/** 手动年龄分级(用户标记,非刮削);null = 未设置。 */
+enum class AgeRating(val label: String) {
+    ALL_AGES("全年龄"),
+    R15("R15"),
+    R18("R18"),
+}
+
 /**
  * 单文件的媒体类别。刻意不用 domain 的 MediaType:后者含 TEXT/IMAGE/OTHER,
  * 对 single_file 行是非法值——扫描白名单只放行音视频。
@@ -43,6 +50,12 @@ class Converters {
 
     @TypeConverter
     fun stringToSingleFileKind(value: String): SingleFileKind = SingleFileKind.valueOf(value)
+
+    @TypeConverter
+    fun ageRatingToString(value: AgeRating): String = value.name
+
+    @TypeConverter
+    fun stringToAgeRating(value: String): AgeRating = AgeRating.valueOf(value)
 }
 
 /**
@@ -81,6 +94,8 @@ data class Work(
     val titleSortKey: String,
     val circleId: String?,
     val nsfw: Boolean,
+    /** 手动年龄分级(全年龄/R15/R18);null = 未设置。由用户在详情页标记,刮削/重扫绝不覆盖。 */
+    val ageRating: AgeRating? = null,
     /** ISO-8601 date, e.g. "2024-03-15"; null until scraped. */
     val releaseDate: String?,
     val dlCount: Int?,
