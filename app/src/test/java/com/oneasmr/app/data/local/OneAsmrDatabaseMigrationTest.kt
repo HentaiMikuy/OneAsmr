@@ -3,6 +3,7 @@ package com.oneasmr.app.data.local
 import android.database.sqlite.SQLiteDatabase
 import androidx.room.Room
 import java.io.File
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -43,12 +44,14 @@ class OneAsmrDatabaseMigrationTest {
         val file = tempDbFile()
         createV1Database(file)
 
+        // 数据库类已是 v3:注册全链迁移(Room 需要 1→当前版本的完整路径),
+        // 本测试仍聚焦 1→2 加列后的数据保全断言。
         val db = Room.databaseBuilder(
             RuntimeEnvironment.getApplication(),
             OneAsmrDatabase::class.java,
             file.absolutePath,
         )
-            .addMigrations(OneAsmrDatabase.MIGRATION_1_2)
+            .addMigrations(OneAsmrDatabase.MIGRATION_1_2, OneAsmrDatabase.MIGRATION_2_3)
             .build()
 
         runBlocking {
@@ -76,6 +79,64 @@ class OneAsmrDatabaseMigrationTest {
             // The migrated database is fully writable at v2.
             db.workDao().markMissing(listOf("local:RJ123456"), now = 2_000L)
             assertTrue(db.workDao().getById("local:RJ123456")!!.missing)
+        }
+        db.close()
+    }
+
+    /**
+     * v1 → v3 全链(1→2 加列,2→3 建单文件库三表):老数据原样,新表在
+     * 迁移后立即可写。Room 迁移后按 3.json 校验全部表+索引 —— 迁移 DDL
+     * 与导出 schema 不符会在 build() 后首次访问时抛 IllegalStateException。
+     */
+    @Test
+    fun `migrating v1 through v3 keeps data and creates usable single-file tables`() {
+        val file = tempDbFile()
+        createV1Database(file)
+
+        val db = Room.databaseBuilder(
+            RuntimeEnvironment.getApplication(),
+            OneAsmrDatabase::class.java,
+            file.absolutePath,
+        )
+            .addMigrations(OneAsmrDatabase.MIGRATION_1_2, OneAsmrDatabase.MIGRATION_2_3)
+            .build()
+
+        runBlocking {
+            // 老数据穿过两级迁移原样可读。
+            assertEquals("RJ123456", db.workDao().getById("local:RJ123456")!!.title)
+            assertEquals(123L, db.playbackStateDao().get("local:RJ123456:3")!!.positionMs)
+
+            // 新表可写可查:文件行 + 系统收藏夹 + 成员关系。
+            val fileId = db.singleFileDao().insert(
+                SingleFile(
+                    rootFolderUri = "content://tree/singles",
+                    relativePath = "【ASMR】耳かき [dQw4w9WgXcQ].mp4",
+                    fileName = "【ASMR】耳かき [dQw4w9WgXcQ].mp4",
+                    displayTitle = "【ASMR】耳かき",
+                    titleSortKey = "asmrmimikaki",
+                    kind = SingleFileKind.VIDEO,
+                    youtubeId = "dQw4w9WgXcQ",
+                    channel = null,
+                    uploadDate = null,
+                    durationMs = null,
+                    sizeBytes = 100L,
+                    lastModified = 0L,
+                    thumbSource = null,
+                    sourceUrl = null,
+                    scrapeStatus = ScrapeStatus.NOT_SCRAPED,
+                    missing = false,
+                    addedAt = 3_000L,
+                    updatedAt = 3_000L,
+                ),
+            )
+            assertTrue(fileId > 0)
+            db.collectionDao().ensureFavorites(now = 3_000L)
+            db.collectionDao().addItem(
+                CollectionItem(Collection.FAVORITES_ID, fileId, sortIndex = 1, addedAt = 3_000L),
+            )
+            val favorites = db.collectionDao().collectionsWithCountFlow().first().single()
+            assertTrue(favorites.collection.isSystem)
+            assertEquals(1, favorites.fileCount)
         }
         db.close()
     }

@@ -34,6 +34,14 @@ data class ScanRunState(
     val added: Int = 0,
     val updated: Int = 0,
     val unchanged: Int = 0,
+    /**
+     * single_file row ids discovered so far(单文件根流水线;与作品的
+     * discoveredIds 平行,分开存因主键类型不同)。默认空:老版本持久化
+     * 的运行状态缺该字段也能解码(ignoreUnknownKeys + 默认值)。
+     */
+    val singleDiscoveredIds: List<Long> = emptyList(),
 ) {
     val discoveredSet: Set<String> get() = discoveredIds.toSet()
+
+    val singleDiscoveredSet: Set<Long> get() = singleDiscoveredIds.toSet()
 }

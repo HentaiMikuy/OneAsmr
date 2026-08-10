@@ -27,12 +27,14 @@ interface ScanPersister {
      * - Unknown id -> a fresh row with scrapeStatus=NOT_SCRAPED, missing=false
      *   and the titleSortKey generated from the folder name (FTS index is
      *   maintained by the work_fts triggers on INSERT/UPDATE).
-     * - Known id (rescan) -> location/title/titleSortKey refreshed and
-     *   missing cleared (the folder was seen again — Task 7), but scrape
-     *   metadata (scrapeStatus, circle, rating...) PRESERVED so a later
-     *   rescan cannot clobber scraped data. When nothing location/title/
-     *   missing-wise changed, the row is left completely untouched
-     *   ([CommitKind.UNCHANGED] — no updatedAt bump, no FTS trigger churn).
+     * - Known id (rescan) -> location refreshed and missing cleared (the
+     *   folder was seen again — Task 7); title/titleSortKey refresh from the
+     *   folder name ONLY while un-scraped — scraped works keep their scraped
+     *   title, and ALL scrape metadata (scrapeStatus, circle, rating...) is
+     *   PRESERVED so a later rescan cannot clobber scraped data. When nothing
+     *   location/title/missing-wise changed, the row is left completely
+     *   untouched ([CommitKind.UNCHANGED] — no updatedAt bump, no FTS trigger
+     *   churn).
      */
     suspend fun commitWork(work: WorkCandidate, rootFolderUri: String, nowEpochMillis: Long): CommitKind
 }
@@ -87,11 +89,17 @@ class RoomScanPersister(
             )
             CommitKind.INSERTED
         } else {
-            val newSortKey = sortKeyGenerator(work.displayName)
+            // 已刮削(OK)的行保留刮削标题:文件夹名(RJ号)只是未刮削时的
+            // 占位显示,重扫刷新位置绝不能把 DLsite/asmr.one 拿到的真标题
+            // 打回 RJ 号(否则每次重扫都因"标题≠文件夹名"误判 UPDATED
+            // 并覆写 —— 用户实测踩中)。
+            val keepScrapedTitle = existing.scrapeStatus == ScrapeStatus.OK
+            val newTitle = if (keepScrapedTitle) existing.title else work.displayName
+            val newSortKey = if (keepScrapedTitle) existing.titleSortKey else sortKeyGenerator(work.displayName)
             val changed = existing.missing ||
                 existing.rootFolderUri != rootFolderUri ||
                 existing.relativeDir != work.relativeDir ||
-                existing.title != work.displayName ||
+                existing.title != newTitle ||
                 existing.titleSortKey != newSortKey
             if (!changed) {
                 CommitKind.UNCHANGED
@@ -100,7 +108,7 @@ class RoomScanPersister(
                     existing.copy(
                         rootFolderUri = rootFolderUri,
                         relativeDir = work.relativeDir,
-                        title = work.displayName,
+                        title = newTitle,
                         titleSortKey = newSortKey,
                         missing = false,
                         updatedAt = nowEpochMillis,

@@ -4,10 +4,12 @@ import android.util.Log
 import androidx.paging.PagingSource
 import androidx.paging.PagingState
 import androidx.room.Dao
+import androidx.room.Embedded
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.RawQuery
+import androidx.room.Update
 import androidx.room.Upsert
 import androidx.sqlite.db.SupportSQLiteProgram
 import androidx.sqlite.db.SupportSQLiteQuery
@@ -814,4 +816,131 @@ internal class DegradingPagingSource(
             Log.w(SEARCH_LOG_TAG, "FTS paging MATCH failed (${e.message}); degraded to LIKE", e)
             like.load(params)
         }
+}
+
+@Dao
+interface SingleFileDao {
+
+    /**
+     * 插入新行,返回 rowId;(rootFolderUri, relativePath) 唯一索引冲突时
+     * 返回 -1(IGNORE)。刻意没有 REPLACE upsert:REPLACE 是删旧插新,会把
+     * collection_item 的级联外键连坐清空 —— 重扫用 [update] 原地改。
+     */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insert(file: SingleFile): Long
+
+    @Update
+    suspend fun update(file: SingleFile)
+
+    @Query("SELECT * FROM single_file WHERE id = :id")
+    suspend fun getById(id: Long): SingleFile?
+
+    @Query("SELECT * FROM single_file WHERE id = :id")
+    fun getByIdFlow(id: Long): Flow<SingleFile?>
+
+    /** 重扫身份匹配:同根 + 同相对路径即同一文件。 */
+    @Query("SELECT * FROM single_file WHERE rootFolderUri = :rootUri AND relativePath = :relativePath")
+    suspend fun getByLocation(rootUri: String, relativePath: String): SingleFile?
+
+    /** 全量(重扫 missing 差集用)。 */
+    @Query("SELECT * FROM single_file")
+    suspend fun getAll(): List<SingleFile>
+
+    /**
+     * 列表页数据源:整表流,排序在 ViewModel 内存中做 —— 单文件库量级
+     * (数百)不需要作品列表那套 Paging/动态 SQL。
+     */
+    @Query("SELECT * FROM single_file")
+    fun getAllFlow(): Flow<List<SingleFile>>
+
+    @Query("SELECT COUNT(*) FROM single_file")
+    fun countFlow(): Flow<Int>
+
+    /** 同 [WorkDao.markMissing]:空列表短路,避免非法 `IN ()`。 */
+    suspend fun markMissing(ids: List<Long>, now: Long) {
+        if (ids.isEmpty()) return
+        markMissingInternal(ids, now)
+    }
+
+    @Query("UPDATE single_file SET missing = 1, updatedAt = :now WHERE id IN (:ids)")
+    suspend fun markMissingInternal(ids: List<Long>, now: Long)
+
+    /** 手动移除(行删除级联清 collection_item;playback_state 由调用方按前缀清)。 */
+    @Query("DELETE FROM single_file WHERE id = :id")
+    suspend fun deleteById(id: Long)
+}
+
+/** 收藏夹行 + 成员数(列表页徽标)。 */
+data class CollectionWithCount(
+    @Embedded val collection: Collection,
+    val fileCount: Int,
+)
+
+@Dao
+interface CollectionDao {
+
+    /** 幂等播种内置「收藏」夹(保留主键 [Collection.FAVORITES_ID],IGNORE 重复)。 */
+    suspend fun ensureFavorites(now: Long) {
+        insert(
+            Collection(
+                id = Collection.FAVORITES_ID,
+                name = "收藏",
+                isSystem = true,
+                sortIndex = 0,
+                createdAt = now,
+            ),
+        )
+    }
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insert(collection: Collection): Long
+
+    /** 重命名;isSystem=0 守卫使系统夹天然免疫。 */
+    @Query("UPDATE collection SET name = :name WHERE id = :id AND isSystem = 0")
+    suspend fun rename(id: Long, name: String)
+
+    /** 删除自定义夹(成员级联清空);系统夹同样被 isSystem=0 守卫拦下。 */
+    @Query("DELETE FROM collection WHERE id = :id AND isSystem = 0")
+    suspend fun delete(id: Long)
+
+    @Query("SELECT * FROM collection WHERE id = :id")
+    suspend fun getById(id: Long): Collection?
+
+    @Query("SELECT * FROM collection WHERE id = :id")
+    fun getByIdFlow(id: Long): Flow<Collection?>
+
+    /** 系统夹置顶,其余按手动序、建立序。fileCount 只数仍存在的文件行。 */
+    @Query(
+        "SELECT c.*, (SELECT COUNT(*) FROM collection_item ci WHERE ci.collectionId = c.id) AS fileCount " +
+            "FROM collection c ORDER BY c.isSystem DESC, c.sortIndex, c.createdAt",
+    )
+    fun collectionsWithCountFlow(): Flow<List<CollectionWithCount>>
+
+    @Query("SELECT COALESCE(MAX(sortIndex), 0) FROM collection")
+    suspend fun maxSortIndex(): Int
+
+    // ---- 成员关系 ----
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun addItem(item: CollectionItem)
+
+    @Query("DELETE FROM collection_item WHERE collectionId = :collectionId AND fileId = :fileId")
+    suspend fun removeItem(collectionId: Long, fileId: Long)
+
+    /**
+     * 全部成员关系一把抓:列表页为每行画收藏心形/夹选中态,单流派生,
+     * 避免每行各开一个 membership 流。单文件库量级下整表流成本可忽略。
+     */
+    @Query("SELECT * FROM collection_item")
+    fun allItemsFlow(): Flow<List<CollectionItem>>
+
+    /** 夹内文件,按夹内序(加入序)排列 —— 播放列表语义。 */
+    @Query(
+        "SELECT sf.* FROM single_file sf JOIN collection_item ci ON sf.id = ci.fileId " +
+            "WHERE ci.collectionId = :collectionId ORDER BY ci.sortIndex, ci.addedAt",
+    )
+    fun filesInCollectionFlow(collectionId: Long): Flow<List<SingleFile>>
+
+    @Query("SELECT COALESCE(MAX(sortIndex), 0) FROM collection_item WHERE collectionId = :collectionId")
+    suspend fun maxItemSortIndex(collectionId: Long): Int
 }

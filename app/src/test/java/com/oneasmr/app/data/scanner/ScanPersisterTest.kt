@@ -80,9 +80,9 @@ class ScanPersisterTest {
     }
 
     @Test
-    fun `rescan refreshes location and title but preserves scraped metadata`() = runBlocking {
+    fun `rescan refreshes location but preserves scraped title and metadata`() = runBlocking {
         persister.commitWork(
-            WorkCandidate(relativeDir = "RJ123456", rjCode = "RJ123456", displayName = "Old Name"),
+            WorkCandidate(relativeDir = "RJ123456", rjCode = "RJ123456", displayName = "RJ123456"),
             rootFolderUri = "content://tree/root",
             nowEpochMillis = 1_000L,
         )
@@ -92,6 +92,8 @@ class ScanPersisterTest {
         val before = db.workDao().getById("local:RJ123456")!!
         db.workDao().upsert(
             before.copy(
+                title = "【ASMR】刮削到的真标题",
+                titleSortKey = SortKeyGenerator.generate("【ASMR】刮削到的真标题"),
                 scrapeStatus = ScrapeStatus.OK,
                 circleId = "circle-1",
                 rateAverage2dp = 4.52,
@@ -100,7 +102,7 @@ class ScanPersisterTest {
         )
 
         persister.commitWork(
-            WorkCandidate(relativeDir = "Moved/RJ123456", rjCode = "RJ123456", displayName = "New Name"),
+            WorkCandidate(relativeDir = "Moved/RJ123456", rjCode = "RJ123456", displayName = "RJ123456"),
             rootFolderUri = "content://tree/root2",
             nowEpochMillis = 2_000L,
         )
@@ -108,8 +110,9 @@ class ScanPersisterTest {
         val after = db.workDao().getById("local:RJ123456")!!
         assertEquals("Moved/RJ123456", after.relativeDir)
         assertEquals("content://tree/root2", after.rootFolderUri)
-        assertEquals("New Name", after.title)
-        assertEquals("new name", after.titleSortKey)
+        // 已刮削行:标题绝不被文件夹名(RJ号)打回(用户实测踩中的回归)。
+        assertEquals("【ASMR】刮削到的真标题", after.title)
+        assertEquals(SortKeyGenerator.generate("【ASMR】刮削到的真标题"), after.titleSortKey)
         assertEquals(2_000L, after.updatedAt)
         // Scraped metadata and insertion time survive the rescan.
         assertEquals(ScrapeStatus.OK, after.scrapeStatus)
@@ -117,6 +120,34 @@ class ScanPersisterTest {
         assertEquals(4.52, after.rateAverage2dp!!, 0.001)
         assertEquals("2024-03-15", after.releaseDate)
         assertEquals(1_000L, after.addedAt)
+    }
+
+    @Test
+    fun `rescan of scraped row at same location is UNCHANGED despite folder-name mismatch`() = runBlocking {
+        persister.commitWork(
+            WorkCandidate(relativeDir = "RJ123456", rjCode = "RJ123456", displayName = "RJ123456"),
+            rootFolderUri = "content://tree/root",
+            nowEpochMillis = 1_000L,
+        )
+        val before = db.workDao().getById("local:RJ123456")!!
+        db.workDao().upsert(
+            before.copy(
+                title = "刮削标题",
+                titleSortKey = SortKeyGenerator.generate("刮削标题"),
+                scrapeStatus = ScrapeStatus.OK,
+            ),
+        )
+
+        // 位置没变:不能因"刮削标题≠文件夹名"抖 UPDATED/updatedAt。
+        val kind = persister.commitWork(
+            WorkCandidate(relativeDir = "RJ123456", rjCode = "RJ123456", displayName = "RJ123456"),
+            rootFolderUri = "content://tree/root",
+            nowEpochMillis = 9_000L,
+        )
+        assertEquals(CommitKind.UNCHANGED, kind)
+        val after = db.workDao().getById("local:RJ123456")!!
+        assertEquals("刮削标题", after.title)
+        assertTrue(after.updatedAt < 9_000L)
     }
 
     @Test

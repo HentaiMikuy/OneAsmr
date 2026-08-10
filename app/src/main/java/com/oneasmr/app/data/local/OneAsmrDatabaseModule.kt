@@ -77,4 +77,10 @@ object OneAsmrDatabaseModule {
 
     @Provides
     fun providePlaybackStateDao(db: OneAsmrDatabase): PlaybackStateDao = db.playbackStateDao()
+
+    @Provides
+    fun provideSingleFileDao(db: OneAsmrDatabase): SingleFileDao = db.singleFileDao()
+
+    @Provides
+    fun provideCollectionDao(db: OneAsmrDatabase): CollectionDao = db.collectionDao()
 }

@@ -15,6 +15,12 @@ enum class ScrapeStatus { NOT_SCRAPED, OK, FAILED }
 enum class ProgressState { none, marked, listening, listened, replay, postponed }
 
 /**
+ * 单文件的媒体类别。刻意不用 domain 的 MediaType:后者含 TEXT/IMAGE/OTHER,
+ * 对 single_file 行是非法值——扫描白名单只放行音视频。
+ */
+enum class SingleFileKind { AUDIO, VIDEO }
+
+/**
  * Room type converters: enums are stored as TEXT with their exact plan-spelled
  * names ("NOT_SCRAPED", "none", ...) so the storage format is stable for the
  * version-1 migration baseline.
@@ -31,6 +37,12 @@ class Converters {
 
     @TypeConverter
     fun stringToProgress(value: String): ProgressState = ProgressState.valueOf(value)
+
+    @TypeConverter
+    fun singleFileKindToString(value: SingleFileKind): String = value.name
+
+    @TypeConverter
+    fun stringToSingleFileKind(value: String): SingleFileKind = SingleFileKind.valueOf(value)
 }
 
 /**
@@ -204,4 +216,107 @@ data class PlaybackState(
     val positionMs: Long,
     val durationMs: Long,
     val updatedAt: Long,
+)
+
+/**
+ * 单文件库条目(流媒体下载的散音视频,如 YouTube ASMR mp4)。与 [Work]
+ * 平行的独立体系:无 RJ 码、无社团/声优/进度状态,组织方式是收藏夹
+ * ([Collection])。身份 = (rootFolderUri, relativePath) 唯一索引;重扫按
+ * 与作品相同的 missing 语义(标记不删除,用户手动移除)。
+ *
+ * 播放键为 KeySpec 三段形态 "single:{id}:1"([KeySpec.singleFileTrackKey]),
+ * 复用 playback_state 及整套写入/续播机制。
+ */
+@Entity(
+    tableName = "single_file",
+    indices = [
+        Index(value = ["rootFolderUri", "relativePath"], unique = true),
+        Index("youtubeId"),
+        Index("titleSortKey"),
+        Index("addedAt"),
+    ],
+)
+data class SingleFile(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    /** SAF tree uri of the single-file scan root this file lives under. */
+    val rootFolderUri: String,
+    /** File path relative to the root (display names, no leading slash), incl. file name. */
+    val relativePath: String,
+    /** File display name (with extension) — sidecar pairing + re-parse source. */
+    val fileName: String,
+    val displayTitle: String,
+    /** Pinyin/romaji key from [SortKeyGenerator] over [displayTitle]. */
+    val titleSortKey: String,
+    val kind: SingleFileKind,
+    /** YouTube 11 位视频 ID;来自边车/文件名/在线补全,未知为 null。 */
+    val youtubeId: String?,
+    val channel: String?,
+    /** ISO-8601 上传日期 "yyyy-MM-dd";未知为 null。 */
+    val uploadDate: String?,
+    val durationMs: Long?,
+    val sizeBytes: Long,
+    val lastModified: Long,
+    /**
+     * 封面的 Coil model:边车图的 SAF document uri、抽帧/下载缩略图的本地
+     * 文件路径,或 null(UI 画占位)。
+     */
+    val thumbSource: String?,
+    /** 原始网页链接(info.json webpage_url 或由 youtubeId 推导)。 */
+    val sourceUrl: String?,
+    /** 在线补全(YouTube oEmbed)状态;语义同作品的刮削三态。 */
+    val scrapeStatus: ScrapeStatus,
+    /** True when absent from the last full rescan of its root (同 Work.missing). */
+    @ColumnInfo(defaultValue = "0")
+    val missing: Boolean,
+    val addedAt: Long,
+    val updatedAt: Long,
+)
+
+/**
+ * 收藏夹。[FAVORITES_ID] 行是内置「收藏」夹(isSystem=1,置顶、不可删改名,
+ * 由 [CollectionDao.ensureFavorites] 幂等播种);其余为用户自建。单文件与
+ * 收藏夹是多对多([CollectionItem]),播放列表语义 —— 一个文件可进多夹。
+ */
+@Entity(tableName = "collection")
+data class Collection(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
+    @ColumnInfo(defaultValue = "0")
+    val isSystem: Boolean,
+    /** 用户自建夹的手动排序位;系统夹恒排最前(查询按 isSystem DESC 优先)。 */
+    val sortIndex: Int,
+    val createdAt: Long,
+) {
+    companion object {
+        /** 内置「收藏」夹的保留主键。 */
+        const val FAVORITES_ID = 1L
+    }
+}
+
+/** collection <-> single_file 多对多成员关系;删除任一端级联清理。 */
+@Entity(
+    tableName = "collection_item",
+    primaryKeys = ["collectionId", "fileId"],
+    foreignKeys = [
+        ForeignKey(
+            entity = Collection::class,
+            parentColumns = ["id"],
+            childColumns = ["collectionId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+        ForeignKey(
+            entity = SingleFile::class,
+            parentColumns = ["id"],
+            childColumns = ["fileId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index("fileId")],
+)
+data class CollectionItem(
+    val collectionId: Long,
+    val fileId: Long,
+    /** 夹内排序位(加入顺序递增;拖拽重排预留)。 */
+    val sortIndex: Int,
+    val addedAt: Long,
 )

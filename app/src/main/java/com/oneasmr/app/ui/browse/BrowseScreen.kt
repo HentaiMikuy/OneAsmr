@@ -181,6 +181,9 @@ fun DimensionWorksScreen(
 ) {
     val dimensionName by viewModel.dimensionName.collectAsStateWithLifecycle()
     val items = viewModel.pagingDataFlow.collectAsLazyPagingItems()
+    // 同 LibraryScreen:详情页刮削期间本页无收集器,返回时缓存代已过期,
+    // 组合重建时刷新一代。
+    androidx.compose.runtime.LaunchedEffect(Unit) { items.refresh() }
     val coverStore = rememberCoverStore()
     val dimensionLabel = BrowseDimensions.label(viewModel.dimension)
 

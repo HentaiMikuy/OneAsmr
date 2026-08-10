@@ -31,6 +31,15 @@ object KeySpec {
     /** Fixed source scope for works stored in the local database. */
     const val LOCAL_SOURCE = "local"
 
+    /**
+     * Source scope for single-file library entries (散音视频单文件, no
+     * rjCode). Their track keys reuse the 3-part [trackKey] shape with the
+     * middle part = the single_file row id and a constant index 1:
+     * "single:{fileId}:1" — [parseTrackKey] and every prefix-scoped
+     * playback_state query work unchanged.
+     */
+    const val SINGLE_SOURCE = "single"
+
     /** Remote scopes are "srv{n}" with n >= 1. */
     fun remoteSource(serverIndex: Int): String = "srv$serverIndex"
 
@@ -40,6 +49,12 @@ object KeySpec {
     /** Playback-state key: "{sourceScope}:{rjCode}:{trackIndex}". */
     fun trackKey(sourceScope: String, rjCode: String, trackIndex: Int): String =
         "$sourceScope:$rjCode:$trackIndex"
+
+    /** Single-file playback key: "single:{fileId}:1". */
+    fun singleFileTrackKey(fileId: Long): String = trackKey(SINGLE_SOURCE, fileId.toString(), 1)
+
+    /** Prefix ("single:{fileId}:") for playback_state prefix-scoped queries. */
+    fun singleFileTrackKeyPrefix(fileId: Long): String = "$SINGLE_SOURCE:$fileId:"
 
     /** Parsed parts of a work id. */
     data class WorkIdParts(val sourceScope: String, val rjCode: String)

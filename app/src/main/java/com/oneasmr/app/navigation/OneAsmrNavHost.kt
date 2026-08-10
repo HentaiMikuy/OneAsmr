@@ -23,6 +23,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -73,6 +74,8 @@ import com.oneasmr.app.ui.player.VideoPlayerScreen
 import com.oneasmr.app.ui.reviews.ReviewListScreen
 import com.oneasmr.app.ui.settings.ScanRootsScreen
 import com.oneasmr.app.ui.settings.SettingsScreen
+import com.oneasmr.app.ui.singles.CollectionScreen
+import com.oneasmr.app.ui.singles.SinglesScreen
 import com.oneasmr.app.ui.work.ImageFileScreen
 import com.oneasmr.app.ui.work.TextFileScreen
 import com.oneasmr.app.ui.work.WorkDetailScreen
@@ -81,9 +84,12 @@ import com.oneasmr.app.ui.work.WorkDetailScreen
 object Routes {
     const val LIBRARY = "library"
     const val SEARCH = "search"
+    const val SINGLES = "singles"
+    const val COLLECTION = "collection/{collectionId}"
     const val WORK_DETAIL = "work/{workId}"
     const val PLAYER = "player/{workId}/{trackIndex}"
     const val VIDEO_PLAYER = "video_player/{workId}/{trackIndex}"
+    const val VIDEO_PLAYER_SINGLE = "video_player_single/{fileId}"
     const val TEXT_VIEWER = "text/{workId}/{documentUri}"
     const val IMAGE_VIEWER = "image/{workId}/{documentUri}"
     const val BROWSE_DIMENSION = "browse/{dimension}"
@@ -97,6 +103,8 @@ object Routes {
     const val TEXT_VIEWER_ARG_URI = "documentUri"
     const val BROWSE_ARG_DIMENSION = "dimension"
     const val BROWSE_ARG_ID = "id"
+    const val COLLECTION_ARG = "collectionId"
+    const val SINGLE_FILE_ARG = "fileId"
 
     fun workDetail(workId: String): String = "work/$workId"
 
@@ -105,6 +113,12 @@ object Routes {
 
     /** Video player stub route (Task 22 wires the real player). */
     fun videoPlayer(workId: String, trackIndex: Int): String = "video_player/$workId/$trackIndex"
+
+    /** 单文件(音/视频皆走视频播放器页)播放路由。 */
+    fun videoPlayerSingle(fileId: Long): String = "video_player_single/$fileId"
+
+    /** 收藏夹详情。 */
+    fun collection(collectionId: Long): String = "collection/$collectionId"
 
     /** Built-in text viewer; the SAF document uri is URL-encoded for safe routing. */
     fun textViewer(workId: String, documentUri: String): String =
@@ -168,9 +182,10 @@ fun OneAsmrNavHost(
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
 
-    // 三个根 Tab 路由：只有它们渲染底部导航栏，也只有它们响应滚动隐藏。
+    // 根 Tab 路由：只有它们渲染底部导航栏，也只有它们响应滚动隐藏。
     val isRootRoute = currentRoute == Routes.LIBRARY ||
         currentRoute == Routes.SEARCH ||
+        currentRoute == Routes.SINGLES ||
         currentRoute == Routes.SETTINGS
 
     // 滚动隐藏状态：0f = 完全显示，clusterHeightPx = 完全隐藏（整簇向下平移）。
@@ -329,6 +344,34 @@ fun OneAsmrNavHost(
                 )
             }
             composable(
+                route = Routes.SINGLES,
+                deepLinks = listOf(navDeepLink { uriPattern = "oneasmr://singles" }),
+                enterTransition = { fadeIn(animationSpec = tween(220)) },
+                exitTransition = { fadeOut(animationSpec = tween(220)) },
+                popEnterTransition = { fadeIn(animationSpec = tween(220)) },
+                popExitTransition = { fadeOut(animationSpec = tween(220)) },
+            ) {
+                SinglesScreen(
+                    onOpenFile = { fileId -> navController.navigate(Routes.videoPlayerSingle(fileId)) },
+                    onOpenCollection = { collectionId ->
+                        navController.navigate(Routes.collection(collectionId))
+                    },
+                    onOpenScanRoots = { navController.navigate(Routes.SCAN_ROOTS) },
+                )
+            }
+            composable(
+                route = Routes.COLLECTION,
+                arguments = listOf(
+                    navArgument(Routes.COLLECTION_ARG) { type = NavType.StringType },
+                ),
+                deepLinks = listOf(navDeepLink { uriPattern = "oneasmr://collection/{collectionId}" }),
+            ) {
+                CollectionScreen(
+                    onOpenFile = { fileId -> navController.navigate(Routes.videoPlayerSingle(fileId)) },
+                    onBack = { navController.popBackStack() },
+                )
+            }
+            composable(
                 route = Routes.WORK_DETAIL,
                 arguments = listOf(
                     navArgument(Routes.WORK_DETAIL_ARG) { type = NavType.StringType },
@@ -382,6 +425,18 @@ fun OneAsmrNavHost(
                     navDeepLink { uriPattern = "oneasmr://video_player/{workId}/{trackIndex}" },
                 ),
             ) {
+                VideoPlayerScreen(onBack = { navController.popBackStack() })
+            }
+            composable(
+                route = Routes.VIDEO_PLAYER_SINGLE,
+                arguments = listOf(
+                    navArgument(Routes.SINGLE_FILE_ARG) { type = NavType.StringType },
+                ),
+                deepLinks = listOf(
+                    navDeepLink { uriPattern = "oneasmr://video_player_single/{fileId}" },
+                ),
+            ) {
+                // 同一播放器页:ViewModel 按 fileId 参数走单档装载分支。
                 VideoPlayerScreen(onBack = { navController.popBackStack() })
             }
             composable(
@@ -480,7 +535,10 @@ fun OneAsmrNavHost(
             // must run through the back handler, not nav-bar navigation);
             // tap -> full player, swipe -> stop. Its visibility is driven
             // by the session connection (single source of truth).
-            if (currentRoute != Routes.PLAYER && currentRoute != Routes.VIDEO_PLAYER) {
+            if (currentRoute != Routes.PLAYER &&
+                currentRoute != Routes.VIDEO_PLAYER &&
+                currentRoute != Routes.VIDEO_PLAYER_SINGLE
+            ) {
                 // 非根路由没有导航栏兜底系统手势条高度，胶囊自己让开。
                 Box(if (isRootRoute) Modifier else Modifier.navigationBarsPadding()) {
                     MiniPlayerBarHost(
@@ -529,6 +587,12 @@ private fun OneAsmrBottomBar(
             onClick = { onNavigate(Routes.LIBRARY) },
             icon = { Icon(Icons.Filled.Home, contentDescription = "Library") },
             label = { Text("Library") },
+        )
+        NavigationBarItem(
+            selected = currentRoute == Routes.SINGLES,
+            onClick = { onNavigate(Routes.SINGLES) },
+            icon = { Icon(Icons.Filled.VideoLibrary, contentDescription = "Videos") },
+            label = { Text("Videos") },
         )
         NavigationBarItem(
             selected = currentRoute == Routes.SEARCH,

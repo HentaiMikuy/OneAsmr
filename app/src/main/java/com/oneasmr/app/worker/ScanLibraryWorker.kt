@@ -11,20 +11,28 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.oneasmr.app.data.local.KeySpec
 import com.oneasmr.app.data.local.OneAsmrDatabase
+import com.oneasmr.app.data.repository.ScanRootKind
+import com.oneasmr.app.data.scanner.AndroidSingleFileProbe
 import com.oneasmr.app.data.scanner.CommitKind
 import com.oneasmr.app.data.scanner.DocumentReadException
 import com.oneasmr.app.data.scanner.LibraryScanner
 import com.oneasmr.app.data.scanner.RescanDiffComputer
 import com.oneasmr.app.data.scanner.RescanSummary
 import com.oneasmr.app.data.scanner.RoomScanPersister
+import com.oneasmr.app.data.scanner.RoomSingleFilePersister
 import com.oneasmr.app.data.scanner.SafDocumentFs
 import com.oneasmr.app.data.scanner.ScanAbortedException
 import com.oneasmr.app.data.scanner.ScanBookkeepingStore
 import com.oneasmr.app.data.scanner.ScanCallback
 import com.oneasmr.app.data.scanner.ScanProgressStore
 import com.oneasmr.app.data.scanner.ScanRunState
+import com.oneasmr.app.data.scanner.SingleFileCandidate
+import com.oneasmr.app.data.scanner.SingleFileRescanDiff
+import com.oneasmr.app.data.scanner.SingleFileScanner
+import com.oneasmr.app.data.scanner.SingleThumbStore
 import com.oneasmr.app.data.scanner.StoredWorkRef
 import com.oneasmr.app.data.scanner.WorkCandidate
+import java.io.File
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
@@ -34,9 +42,16 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
-/** A scan root as carried in the worker input: tree URI + display name for progress. */
+/**
+ * A scan root as carried in the worker input: tree URI + display name for
+ * progress. [kind] 默认 WORKS,老 checkpoint 链里的 JSON 缺字段也能解码。
+ */
 @Serializable
-data class RootRef(val treeUri: String, val displayName: String)
+data class RootRef(
+    val treeUri: String,
+    val displayName: String,
+    val kind: ScanRootKind = ScanRootKind.WORKS,
+)
 
 /**
  * Resumption cursor persisted in the WORKER INPUT of the next chunk:
@@ -132,6 +147,45 @@ class ScanLibraryWorker(context: Context, params: WorkerParameters) : CoroutineW
         try {
             while (rootIndex < roots.size && !isStopped) {
                 val root = roots[rootIndex]
+                // 恢复游标指向本根的某个已处理 chunk 时,说明单文件遍
+                // (若有)在上一次执行里已完成 —— 只有全新进入根才跑。
+                val resumingMidRoot =
+                    checkpoint?.rootIndex == rootIndex && checkpoint?.chunkDocumentId != null
+                if (root.kind != ScanRootKind.WORKS && !resumingMidRoot) {
+                    // 单文件遍(SINGLE_FILES / MIXED):整根为一个粒度单元
+                    // (下载目录的量级远小于作品库树);提交是幂等 upsert,
+                    // 重跑半途根安全。RJ 作品文件夹由扫描器整棵跳过。
+                    val result = scanSingleFileRoot(db, root) { current, found ->
+                        ScanProgressStore.update(root.displayName, current, completedWorks + found)
+                    }
+                    warnings += result.warnings.size
+                    warningMessages += result.warnings
+                    if (result.warnings.isNotEmpty()) {
+                        runState = runState.copy(
+                            failedRootUris = (runState.failedRootUris + root.treeUri).distinct(),
+                        )
+                    }
+                    runState = runState.copy(
+                        singleDiscoveredIds = (runState.singleDiscoveredIds + result.discoveredIds).distinct(),
+                        added = runState.added + result.added,
+                        updated = runState.updated + result.updated,
+                        unchanged = runState.unchanged + result.unchanged,
+                    )
+                    bookkeeping.setRunState(runState)
+                    completedWorks += result.discoveredIds.size
+                }
+                if (root.kind == ScanRootKind.SINGLE_FILES) {
+                    // 纯单文件根到此完成;混合根继续落入下方作品分块遍
+                    // (不在两遍之间做预算检查:作品遍的每个 chunk 自带
+                    // 检查点,能正确恢复且恢复时跳过单文件遍)。
+                    rootIndex++
+                    checkpoint = null
+                    if (rootIndex < roots.size && SystemClock.elapsedRealtime() > budgetDeadline) {
+                        enqueueContinuation(roots, rootIndex, chunkDocumentId = null, runId = runId)
+                        return@withContext Result.success()
+                    }
+                    continue
+                }
                 val fs = SafDocumentFs(applicationContext, root.treeUri)
                 val scanner = LibraryScanner(fs)
                 val persister = RoomScanPersister(db)
@@ -246,6 +300,18 @@ class ScanLibraryWorker(context: Context, params: WorkerParameters) : CoroutineW
         if (toMarkMissing.isNotEmpty()) {
             db.workDao().markMissing(toMarkMissing, now)
         }
+        // 单文件差集与作品同规则同保护:根 uri 天然分属两类流水线,
+        // completeRoots 共用不串扰。
+        val singlesToMark = SingleFileRescanDiff.computeMissing(
+            runState.singleDiscoveredSet,
+            db.singleFileDao().getAll().map {
+                SingleFileRescanDiff.StoredRef(it.id, it.rootFolderUri, it.missing)
+            },
+            completeRoots,
+        )
+        if (singlesToMark.isNotEmpty()) {
+            db.singleFileDao().markMissing(singlesToMark, now)
+        }
         if (runState.failedRootUris.isNotEmpty()) {
             Log.w(TAG, "rescan incomplete: ${runState.failedRootUris.size} root(s) not fully enumerated; " +
                 "their works were NOT marked missing (existing data kept)")
@@ -257,7 +323,7 @@ class ScanLibraryWorker(context: Context, params: WorkerParameters) : CoroutineW
             RescanSummary(
                 added = runState.added,
                 updated = runState.updated,
-                missing = toMarkMissing.size,
+                missing = toMarkMissing.size + singlesToMark.size,
                 unchanged = runState.unchanged,
                 warnings = warningMessages,
             ),
@@ -268,14 +334,68 @@ class ScanLibraryWorker(context: Context, params: WorkerParameters) : CoroutineW
         Log.i(
             TAG,
             "scan complete: roots=${roots.size} works=$completedWorks added=${runState.added} " +
-                "updated=${runState.updated} unchanged=${runState.unchanged} missing=${toMarkMissing.size} " +
+                "updated=${runState.updated} unchanged=${runState.unchanged} " +
+                "missing=${toMarkMissing.size}+${singlesToMark.size} " +
                 "warnings=$warnings lastScanAt=$now",
         )
         Result.success()
     }
 
+    /** [scanSingleFileRoot] 的根级结果(worker 归并进 RunState)。 */
+    private data class SingleRootResult(
+        val discoveredIds: List<Long>,
+        val added: Int,
+        val updated: Int,
+        val unchanged: Int,
+        val warnings: List<String>,
+    )
+
+    /** 扫一个单文件根:发现 -> 逐文件原子提交,聚合行级结果。 */
+    private suspend fun scanSingleFileRoot(
+        db: OneAsmrDatabase,
+        root: RootRef,
+        onProgress: (currentDir: String, filesFound: Int) -> Unit,
+    ): SingleRootResult {
+        val persister = RoomSingleFilePersister(
+            db = db,
+            probe = AndroidSingleFileProbe(applicationContext),
+            thumbStore = SingleThumbStore(File(applicationContext.filesDir, SINGLE_THUMBS_DIR)),
+        )
+        val discovered = mutableListOf<Long>()
+        val warnings = mutableListOf<String>()
+        var added = 0
+        var updated = 0
+        var unchanged = 0
+        SingleFileScanner(SafDocumentFs(applicationContext, root.treeUri)).scanRoot(
+            object : SingleFileScanner.Callback {
+                override suspend fun onFileFound(candidate: SingleFileCandidate) {
+                    val commit = persister.commitFile(candidate, root.treeUri, System.currentTimeMillis())
+                    when (commit.kind) {
+                        CommitKind.INSERTED -> added++
+                        CommitKind.UPDATED -> updated++
+                        CommitKind.UNCHANGED -> unchanged++
+                    }
+                    if (commit.fileId > 0) discovered += commit.fileId
+                }
+
+                override fun onProgress(currentDir: String, filesFound: Int) {
+                    onProgress(currentDir, filesFound)
+                }
+
+                override fun onWarning(message: String) {
+                    warnings += message
+                    ScanProgressStore.warn(message)
+                    Log.w(TAG, message)
+                }
+
+                override fun isActive(): Boolean = !isStopped
+            },
+        )
+        return SingleRootResult(discovered, added, updated, unchanged, warnings)
+    }
+
     /** Enqueues the next chunk chained after this one (APPEND_OR_REPLACE). */
-    private fun enqueueContinuation(roots: List<RootRef>, rootIndex: Int, chunkDocumentId: String, runId: Long) {
+    private fun enqueueContinuation(roots: List<RootRef>, rootIndex: Int, chunkDocumentId: String?, runId: Long) {
         val checkpoint = ScanCheckpoint(rootIndex, chunkDocumentId, runId)
         val request = OneTimeWorkRequestBuilder<ScanLibraryWorker>()
             .setInputData(workDataOf(KEY_ROOTS to json.encodeToString(roots), KEY_CHECKPOINT to json.encodeToString(checkpoint)))
@@ -291,6 +411,9 @@ class ScanLibraryWorker(context: Context, params: WorkerParameters) : CoroutineW
         const val UNIQUE_WORK_NAME = "oneasmr-library-scan"
         const val KEY_ROOTS = "roots_json"
         const val KEY_CHECKPOINT = "checkpoint_json"
+
+        /** filesDir 下的单文件缩略图目录([SingleThumbStore] 的存储位)。 */
+        const val SINGLE_THUMBS_DIR = "single_thumbs"
 
         /**
          * Per-execution time budget, safely below WorkManager's ~10-minute

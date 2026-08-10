@@ -175,6 +175,15 @@ class SettingsStore @Inject constructor(
     val asmrOneBaseUrl: Flow<String> =
         dataStore.data.map { it[KEY_ASMR_ONE_BASE_URL] ?: "" }
 
+    /**
+     * 视频后台续播开关(默认开)。开:视频页切后台/关屏时不暂停,只临时
+     * 禁用视频轨(仅解码音频,省电接近纯音频播放),回前台恢复画面 ——
+     * ASMR 视频关屏听声音是核心场景。关:保持旧行为,后台即暂停。
+     * 纯音频单文件不受此开关约束,无条件后台续播。
+     */
+    val videoBackgroundPlayback: Flow<Boolean> =
+        dataStore.data.map { it[KEY_VIDEO_BACKGROUND_PLAYBACK] ?: true }
+
     suspend fun setThemeMode(mode: ThemeMode) {
         dataStore.edit { it[KEY_THEME_MODE] = mode.name }
     }
@@ -194,6 +203,10 @@ class SettingsStore @Inject constructor(
 
     suspend fun setAsmrOneFallbackEnabled(enabled: Boolean) {
         dataStore.edit { it[KEY_ASMR_ONE_FALLBACK_ENABLED] = enabled }
+    }
+
+    suspend fun setVideoBackgroundPlayback(enabled: Boolean) {
+        dataStore.edit { it[KEY_VIDEO_BACKGROUND_PLAYBACK] = enabled }
     }
 
     /** Sets the asmr.one mirror base-url; blank restores [DEFAULT_ASMR_ONE_BASE_URL]. */
@@ -259,6 +272,7 @@ class SettingsStore @Inject constructor(
         private val KEY_RECENT_SEARCHES = stringPreferencesKey("recent_searches")
         private val KEY_RESUME_MODE = stringPreferencesKey("resume_mode")
         private val KEY_ASMR_ONE_FALLBACK_ENABLED = booleanPreferencesKey("asmr_one_fallback_enabled")
+        private val KEY_VIDEO_BACKGROUND_PLAYBACK = booleanPreferencesKey("video_background_playback")
         private val KEY_ASMR_ONE_BASE_URL = stringPreferencesKey("asmr_one_base_url")
 
         /** Unit separator: the only forbidden character in a search term. */

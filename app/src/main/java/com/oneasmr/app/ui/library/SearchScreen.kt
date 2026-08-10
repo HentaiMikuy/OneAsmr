@@ -31,6 +31,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -275,6 +276,9 @@ fun SearchScreen(
     val sortOrder by viewModel.sortOrder.collectAsStateWithLifecycle()
     val sortDescending by viewModel.sortDescending.collectAsStateWithLifecycle()
     val lazyItems = viewModel.pagingDataFlow.collectAsLazyPagingItems()
+    // 同 LibraryScreen:详情页刮削期间本页无收集器,返回时缓存代已过期,
+    // 组合重建时刷新一代。
+    LaunchedEffect(Unit) { lazyItems.refresh() }
 
     Column(
         modifier = Modifier

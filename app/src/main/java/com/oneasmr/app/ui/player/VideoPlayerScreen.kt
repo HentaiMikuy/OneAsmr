@@ -22,8 +22,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -86,7 +88,10 @@ import androidx.media3.ui.PlayerView
 import com.google.common.util.concurrent.ListenableFuture
 import com.oneasmr.app.R
 import com.oneasmr.app.data.local.KeySpec
+import com.oneasmr.app.data.local.SingleFileDao
+import com.oneasmr.app.data.local.SingleFileKind
 import com.oneasmr.app.data.local.WorkDao
+import com.oneasmr.app.data.local.settings.SettingsStore
 import com.oneasmr.app.data.scanner.TrackTreeBuilder
 import com.oneasmr.app.data.scanner.WorkPathResolver
 import com.oneasmr.app.domain.player.PlaybackSpeed
@@ -107,6 +112,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -200,7 +206,11 @@ fun VideoPlayerScreen(
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) viewModel.onAppBackgrounded()
+            when (event) {
+                Lifecycle.Event.ON_STOP -> viewModel.onAppBackgrounded()
+                Lifecycle.Event.ON_START -> viewModel.onAppForegrounded()
+                else -> Unit
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
@@ -228,9 +238,14 @@ fun VideoPlayerScreen(
             .fillMaxSize()
             .background(Color.Black),
     ) {
+        // 快照状态:控制器(可能晚于首帧)连接的那一刻,update 重跑并把
+        // player 绑上 PlayerView —— 否则冷启动服务时 surface 永远接不上
+        // (黑屏但有声)。
+        val sessionPlayer by viewModel.playerFlow.collectAsStateWithLifecycle()
         AndroidView(
             factory = { ctx ->
-                LayoutInflater.from(ctx).inflate(R.layout.video_player_view, null) as PlayerView
+                (LayoutInflater.from(ctx).inflate(R.layout.video_player_view, null) as PlayerView)
+                    .also { playerView = it }
             },
             modifier = Modifier
                 .fillMaxSize()
@@ -240,7 +255,7 @@ fun VideoPlayerScreen(
                 ) {
                     if (!locked) controlsVisible = !controlsVisible
                 },
-            update = { it.player = viewModel.player },
+            update = { it.player = sessionPlayer },
         )
         DisposableEffect(Unit) {
             onDispose {
@@ -398,6 +413,9 @@ private fun VideoControls(
                 .fillMaxWidth()
                 .align(Alignment.TopCenter)
                 .background(Color.Black.copy(alpha = 0.5f))
+                // scrim 先铺(垫进状态栏底下),内容再避让 —— 返回/锁定键
+                // 不会顶进状态栏点不到;全屏沉浸时插边为 0,自动贴顶。
+                .statusBarsPadding()
                 .padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -452,6 +470,8 @@ private fun VideoControls(
                 .fillMaxWidth()
                 .align(Alignment.BottomCenter)
                 .background(Color.Black.copy(alpha = 0.5f))
+                // 同顶栏:scrim 垫进手势条区域,滑杆/按钮避让。
+                .navigationBarsPadding()
                 .padding(horizontal = 8.dp, vertical = 4.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -568,17 +588,30 @@ class VideoPlayerViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     @ApplicationContext private val context: Context,
     private val workDao: WorkDao,
+    private val singleFileDao: SingleFileDao,
     private val fsFactory: DocumentFsFactory,
     private val resumePositionResolver: ResumePositionResolver,
+    private val settingsStore: SettingsStore,
     sessionConnection: SessionConnection,
 ) : ViewModel() {
 
-    private val workId: String = checkNotNull(savedStateHandle[Routes.WORK_DETAIL_ARG])
-    private val trackIndex: Int = checkNotNull(savedStateHandle[Routes.TRACK_INDEX_ARG])
-    private val workParts: KeySpec.WorkIdParts = checkNotNull(KeySpec.parseWorkId(workId))
+    /**
+     * 双入口:video_player/{workId}/{trackIndex}(作品附带视频)或
+     * video_player_single/{fileId}(单档库文件,音/视频皆走本页 ——
+     * ExoPlayer 对纯音频同样工作,PlayerView 显示黑场 + 控制条)。
+     */
+    private val singleFileId: Long? =
+        savedStateHandle.get<String>(Routes.SINGLE_FILE_ARG)?.toLongOrNull()
+    private val workId: String? = savedStateHandle[Routes.WORK_DETAIL_ARG]
+    private val trackIndex: Int = savedStateHandle.get<Int>(Routes.TRACK_INDEX_ARG) ?: 1
 
     /** Normative trackKey of this video — the playback_state key (Task 19 rules). */
-    private val videoKey: String = KeySpec.trackKey(workParts.sourceScope, workParts.rjCode, trackIndex)
+    private val videoKey: String = if (singleFileId != null) {
+        KeySpec.singleFileTrackKey(singleFileId)
+    } else {
+        val parts = checkNotNull(KeySpec.parseWorkId(checkNotNull(workId)))
+        KeySpec.trackKey(parts.sourceScope, parts.rjCode, trackIndex)
+    }
 
     private val _uiState = MutableStateFlow(VideoUiState())
     val uiState: StateFlow<VideoUiState> = _uiState.asStateFlow()
@@ -589,8 +622,20 @@ class VideoPlayerViewModel @Inject constructor(
     private var enteredVideoMode = false
     private var exitRequested = false
 
-    /** The session player for the PlayerView binding (null until connected). */
-    val player: Player? get() = controller
+    /** 当前条目是纯音频单文件(m4a/mp3 等):后台续播无条件生效。 */
+    private var isAudioOnlySingle = false
+
+    /** 后台时视频轨被临时禁用(省电);回前台/退出时必须复位。 */
+    private var videoTrackDisabledForBackground = false
+
+    /**
+     * The session player for the PlayerView binding(连接完成后才非 null)。
+     * 必须是 StateFlow 而非普通属性:AndroidView 的 update lambda 只在其
+     * 读取的快照状态变化时重跑 —— 普通属性会让「服务冷启动、控制器晚于
+     * 首帧连接」的场景永远绑不上 surface(黑屏但有声,真机复现)。
+     */
+    private val _player = MutableStateFlow<Player?>(null)
+    val playerFlow: StateFlow<Player?> = _player.asStateFlow()
 
     private val videoFailureReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -642,8 +687,22 @@ class VideoPlayerViewModel @Inject constructor(
                 return@addListener
             }
             this.controller = controller
+            _player.value = controller
             controller.addListener(controllerListener)
-            when (VideoTrackFinder.decideEntry(controller.currentMediaItem?.mediaId, workId, trackIndex)) {
+            // 上一个视频页可能在后台禁了视频轨后被杀/被替换,共享播放器
+            // 会保留该参数 —— 进入时无条件复位,画面永不"神秘缺席"。
+            setVideoTrackDisabled(false)
+            // 单文件路由没有 workId/trackIndex,入口判定直接比对 mediaId。
+            val decision = if (singleFileId != null) {
+                if (controller.currentMediaItem?.mediaId == videoKey) {
+                    VideoEntryDecision.ATTACH
+                } else {
+                    VideoEntryDecision.ENTER
+                }
+            } else {
+                VideoTrackFinder.decideEntry(controller.currentMediaItem?.mediaId, checkNotNull(workId), trackIndex)
+            }
+            when (decision) {
                 VideoEntryDecision.ATTACH -> attachExisting(controller)
                 VideoEntryDecision.ENTER -> enterVideo(controller)
             }
@@ -724,8 +783,50 @@ class VideoPlayerViewModel @Inject constructor(
         }
     }
 
-    private suspend fun loadVideoNode(): VideoFile? {
-        val work = workDao.getById(workId) ?: return null
+    private suspend fun loadVideoNode(): VideoFile? =
+        if (singleFileId != null) loadSingleFile(singleFileId) else loadWorkVideoNode()
+
+    /**
+     * 单档解析:库行 -> 沿 display-name 相对路径现场解析 document uri
+     * (同 WorkPathResolver 的设计依据:SAF 文档 id 不入库,路径才是
+     * 稳定身份)。末段匹配文件而非目录。
+     */
+    private suspend fun loadSingleFile(fileId: Long): VideoFile? {
+        val file = singleFileDao.getById(fileId) ?: return null
+        isAudioOnlySingle = file.kind == SingleFileKind.AUDIO
+        return runCatching {
+            val fs = fsFactory.create(file.rootFolderUri)
+            resolveFileUri(fs, file.relativePath)?.let { uri ->
+                VideoFile(
+                    name = file.displayTitle,
+                    documentUri = uri,
+                    workTitle = file.channel ?: "单档库",
+                )
+            }
+        }.getOrElse { e ->
+            if (e is CancellationException) throw e
+            Log.w(TAG, "single file lookup failed: ${e.message}")
+            null
+        }
+    }
+
+    private fun resolveFileUri(fs: com.oneasmr.app.data.scanner.DocumentFs, relativePath: String): String? {
+        val segments = relativePath.split('/').filter { it.isNotBlank() }
+        if (segments.isEmpty()) return null
+        var path = com.oneasmr.app.data.scanner.FsPath(emptyList())
+        for ((index, name) in segments.withIndex()) {
+            val entries = fs.listChildren(path)
+            if (index == segments.lastIndex) {
+                return entries.firstOrNull { it.name == name && !it.isDirectory }?.documentUri
+            }
+            val dir = entries.firstOrNull { it.name == name && it.isDirectory } ?: return null
+            path += dir.documentId
+        }
+        return null
+    }
+
+    private suspend fun loadWorkVideoNode(): VideoFile? {
+        val work = workDao.getById(checkNotNull(workId)) ?: return null
         return runCatching {
             val fs = fsFactory.create(work.rootFolderUri)
             when (val resolved = WorkPathResolver(fs).resolve(work.relativeDir)) {
@@ -803,13 +904,46 @@ class VideoPlayerViewModel @Inject constructor(
         Log.i(TAG, "video speed -> ${PlaybackSpeed.normalize(speed)}x")
     }
 
-    /** Home / power-off: pause the video (never play unseen); audio untouched. */
+    /**
+     * Home / 关屏(ON_STOP):
+     * - 纯音频单文件:无条件后台续播(与作品音轨同权)。
+     * - 视频 + 「视频后台续播」开(默认):不暂停,只临时禁用视频轨 ——
+     *   仅解码音频,省电接近纯音频;回前台恢复画面。播放本就走前台
+     *   服务,通知栏/锁屏控制自然可用。
+     * - 视频 + 开关关:保持旧行为,后台即暂停(never play unseen)。
+     */
     fun onAppBackgrounded() {
         val c = controller ?: return
         if (!c.playWhenReady) return
         if (c.currentMediaItem?.mediaId != videoKey) return
-        Log.i(TAG, "video backgrounded: pausing (service flushes the position)")
-        c.pause()
+        if (isAudioOnlySingle) return
+        viewModelScope.launch {
+            if (settingsStore.videoBackgroundPlayback.first()) {
+                setVideoTrackDisabled(true)
+                Log.i(TAG, "video backgrounded: keep playing, video track disabled (battery)")
+            } else {
+                Log.i(TAG, "video backgrounded: pausing (service flushes the position)")
+                controller?.pause()
+            }
+        }
+    }
+
+    /** 回前台(ON_START):恢复被后台禁用的视频轨。 */
+    fun onAppForegrounded() {
+        if (videoTrackDisabledForBackground) {
+            setVideoTrackDisabled(false)
+            Log.i(TAG, "video foregrounded: video track re-enabled")
+        }
+    }
+
+    /** 视频轨临时开关(后台省电);共享播放器上属全局参数,必须成对复位。 */
+    private fun setVideoTrackDisabled(disabled: Boolean) {
+        val c = controller ?: return
+        c.trackSelectionParameters = c.trackSelectionParameters
+            .buildUpon()
+            .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, disabled)
+            .build()
+        videoTrackDisabledForBackground = disabled
     }
 
     /**
@@ -824,6 +958,9 @@ class VideoPlayerViewModel @Inject constructor(
         if (exitRequested) return
         exitRequested = true
         val c = controller ?: return
+        // 离开视频页前复位视频轨参数:共享播放器把它带回音频队列虽无
+        // 感知,但属状态泄漏,下个视频会莫名黑屏。
+        if (videoTrackDisabledForBackground) setVideoTrackDisabled(false)
         if (!enteredVideoMode) return
         if (_uiState.value.playbackFailed) {
             Log.i(TAG, "video exit after failure: audio context restored by service, popping only")
@@ -853,6 +990,7 @@ class VideoPlayerViewModel @Inject constructor(
         runCatching { context.applicationContext.unregisterReceiver(videoFailureReceiver) }
         runCatching { controllerFuture?.let { MediaController.releaseFuture(it) } }
         controllerFuture = null
+        _player.value = null
         controller?.removeListener(controllerListener)
         controller = null
         super.onCleared()

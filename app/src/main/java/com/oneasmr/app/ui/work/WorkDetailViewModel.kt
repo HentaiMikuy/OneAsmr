@@ -20,6 +20,7 @@ import com.oneasmr.app.data.local.WorkTagDao
 import com.oneasmr.app.data.local.WorkVaDao
 import com.oneasmr.app.data.remote.dlsite.DlsiteScrapeException
 import com.oneasmr.app.data.repository.RootGrantStatus
+import com.oneasmr.app.data.repository.ScanRootKind
 import com.oneasmr.app.data.repository.ScanRootRepository
 import com.oneasmr.app.data.repository.ScrapeOutcome
 import com.oneasmr.app.data.repository.SingleWorkScraper
@@ -287,8 +288,11 @@ class WorkDetailViewModel @Inject constructor(
         if (_uiState.value.refreshing) return
         _uiState.update { it.copy(refreshing = true, rescanMessage = null) }
         viewModelScope.launch {
+            // 只喂含作品的根(作品库/混合库):纯单文件根里不存在 RJ 作品
+            // 文件夹,白走一遍还可能把「所有根都完整枚举但没找到」误判成
+            // 失效。
             val roots = rootRepository.entries.value
-                .filter { it.status == RootGrantStatus.AUTHORIZED }
+                .filter { it.status == RootGrantStatus.AUTHORIZED && it.root.kind != ScanRootKind.SINGLE_FILES }
                 .map { ScanRoot(treeUri = it.root.treeUri, displayName = it.root.displayName) }
             val result = if (roots.isEmpty()) {
                 RefreshResult.Failed("没有已授权的根文件夹，请先在设置中添加")

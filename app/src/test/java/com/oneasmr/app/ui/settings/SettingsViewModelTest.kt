@@ -16,10 +16,13 @@ import com.oneasmr.app.data.local.PlaybackStateDao
 import com.oneasmr.app.data.local.PlaybackState
 import com.oneasmr.app.data.local.Review
 import com.oneasmr.app.data.local.ProgressState
+import androidx.lifecycle.viewModelScope
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestCoroutineScheduler
@@ -208,10 +211,24 @@ class SettingsViewModelTest {
 
     @After
     fun tearDown() {
-        // The repo's eager entries collector lives on a REAL Default-dispatcher
-        // thread; without cancelling it here, a late resume can land on Main
-        // after resetMain and crash whichever test runs next.
-        rootsScope.cancel()
+        // 晚到续体竞态的彻底拆除(套件变大后两种形态都复现过:直接崩在
+        // 下个用例 / 记作"测试开始前的未捕获异常"):VM 里 withContext(IO)
+        // 的收尾在真实 IO 线程完成后要向 Main 派发,resetMain 之后这次
+        // 派发必炸。cancel 不等待、advanceUntilIdle 管不到真实线程 ——
+        // 必须在 Main 仍有效期间,交替推调度器 + 真实等待,直到 VM 作业
+        // 树完全终止;roots 收集器同理 join;最后才 resetMain。
+        val vmJob = harness.viewModel.viewModelScope.coroutineContext[kotlinx.coroutines.Job]
+        vmJob?.cancel()
+        runBlocking {
+            kotlinx.coroutines.withTimeout(5_000) {
+                while (vmJob?.isCompleted == false) {
+                    scheduler.advanceUntilIdle()
+                    kotlinx.coroutines.delay(10)
+                }
+            }
+            rootsScope.coroutineContext[kotlinx.coroutines.Job]?.cancelAndJoin()
+        }
+        scheduler.advanceUntilIdle()
         Dispatchers.resetMain()
     }
 

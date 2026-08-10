@@ -6,9 +6,11 @@ import com.oneasmr.app.data.local.VaDao
 import com.oneasmr.app.data.local.WorkDao
 import com.oneasmr.app.data.local.WorkTagDao
 import com.oneasmr.app.data.local.WorkVaDao
+import com.oneasmr.app.data.local.settings.ScrapingLanguage
 import com.oneasmr.app.data.local.settings.SettingsStore
 import com.oneasmr.app.data.remote.RequestPacer
 import com.oneasmr.app.data.remote.asmrone.AsmrOneScraper
+import com.oneasmr.app.data.remote.dlsite.DlsiteLanguage
 import com.oneasmr.app.data.remote.dlsite.DlsiteScraper
 import com.oneasmr.app.data.remote.dlsite.DlsiteScraperApi
 import com.oneasmr.app.data.remote.dlsite.FallbackScraper
@@ -35,7 +37,9 @@ import okhttp3.OkHttpClient
  *
  * Chain shape ([FallbackScraper]):
  *  - Primary: [DlsiteScraper], honoring the debug base-url override
- *    ([SettingsStore.scraperBaseUrlOverride] — blank = production DLsite).
+ *    ([SettingsStore.scraperBaseUrlOverride] — blank = production DLsite)
+ *    and [SettingsStore.scrapingLanguage] (DLsite locale cookie +
+ *    Accept-Language; the fallback reads the same setting for tag i18n).
  *    The UI that writes it is FLAG_DEBUGGABLE-gated (ScrapeViewModel);
  *    release builds never see it.
  *  - Fallback: [AsmrOneScraper], provided lazily and only when
@@ -98,6 +102,7 @@ object ScrapeModule {
             FallbackScraper(
                 primary = DlsiteScraper(
                     baseUrl = if (override.isBlank()) DlsiteScraperApi.DEFAULT_BASE_URL else override.trimEnd('/'),
+                    language = language.toDlsiteLanguage(),
                     client = client,
                 ),
                 fallback = {
@@ -116,4 +121,14 @@ object ScrapeModule {
         },
         requestPacer = requestPacer,
     )
+}
+
+/**
+ * Settings preference -> DLsite locale. [DlsiteLanguage.ZH_TW] exists on the
+ * DLsite side but has no settings surface; the exhaustive `when` makes a new
+ * [ScrapingLanguage] entry a compile error until it is routed here too.
+ */
+private fun ScrapingLanguage.toDlsiteLanguage(): DlsiteLanguage = when (this) {
+    ScrapingLanguage.ZH -> DlsiteLanguage.ZH_CN
+    ScrapingLanguage.JA -> DlsiteLanguage.JA_JP
 }

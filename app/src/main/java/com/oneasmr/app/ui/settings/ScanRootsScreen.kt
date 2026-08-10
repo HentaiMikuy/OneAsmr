@@ -5,6 +5,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -23,6 +24,8 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -35,6 +38,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,6 +52,7 @@ import androidx.lifecycle.viewModelScope
 import com.oneasmr.app.data.repository.AddRootResult
 import com.oneasmr.app.data.repository.RootGrantStatus
 import com.oneasmr.app.data.repository.ScanRootEntry
+import com.oneasmr.app.data.repository.ScanRootKind
 import com.oneasmr.app.data.repository.ScanRootRepository
 import com.oneasmr.app.data.scanner.RescanSummary
 import com.oneasmr.app.data.scanner.ScanBookkeepingStore
@@ -76,10 +81,14 @@ fun ScanRootsScreen(viewModel: ScanRootsViewModel = hiltViewModel()) {
     val progress by viewModel.progress.collectAsStateWithLifecycle()
     val lastSummary by viewModel.lastSummary.collectAsStateWithLifecycle(initialValue = null)
     var removeCandidate by remember { mutableStateOf<ScanRootEntry?>(null) }
+    var addMenuOpen by remember { mutableStateOf(false) }
+    // 选中的根类型要活过「拉起系统选择器 → 回调」的间隙(含进程重建),
+    // 存 enum 名字符串(rememberSaveable 不认自定义 enum)。
+    var pendingKindName by rememberSaveable { mutableStateOf(ScanRootKind.WORKS.name) }
 
     val pickFolder = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree(),
-    ) { uri: Uri? -> viewModel.onPicked(uri) }
+    ) { uri: Uri? -> viewModel.onPicked(uri, ScanRootKind.valueOf(pendingKindName)) }
 
     LaunchedEffect(Unit) { viewModel.refreshValidation() }
 
@@ -93,15 +102,44 @@ fun ScanRootsScreen(viewModel: ScanRootsViewModel = hiltViewModel()) {
         Text("根文件夹管理", style = MaterialTheme.typography.displaySmall)
         Spacer(Modifier.height(4.dp))
         Text(
-            "通过系统文件夹选择器授权 OneAsmr 读取作品根目录。授权仅用于读取，移除授权不会删除任何文件。",
+            "通过系统文件夹选择器授权 OneAsmr 读取。作品库按 RJ 文件夹收录作品;" +
+                "单文件库平铺收录散音视频(如 YouTube 下载)。授权仅用于读取,移除授权不会删除任何文件。",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(12.dp))
-        Button(onClick = { pickFolder.launch(null) }) {
-            Icon(Icons.Filled.Add, contentDescription = null)
-            Spacer(Modifier.width(4.dp))
-            Text("添加根文件夹")
+        Box {
+            Button(onClick = { addMenuOpen = true }) {
+                Icon(Icons.Filled.Add, contentDescription = null)
+                Spacer(Modifier.width(4.dp))
+                Text("添加根文件夹")
+            }
+            DropdownMenu(expanded = addMenuOpen, onDismissRequest = { addMenuOpen = false }) {
+                DropdownMenuItem(
+                    text = { Text("作品库（RJ 作品文件夹）") },
+                    onClick = {
+                        addMenuOpen = false
+                        pendingKindName = ScanRootKind.WORKS.name
+                        pickFolder.launch(null)
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text("单文件库（散音视频文件）") },
+                    onClick = {
+                        addMenuOpen = false
+                        pendingKindName = ScanRootKind.SINGLE_FILES.name
+                        pickFolder.launch(null)
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text("混合库（作品 + 散音视频）") },
+                    onClick = {
+                        addMenuOpen = false
+                        pendingKindName = ScanRootKind.MIXED.name
+                        pickFolder.launch(null)
+                    },
+                )
+            }
         }
         Spacer(Modifier.height(16.dp))
 
@@ -126,6 +164,7 @@ fun ScanRootsScreen(viewModel: ScanRootsViewModel = hiltViewModel()) {
                     entry = entry,
                     onRemove = { removeCandidate = entry },
                     onReselect = { pickFolder.launch(null) },
+                    onSetKind = { kind -> viewModel.setKind(entry.root.treeUri, kind) },
                 )
                 HorizontalDivider()
             }
@@ -213,8 +252,10 @@ private fun RootFolderRow(
     entry: ScanRootEntry,
     onRemove: () -> Unit,
     onReselect: () -> Unit,
+    onSetKind: (ScanRootKind) -> Unit,
 ) {
     val revoked = entry.status == RootGrantStatus.REVOKED
+    var kindMenu by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
@@ -224,6 +265,36 @@ private fun RootFolderRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            // 类型徽章可点:就地切换该根的用途(作品/单文件/混合)——
+            // 「同一目录两种库都要」切成混合库即可,无需重复添加授权。
+            Box {
+                AssistChip(
+                    onClick = { kindMenu = true },
+                    label = {
+                        Text(entry.root.kind.displayLabel(), style = MaterialTheme.typography.labelMedium)
+                    },
+                )
+                DropdownMenu(expanded = kindMenu, onDismissRequest = { kindMenu = false }) {
+                    ScanRootKind.entries.forEach { kind ->
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    if (kind == entry.root.kind) {
+                                        "●  ${kind.displayLabel()}（当前）"
+                                    } else {
+                                        kind.displayLabel()
+                                    },
+                                )
+                            },
+                            onClick = {
+                                kindMenu = false
+                                if (kind != entry.root.kind) onSetKind(kind)
+                            },
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.width(4.dp))
             AssistChip(
                 onClick = {},
                 label = {
@@ -263,6 +334,13 @@ private fun RootFolderRow(
     }
 }
 
+/** 根类型的展示名(添加菜单/类型徽章/切换菜单共用)。 */
+private fun ScanRootKind.displayLabel(): String = when (this) {
+    ScanRootKind.WORKS -> "作品库"
+    ScanRootKind.SINGLE_FILES -> "单文件库"
+    ScanRootKind.MIXED -> "混合库"
+}
+
 /** ViewModel for [ScanRootsScreen]; delegates all bookkeeping to [ScanRootRepository]. */
 @HiltViewModel
 class ScanRootsViewModel @Inject constructor(
@@ -286,15 +364,20 @@ class ScanRootsViewModel @Inject constructor(
         viewModelScope.launch { repository.refreshValidation() }
     }
 
-    fun onPicked(uri: Uri?) {
+    fun onPicked(uri: Uri?, kind: ScanRootKind) {
         if (uri == null) return
         viewModelScope.launch {
-            when (repository.addRoot(uri.toString(), null)) {
+            when (repository.addRoot(uri.toString(), null, kind)) {
                 AddRootResult.ALREADY_EXISTS -> Unit // duplicate pick of a stored root
                 AddRootResult.PERMISSION_DENIED -> Unit // logged by the repository
                 AddRootResult.OK -> Unit
             }
         }
+    }
+
+    /** 就地切换根类型(作品/单文件/混合);授权与条目不动。 */
+    fun setKind(treeUri: String, kind: ScanRootKind) {
+        viewModelScope.launch { repository.setKind(treeUri, kind) }
     }
 
     fun remove(treeUri: String) {

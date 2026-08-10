@@ -27,17 +27,35 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 /**
+ * 扫描根的用途:决定该根走哪条入库流水线。
+ * - [WORKS]:传统 RJ 作品库(按 RJ 文件夹名发现作品)。
+ * - [SINGLE_FILES]:单文件库(流媒体下载的散音视频,平铺收录每个文件)。
+ * - [MIXED]:混合库 —— 同一根先后跑两条流水线:RJ 文件夹按作品入库,
+ *   其余散音视频按单文件入库(单文件扫描会跳过 RJ 文件夹,见
+ *   [com.oneasmr.app.data.scanner.SingleFileScanner])。
+ * 同一 tree uri 只保留一个条目(按 uri 去重);要"两种都要"就把该根切成
+ * MIXED([ScanRootRepository.setKind]),而不是重复添加 —— 避免同一授权
+ * 的双条目在移除时的 releasePersistableUriPermission 连坐问题。
+ */
+@Serializable
+enum class ScanRootKind { WORKS, SINGLE_FILES, MIXED }
+
+/**
  * A user-granted SAF root folder: the tree URI from
  * `Intent.ACTION_OPEN_DOCUMENT_TREE` plus the display name resolved at grant
  * time. Stored as JSON in a dedicated DataStore file ("scan_roots") rather
  * than Room, so adding/removing roots never touches the Room schema/migration
  * baseline (Task 4 locked version 1).
+ *
+ * [kind] 默认 WORKS:老版本存量 JSON 缺该字段,kotlinx 反序列化取默认值,
+ * 升级后既有根自动保持作品库身份。
  */
 @Serializable
 data class ScanRoot(
     val displayName: String,
     val treeUri: String,
     val grantedAtEpochMillis: Long,
+    val kind: ScanRootKind = ScanRootKind.WORKS,
 )
 
 /** Grant status of a stored [ScanRoot] against the CURRENT system state. */
@@ -162,7 +180,11 @@ class ScanRootRepository @Inject constructor(
     }.stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     /** Adds a picked tree URI: take persistable grant, resolve name, persist. */
-    suspend fun addRoot(treeUri: String, fallbackName: String?): AddRootResult {
+    suspend fun addRoot(
+        treeUri: String,
+        fallbackName: String?,
+        kind: ScanRootKind = ScanRootKind.WORKS,
+    ): AddRootResult {
         val existing = rootsStore.roots.first().any { it.treeUri == treeUri }
         if (existing) {
             Log.i(TAG, "addRoot skipped (already stored): $treeUri")
@@ -180,9 +202,10 @@ class ScanRootRepository @Inject constructor(
             displayName = name,
             treeUri = treeUri,
             grantedAtEpochMillis = System.currentTimeMillis(),
+            kind = kind,
         )
         rootsStore.setRoots(roots)
-        Log.i(TAG, "addRoot granted persistable permission: $treeUri (display='$name')")
+        Log.i(TAG, "addRoot granted persistable permission: $treeUri (display='$name', kind=$kind)")
         dumpPersistedPermissions("after addRoot($treeUri)")
         return AddRootResult.OK
     }
@@ -194,6 +217,20 @@ class ScanRootRepository @Inject constructor(
         persistedUris.value = permissionStore.persistedTreeUris()
         Log.i(TAG, "removeRoot released persistable permission: $treeUri")
         dumpPersistedPermissions("after removeRoot($treeUri)")
+    }
+
+    /**
+     * 就地切换已存根的类型(作品库/单文件库/混合库)。授权与条目都不动,
+     * 只改用途 —— 「同一目录两种库都要」的正解是切成 MIXED,而不是
+     * 重复添加同一 uri。
+     */
+    suspend fun setKind(treeUri: String, kind: ScanRootKind) {
+        rootsStore.setRoots(
+            rootsStore.roots.first().map { root ->
+                if (root.treeUri == treeUri) root.copy(kind = kind) else root
+            },
+        )
+        Log.i(TAG, "setKind: $treeUri -> $kind")
     }
 
     /**

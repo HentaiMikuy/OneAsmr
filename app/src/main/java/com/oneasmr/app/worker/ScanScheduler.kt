@@ -53,7 +53,7 @@ class ScanScheduler @Inject constructor(
     override fun startScan(): Int {
         val roots = scanRootRepository.entries.value
             .filter { it.status == RootGrantStatus.AUTHORIZED }
-            .map { RootRef(it.root.treeUri, it.root.displayName) }
+            .map { RootRef(it.root.treeUri, it.root.displayName, it.root.kind) }
         if (roots.isEmpty()) {
             Log.w(TAG, "startScan: no authorized roots")
             return 0

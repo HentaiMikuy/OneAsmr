@@ -72,6 +72,7 @@ fun SettingsScreen(
 ) {
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
     val dynamicColor by viewModel.dynamicColor.collectAsStateWithLifecycle()
+    val videoBackgroundPlayback by viewModel.videoBackgroundPlayback.collectAsStateWithLifecycle()
     val rootEntries by viewModel.rootEntries.collectAsStateWithLifecycle()
     val resumeMode by viewModel.resumeMode.collectAsStateWithLifecycle()
     val scrapingLanguage by viewModel.scrapingLanguage.collectAsStateWithLifecycle()
@@ -311,6 +312,27 @@ fun SettingsScreen(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        Spacer(Modifier.height(8.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { viewModel.setVideoBackgroundPlayback(!videoBackgroundPlayback) }
+                .padding(vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("视频后台续播", style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    "关屏或切后台时视频继续播放（仅解码音频以省电，回到前台恢复画面）；关闭则后台自动暂停",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(
+                checked = videoBackgroundPlayback,
+                onCheckedChange = { viewModel.setVideoBackgroundPlayback(it) },
+            )
+        }
         Spacer(Modifier.height(16.dp))
         HorizontalDivider()
         Spacer(Modifier.height(24.dp))
@@ -529,6 +551,8 @@ class SettingsViewModel @Inject constructor(
         .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, ThemeMode.SYSTEM)
     val dynamicColor: StateFlow<Boolean> = settingsStore.dynamicColor
         .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, true)
+    val videoBackgroundPlayback: StateFlow<Boolean> = settingsStore.videoBackgroundPlayback
+        .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, true)
     val rootEntries: StateFlow<List<ScanRootEntry>> = scanRootRepository.entries
     val resumeMode: StateFlow<ResumeMode> = settingsStore.resumeMode
         .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, ResumeMode.AUTO)
@@ -583,6 +607,10 @@ class SettingsViewModel @Inject constructor(
 
     fun setDynamicColor(enabled: Boolean) {
         viewModelScope.launch { settingsStore.setDynamicColor(enabled) }
+    }
+
+    fun setVideoBackgroundPlayback(enabled: Boolean) {
+        viewModelScope.launch { settingsStore.setVideoBackgroundPlayback(enabled) }
     }
 
     fun setResumeMode(mode: ResumeMode) {

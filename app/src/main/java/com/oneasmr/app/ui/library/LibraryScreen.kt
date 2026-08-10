@@ -336,8 +336,16 @@ fun LibraryScreen(
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                     )
                 }
+                val pagingItems = viewModel.pagingDataFlow.collectAsLazyPagingItems()
+                // 返回本页时强制刷新一代:详情页刮削的写库发生在本页无
+                // 收集器期间,cachedIn 只会向重挂载的差分器重放旧一代 ——
+                // 刮削结果(标题/封面/评分)回来后不显示。下拉刷新走的是
+                // 重扫(位置未变 = UNCHANGED,不写库),救不回,故在组合
+                // 重建(含导航返回)时无条件 refresh;数据在本地 DB,代价
+                // 只是一次分页查询。
+                LaunchedEffect(Unit) { pagingItems.refresh() }
                 LibraryContent(
-                    items = viewModel.pagingDataFlow.collectAsLazyPagingItems(),
+                    items = pagingItems,
                     coverStore = coverStore,
                     viewMode = viewMode,
                     isRefreshing = state.progress.phase == ScanPhase.SCANNING,
@@ -514,7 +522,14 @@ private fun ScanProgressBanner(progress: ScanProgress, onCancel: () -> Unit) {
 
 @Composable
 private fun EmptyLibrary(onOpenRootFolders: () -> Unit) {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+    // 底部悬浮簇是覆盖层不占布局:居中前按实测簇高留白,否则视觉中心
+    // 被压向下(空态"偏下"的根因)。
+    Box(
+        Modifier
+            .fillMaxSize()
+            .padding(bottom = LocalBottomClusterHeight.current),
+        contentAlignment = Alignment.Center,
+    ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
             Text("作品库是空的", style = MaterialTheme.typography.headlineMedium)
             Spacer(Modifier.height(8.dp))
@@ -535,7 +550,13 @@ private fun EmptyLibrary(onOpenRootFolders: () -> Unit) {
 
 @Composable
 private fun ScanPrompt(onScan: () -> Unit) {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+    // 同 EmptyLibrary:先避让底部悬浮簇再居中。
+    Box(
+        Modifier
+            .fillMaxSize()
+            .padding(bottom = LocalBottomClusterHeight.current),
+        contentAlignment = Alignment.Center,
+    ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
             Text("尚未扫描作品", style = MaterialTheme.typography.headlineMedium)
             Spacer(Modifier.height(8.dp))
