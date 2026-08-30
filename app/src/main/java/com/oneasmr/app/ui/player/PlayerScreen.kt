@@ -37,6 +37,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -73,6 +74,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -86,6 +88,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.painter.ColorPainter
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
@@ -111,8 +114,9 @@ import com.oneasmr.app.data.local.KeySpec
 import com.oneasmr.app.data.local.Work
 import com.oneasmr.app.data.local.WorkDao
 import com.oneasmr.app.data.local.settings.QueueStore
-import com.oneasmr.app.data.lyrics.LrcLoader
-import com.oneasmr.app.data.lyrics.LrcMatcher
+import com.oneasmr.app.data.local.settings.SettingsStore
+import com.oneasmr.app.data.lyrics.LyricsLoader
+import com.oneasmr.app.data.lyrics.LyricsMatcher
 import com.oneasmr.app.data.repository.CoverStore
 import com.oneasmr.app.data.repository.CoverType
 import com.oneasmr.app.data.scanner.TrackNode
@@ -121,15 +125,21 @@ import com.oneasmr.app.data.scanner.TrackTreeBuilder
 import com.oneasmr.app.data.scanner.WorkPathResolver
 import com.oneasmr.app.domain.lyrics.LrcLyrics
 import com.oneasmr.app.domain.player.PlayQueue
+import com.oneasmr.app.domain.player.RepeatMode
 import com.oneasmr.app.domain.player.PlaybackSpeed
+import com.oneasmr.app.domain.player.harmonizedTitles
+import com.oneasmr.app.domain.player.safeModeTitle
 import com.oneasmr.app.navigation.Routes
 import com.oneasmr.app.player.PlayQueueBuilder
+import com.oneasmr.app.ui.player.SpeedPickerSheet
 import com.oneasmr.app.player.PlaybackService
 import com.oneasmr.app.player.ResumePositionResolver
 import com.oneasmr.app.player.SessionConnection
 import com.oneasmr.app.player.toMedia3
 import com.oneasmr.app.player.toMediaItem
 import com.oneasmr.app.player.toRepeatMode
+import com.oneasmr.app.ui.common.CensoredCoverPlaceholder
+import com.oneasmr.app.ui.common.isCensored
 import com.oneasmr.app.ui.common.rememberPressScale
 import com.oneasmr.app.ui.work.DocumentFsFactory
 import dagger.hilt.EntryPoint
@@ -175,6 +185,8 @@ data class PlayerUiState(
     val playbackState: Int = Player.STATE_IDLE,
     val currentIndex: Int = 0,
     val currentRjCode: String? = null,
+    /** 安全模式:当前作品封面应和谐(评级未知时按敏感处理)。 */
+    val censored: Boolean = false,
     val playbackFailed: String? = null,
 ) {
     val ready: Boolean get() = !loading && error == null
@@ -214,9 +226,10 @@ class PlayerViewModel @Inject constructor(
     private val workDao: WorkDao,
     private val fsFactory: DocumentFsFactory,
     private val resumePositionResolver: ResumePositionResolver,
-    private val lrcLoader: LrcLoader,
+    private val lyricsLoader: LyricsLoader,
     private val queueStore: QueueStore,
     sessionConnection: SessionConnection,
+    private val settingsStore: SettingsStore,
 ) : ViewModel() {
 
     private val workId: String = checkNotNull(savedStateHandle[Routes.WORK_DETAIL_ARG])
@@ -245,9 +258,14 @@ class PlayerViewModel @Inject constructor(
     private var controller: MediaController? = null
     private var controllerFuture: ListenableFuture<MediaController>? = null
 
+    /** NSFW 开关当前值缓存(init 里随 DataStore 流刷新;默认开 = 现状行为)。 */
+    private val nsfwEnabledState = MutableStateFlow(true)
+
     /** Live track tree of the playing work (lyrics matching needs it). */
     private var treeRoot: TrackNode? = null
     private var audioByIndex: Map<Int, TrackNode> = emptyMap()
+    /** 真实曲名缓存(trackIndex → 文件名):和谐后还原用,来自启动队列或音轨树。 */
+    private var realTitlesByIndex: Map<Int, String> = emptyMap()
     private var workRow: Work? = null
     private var lyricsJob: Job? = null
     private var loadedForTrackIndex: Int? = null
@@ -268,6 +286,15 @@ class PlayerViewModel @Inject constructor(
             IntentFilter(PlaybackService.ACTION_SLEEP_TIMER_STATE),
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
+        // 安全模式开关变化 → 重算封面和谐状态,并把会话队列曲名同步为
+        // 「音频 N」或还原真实曲名(见 syncQueueTitlesToSafeMode)。
+        viewModelScope.launch {
+            settingsStore.nsfwEnabled.collect { enabled ->
+                nsfwEnabledState.value = enabled
+                refreshFromController()
+                syncQueueTitlesToSafeMode()
+            }
+        }
         // Failure channel (work folder deleted mid-play): the shared session
         // connection's error event is the reliable source — the page's own
         // controller can miss onPlayerError when the service clears+stops
@@ -358,6 +385,8 @@ class PlayerViewModel @Inject constructor(
             runCatching { loadWorkTree() }
                 .onFailure { Log.w(TAG, "attach-only: tree unavailable (${it.message}); lyrics entry hidden") }
             loadLyricsFor(parts.trackIndex)
+            // 会话队列可能来自开关开启时的旧构建:按当前开关重同步曲名。
+            syncQueueTitlesToSafeMode()
         }
         startTicker()
     }
@@ -396,14 +425,23 @@ class PlayerViewModel @Inject constructor(
                     root = tree.root,
                     startTrackIndex = trackIndex,
                 )
+                // 真实曲名先缓存,安全模式开关切回开启时靠它还原(harmonizedTitles 只改 trackTitle)。
+                realTitlesByIndex = queue.items.associate { it.trackIndex to it.trackTitle }
                 if (!queue.isPlayable) {
                     throw IllegalStateException("该作品没有可播放的音频")
                 }
-                val startItem = queue.items[queue.startIndex]
+                // 安全模式(NSFW 关 + 敏感评级):队列交给会话前把曲名
+                // 和谐为「音频 N」,通知栏/播放页展示的即和谐后曲名。
+                val finalQueue = if (!settingsStore.nsfwEnabled.first() && work.ageRating.isCensored()) {
+                    queue.harmonizedTitles()
+                } else {
+                    queue
+                }
+                val startItem = finalQueue.items[finalQueue.startIndex]
                 val startPositionMs = resumePositionResolver.resolve(
                     KeySpec.trackKey(startItem.sourceScope, startItem.rjCode, startItem.trackIndex),
                 )
-                PlaybackLaunch(queue, startPositionMs, work)
+                PlaybackLaunch(finalQueue, startPositionMs, work)
             }
         }
     }
@@ -430,19 +468,91 @@ class PlayerViewModel @Inject constructor(
 
     private data class PlaybackLaunch(val queue: PlayQueue, val startPositionMs: Long, val work: Work)
 
+    /**
+     * 重算当前封面和谐状态:NSFW 关 且 评级敏感(未分级/R15/R18;评级
+     * 未知按敏感处理) → 封面换占位。评级写入后(详情页设置年龄分级)
+     * 刷新即生效。
+     */
+    private fun updateCensored() {
+        val censored = !nsfwEnabledState.value && workRow?.ageRating.isCensored()
+        _uiState.update { it.copy(censored = censored) }
+    }
+
+    /**
+     * 安全模式开关变化后同步会话队列曲名:NSFW 关 且 评级敏感 → 全部替换
+     * 为「音频 N」;重新打开 → 还原真实曲名(依赖 [realTitlesByIndex],缺失时
+     * 先补加载音轨树)。只换 title,mediaId/uri 不变;保留当前曲目、进度与
+     * 播放状态。标题无变化时直接返回,不触碰会话。
+     */
+    private suspend fun syncQueueTitlesToSafeMode() {
+        val c = controller ?: return
+        if (c.mediaItemCount == 0) return
+        var harmonize = !nsfwEnabledState.value && workRow?.ageRating.isCensored()
+        if (!harmonize && realTitlesByIndex.isEmpty()) {
+            loadWorkTree()
+            if (realTitlesByIndex.isEmpty()) return
+            // 补加载后 workRow 已从库刷新(评级可能已变),重新决策,避免用旧评级。
+            harmonize = !nsfwEnabledState.value && workRow?.ageRating.isCensored()
+        }
+        val timeline = c.currentTimeline
+        val replacement = mutableListOf<androidx.media3.common.MediaItem>()
+        var changed = false
+        var currentItemTitle: String? = null
+        for (i in 0 until timeline.windowCount) {
+            val window = androidx.media3.common.Timeline.Window()
+            timeline.getWindow(i, window)
+            val item = window.mediaItem ?: continue
+            val currentTitle = item.mediaMetadata.title?.toString()
+            val trackIndex = item.mediaId?.let(KeySpec::parseTrackKey)?.trackIndex
+            val desired = safeModeTitle(
+                trackIndex = trackIndex,
+                realTitle = trackIndex?.let(realTitlesByIndex::get),
+                currentTitle = currentTitle,
+                harmonize = harmonize,
+            )
+            if (i == c.currentMediaItemIndex) currentItemTitle = desired ?: currentTitle
+            if (desired == null || desired == currentTitle) {
+                replacement += item
+                continue
+            }
+            changed = true
+            replacement += item.buildUpon()
+                .setMediaMetadata(item.mediaMetadata.buildUpon().setTitle(desired).build())
+                .build()
+        }
+        if (!changed) return
+        val index = c.currentMediaItemIndex
+        val positionMs = c.currentPosition
+        val playWhenReady = c.playWhenReady
+        c.setMediaItems(replacement, index, positionMs)
+        c.playWhenReady = playWhenReady
+        // setMediaItems 异步落地,此刻 refreshFromController 读到的还是旧标题;
+        // 曲名按预期值乐观更新,队列面板由 onTimelineChanged 落地后自动刷新。
+        _uiState.update { it.copy(trackTitle = currentItemTitle ?: it.trackTitle) }
+    }
+
     /** Loads the work row + live track tree (shared by launch + attach paths). */
     private suspend fun loadWorkTree() {
-        val work = workRow ?: workDao.getById(workId) ?: return
+        // 每次从库读:年龄评级等元数据可被详情页修改,VM 存活期间也要拿到新值。
+        val work = workDao.getById(workId) ?: return
         workRow = work
-        val fs = fsFactory.create(work.rootFolderUri)
-        val resolved = WorkPathResolver(fs).resolve(work.relativeDir)
-        if (resolved is WorkPathResolver.Result.Found) {
-            val tree = TrackTreeBuilder(fs).build(
-                resolved.path, resolved.displayName, resolved.documentUri,
-            )
-            treeRoot = tree.root
-            audioByIndex = collectAudioNodes(tree.root)
+        updateCensored()
+        // SAF 全树走 IO:attach 进入/NSFW 切换路径都不再冻结主线程。
+        val (root, byIndex) = withContext(Dispatchers.IO) {
+            val fs = fsFactory.create(work.rootFolderUri)
+            val resolved = WorkPathResolver(fs).resolve(work.relativeDir)
+            if (resolved is WorkPathResolver.Result.Found) {
+                val tree = TrackTreeBuilder(fs).build(
+                    resolved.path, resolved.displayName, resolved.documentUri,
+                )
+                tree.root to collectAudioNodes(tree.root)
+            } else {
+                null to emptyMap()
+            }
         }
+        treeRoot = root
+        audioByIndex = byIndex
+        realTitlesByIndex = audioByIndex.mapValues { (_, node) -> node.name }
     }
 
     private fun registerSessionListener(controller: MediaController) {
@@ -515,6 +625,7 @@ class PlayerViewModel @Inject constructor(
                 currentRjCode = parts?.rjCode,
             )
         }
+        updateCensored()
     }
 
     /** 500ms position/buffer ticker — the media-session getters are
@@ -572,17 +683,19 @@ class PlayerViewModel @Inject constructor(
             _lyricsUi.value = LyricsUiState()
             return
         }
-        val lrcNode = LrcMatcher.findLrc(root, audio.relativePath)
-        if (lrcNode == null) {
-            Log.i(TAG, "lyrics: no matching .lrc for track $trackIndex (${audio.relativePath})")
+        val lyricsNode = LyricsMatcher.findLyrics(root, audio.relativePath)
+        if (lyricsNode == null) {
+            Log.i(TAG, "lyrics: no matching lyrics/subtitle for track $trackIndex (${audio.relativePath})")
             _lyricsUi.value = LyricsUiState()
             return
         }
         _lyricsUi.value = LyricsUiState(loading = true)
         lyricsJob = viewModelScope.launch {
-            val lyrics = withContext(Dispatchers.IO) { lrcLoader.load(lrcNode.documentUri) }
+            val lyrics = withContext(Dispatchers.IO) {
+                lyricsLoader.load(lyricsNode.documentUri, lyricsNode.name)
+            }
             if (lyrics == null) {
-                Log.w(TAG, "lyrics: unavailable for track $trackIndex (${lrcNode.name})")
+                Log.w(TAG, "lyrics: unavailable for track $trackIndex (${lyricsNode.name})")
                 _lyricsUi.value = LyricsUiState()
                 return@launch
             }
@@ -605,14 +718,25 @@ class PlayerViewModel @Inject constructor(
     // Transport + modes (session commands; Task 18 semantics)
     // ------------------------------------------------------------------
 
-    fun cycleRepeat() {
-        val c = controller ?: return
-        c.repeatMode = c.repeatMode.toRepeatMode().next().toMedia3()
+    /**
+     * 循环模式 OFF→ALL→ONE→OFF。从控制器(会话权威源)读出当前值、
+     * 算出并应用下一档,同时**返回实际应用的档位**——UI 用返回值弹提示,
+     * 快速连点时提示永远与真实状态一致(乐观推算会读滞后于会话的 UI 状态)。
+     * 控制器不可用时返回 null(未应用任何变化,调用方应跳过提示)。
+     */
+    fun cycleRepeat(): RepeatMode? {
+        val c = controller ?: return null
+        val next = c.repeatMode.toRepeatMode().next()
+        c.repeatMode = next.toMedia3()
+        return next
     }
 
-    fun toggleShuffle() {
-        val c = controller ?: return
-        c.shuffleModeEnabled = !c.shuffleModeEnabled
+    /** 随机开关:同 [cycleRepeat],返回实际应用的开关状态,不可用时返回 null。 */
+    fun toggleShuffle(): Boolean? {
+        val c = controller ?: return null
+        val next = !c.shuffleModeEnabled
+        c.shuffleModeEnabled = next
+        return next
     }
 
     fun setSpeed(speed: Float) {
@@ -860,24 +984,28 @@ fun PlayerScreen(
         failureDismissed = state.playbackFailed == null
     }
 
-    // Wave D: ONE cover model shared by the full-bleed backdrop and the hero
-    // cover (the same local-first CoverStore.coverModelFor resolution
-    // CoverImage runs internally — Coil caches the second decode). Hoisted
-    // here because CoverImage does not expose its model (Wave C pattern).
+    // Wave D: the hero cover decodes the full-size MAIN cover; the full-bleed
+    // backdrop resolves the THUMB_360 file separately — it is blurred at 32dp,
+    // so a full-size decode there only wastes memory and frame time (the same
+    // local-first CoverStore.coverModelFor resolution CoverImage runs
+    // internally; the fallback chain guarantees a model either way).
     val currentRjCode = state.currentRjCode
     var coverModel by remember(currentRjCode) { mutableStateOf<Any?>(null) }
+    var backdropModel by remember(currentRjCode) { mutableStateOf<Any?>(null) }
     LaunchedEffect(currentRjCode) {
-        coverModel = if (currentRjCode.isNullOrBlank()) {
-            null
+        if (currentRjCode.isNullOrBlank()) {
+            coverModel = null
+            backdropModel = null
         } else {
-            coverStore.coverModelFor(currentRjCode, CoverType.MAIN, null, null)
+            coverModel = coverStore.coverModelFor(currentRjCode, CoverType.MAIN, null, null)
+            backdropModel = coverStore.coverModelFor(currentRjCode, CoverType.THUMB_360, null, null)
         }
     }
     val overBackdrop = !currentRjCode.isNullOrBlank()
 
     Box(Modifier.fillMaxSize()) {
         if (overBackdrop) {
-            PlayerBackdrop(coverModel)
+            PlayerBackdrop(backdropModel, censored = state.censored)
         }
         Column(
             Modifier
@@ -977,6 +1105,7 @@ fun PlayerScreen(
                     rotateCover = rotateCover,
                     onToggleRotate = { rotateCover = !rotateCover },
                     coverModel = coverModel,
+                    censored = state.censored,
                     positionMs = viewModel.positionMs,
                     bufferedPositionMs = viewModel.bufferedPositionMs,
                     durationMs = viewModel.durationMs,
@@ -997,9 +1126,9 @@ fun PlayerScreen(
     }
 
     if (showSpeedDialog) {
-        SpeedDialog(
+        SpeedPickerSheet(
             current = state.speed,
-            onSelect = { viewModel.setSpeed(it); showSpeedDialog = false },
+            onSelect = { viewModel.setSpeed(it) },
             onDismiss = { showSpeedDialog = false },
         )
     }
@@ -1035,20 +1164,24 @@ fun PlayerScreen(
  * need guaranteed contrast over any cover art.
  */
 @Composable
-private fun PlayerBackdrop(coverModel: Any?) {
+private fun PlayerBackdrop(coverModel: Any?, censored: Boolean) {
     val backdropModifier = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
         Modifier.fillMaxSize().blur(32.dp)
     } else {
         Modifier.fillMaxSize()
     }
-    AsyncImage(
-        model = coverModel,
-        contentDescription = null,
-        modifier = backdropModifier,
-        contentScale = ContentScale.Crop,
-        placeholder = ColorPainter(MaterialTheme.colorScheme.surfaceVariant),
-        error = ColorPainter(MaterialTheme.colorScheme.surfaceVariant),
-    )
+    if (censored) {
+        CensoredCoverPlaceholder(backdropModifier)
+    } else {
+        AsyncImage(
+            model = coverModel,
+            contentDescription = null,
+            modifier = backdropModifier,
+            contentScale = ContentScale.Crop,
+            placeholder = ColorPainter(MaterialTheme.colorScheme.surfaceVariant),
+            error = ColorPainter(MaterialTheme.colorScheme.surfaceVariant),
+        )
+    }
     Box(
         Modifier
             .fillMaxSize()
@@ -1063,6 +1196,16 @@ private fun PlayerBackdrop(coverModel: Any?) {
     )
 }
 
+/** 切换后的循环模式文案（与 cycleRepeat 的 OFF→ALL→ONE→OFF 循环一致）。 */
+private fun repeatModeLabel(mode: RepeatMode): String = when (mode) {
+    RepeatMode.OFF -> "顺序播放"
+    RepeatMode.ALL -> "列表循环"
+    RepeatMode.ONE -> "单曲循环"
+}
+
+/** 模式切换提示浮层的停留时长。 */
+private const val MODE_HINT_MS = 1600L
+
 @Composable
 private fun PlayerContent(
     state: PlayerUiState,
@@ -1073,6 +1216,7 @@ private fun PlayerContent(
     rotateCover: Boolean,
     onToggleRotate: () -> Unit,
     coverModel: Any?,
+    censored: Boolean,
     positionMs: StateFlow<Long>,
     bufferedPositionMs: StateFlow<Long>,
     durationMs: StateFlow<Long>,
@@ -1080,13 +1224,25 @@ private fun PlayerContent(
     onPrev: () -> Unit,
     onTogglePlayPause: () -> Unit,
     onNext: () -> Unit,
-    onCycleRepeat: () -> Unit,
-    onToggleShuffle: () -> Unit,
+    onCycleRepeat: () -> RepeatMode?,
+    onToggleShuffle: () -> Boolean?,
     onSpeedClick: () -> Unit,
     onSleepClick: () -> Unit,
     onQueueClick: () -> Unit,
     onSeekToLyric: (Long) -> Unit,
 ) {
+    // 应用内模式提示，替代系统 Toast：Android 12+ 文本 Toast 由 SystemUI
+    // 渲染，对可见实例重复 setText/show 不刷新，cancel+新建又有移除竞态，
+    // 两者都做不到快速连点时"立即替换上一条"。状态写入即时换文案，tick
+    // 递增重启 LaunchedEffect 取消旧的消失计时。
+    var modeHint by remember { mutableStateOf<String?>(null) }
+    var modeHintTick by remember { mutableIntStateOf(0) }
+    LaunchedEffect(modeHintTick) {
+        if (modeHint != null) {
+            delay(MODE_HINT_MS)
+            modeHint = null
+        }
+    }
     // 上下两段式（原整列 verticalScroll 顶部对齐，高屏下功能丸下方留大片空白）：
     // 中区 weight(1f) 吃掉所有剩余高度，底部控制簇固定停靠屏幕底部。
     Column(
@@ -1126,6 +1282,7 @@ private fun PlayerContent(
             coverModel = coverModel,
             hasCover = !state.currentRjCode.isNullOrBlank(),
             rotate = rotateCover,
+            censored = censored,
             onToggleRotate = onToggleRotate,
         )
 
@@ -1184,6 +1341,24 @@ private fun PlayerContent(
                     }
                 }
             }
+
+            // 模式切换提示浮层，悬于中区底缘、紧邻下方控制簇。
+            modeHint?.let { hint ->
+                Surface(
+                    color = MaterialTheme.colorScheme.inverseSurface,
+                    contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 8.dp),
+                ) {
+                    Text(
+                        hint,
+                        style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    )
+                }
+            }
         }
 
         // ---- 底部控制簇（不参与中区滚动，始终钉在屏幕底部）----
@@ -1206,19 +1381,20 @@ private fun PlayerContent(
             horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             IconButton(
-                onClick = onToggleShuffle,
+                onClick = {
+                    // VM 从控制器返回实际应用的开关状态,提示与真实状态一致。
+                    onToggleShuffle()?.let { next ->
+                        modeHint = if (next) "随机播放：开" else "随机播放：关"
+                        modeHintTick++
+                    }
+                },
                 modifier = Modifier.semantics {
                     contentDescription = "shuffle=${if (state.shuffleEnabled) "on" else "off"}"
                 },
             ) {
-                Icon(
-                    Icons.Filled.Shuffle,
-                    contentDescription = null,
-                    tint = if (state.shuffleEnabled) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
+                ModeToggleIcon(
+                    icon = Icons.Filled.Shuffle,
+                    active = state.shuffleEnabled,
                 )
             }
             IconButton(
@@ -1280,7 +1456,13 @@ private fun PlayerContent(
                 )
             }
             IconButton(
-                onClick = onCycleRepeat,
+                onClick = {
+                    // VM 从控制器返回实际应用的档位,快速连点时提示不滞后于真实状态。
+                    onCycleRepeat()?.let { next ->
+                        modeHint = repeatModeLabel(next)
+                        modeHintTick++
+                    }
+                },
                 modifier = Modifier.semantics {
                     contentDescription = when (state.repeatMode) {
                         Player.REPEAT_MODE_ALL -> "repeat=ALL"
@@ -1289,15 +1471,13 @@ private fun PlayerContent(
                     }
                 },
             ) {
-                Icon(
-                    if (state.repeatMode == Player.REPEAT_MODE_ONE) Icons.Filled.RepeatOne
-                    else Icons.Filled.Repeat,
-                    contentDescription = null,
-                    tint = if (state.repeatMode != Player.REPEAT_MODE_OFF) {
-                        MaterialTheme.colorScheme.primary
+                ModeToggleIcon(
+                    icon = if (state.repeatMode == Player.REPEAT_MODE_ONE) {
+                        Icons.Filled.RepeatOne
                     } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
+                        Icons.Filled.Repeat
                     },
+                    active = state.repeatMode != Player.REPEAT_MODE_OFF,
                 )
             }
         }
@@ -1358,6 +1538,37 @@ private fun PlayerContent(
  * 进度区（缓冲条 + 拖动条 + 时间）：三个进度流在内部订阅，
  * 500ms 节拍只重组这一小块，不波及整页。
  */
+/**
+ * 随机/循环开关的图标：图形族全程无框，开启态以主题色着色 + 图标下方圆点标记。
+ * 不用 *On 带框变体——循环三档里总有一档（顺序播放）无框，会成为样式例外；
+ * 圆点是附加指示灯，亮/灭不改变图形结构，任意档位组合下两键风格一致。
+ */
+@Composable
+private fun ModeToggleIcon(icon: ImageVector, active: Boolean) {
+    Box(Modifier.fillMaxSize()) {
+        Icon(
+            icon,
+            contentDescription = null,
+            tint = if (active) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            modifier = Modifier.align(Alignment.Center),
+        )
+        if (active) {
+            Box(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 4.dp)
+                    .size(4.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary),
+            )
+        }
+    }
+}
+
 @Composable
 private fun SeekRow(
     positionMs: StateFlow<Long>,
@@ -1469,6 +1680,7 @@ private fun PlayerCover(
     coverModel: Any?,
     hasCover: Boolean,
     rotate: Boolean,
+    censored: Boolean,
     onToggleRotate: () -> Unit,
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "coverSpin")
@@ -1490,6 +1702,16 @@ private fun PlayerCover(
                     .aspectRatio(1f)
                     .clip(MaterialTheme.shapes.large)
                     .background(MaterialTheme.colorScheme.surfaceVariant),
+            )
+        } else if (censored) {
+            // 安全模式:敏感作品的 hero 封面换占位(布局/尺寸与真封面一致)。
+            CensoredCoverPlaceholder(
+                modifier = Modifier
+                    .padding(top = 16.dp)
+                    .fillMaxWidth(0.78f)
+                    .aspectRatio(1f)
+                    .shadow(32.dp, MaterialTheme.shapes.large)
+                    .clip(MaterialTheme.shapes.large),
             )
         } else {
             AsyncImage(
@@ -1558,35 +1780,6 @@ private fun TonalPill(
             content = content,
         )
     }
-}
-
-@Composable
-private fun SpeedDialog(
-    current: Float,
-    onSelect: (Float) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("倍速") },
-        text = {
-            Column {
-                PlaybackSpeed.SUPPORTED.forEach { speed ->
-                    TextButton(
-                        onClick = { onSelect(speed) },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(
-                            if (speed == current) "●  ${speed}x（当前）" else "${speed}x",
-                            modifier = Modifier.fillMaxWidth(),
-                            textAlign = TextAlign.Start,
-                        )
-                    }
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
-    )
 }
 
 @Composable

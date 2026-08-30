@@ -35,7 +35,6 @@ import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -102,6 +101,7 @@ import com.oneasmr.app.player.SessionConnection
 import com.oneasmr.app.player.VideoEntryDecision
 import com.oneasmr.app.player.VideoTrackFinder
 import com.oneasmr.app.ui.work.DocumentFsFactory
+import com.oneasmr.app.ui.player.SpeedPickerSheet
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -288,6 +288,8 @@ fun VideoPlayerScreen(
         if (!locked && controlsVisible && uiState.error == null && !uiState.playbackFailed) {
             VideoControls(
                 state = uiState,
+                positionMs = viewModel.positionMs,
+                durationMs = viewModel.durationMs,
                 fullscreen = fullscreen,
                 dragPosition = dragPosition,
                 onDragPositionChange = { dragPosition = it },
@@ -343,11 +345,10 @@ fun VideoPlayerScreen(
     }
 
     if (showSpeedDialog) {
-        SpeedDialog(
+        SpeedPickerSheet(
             current = uiState.speed,
             onSelect = {
                 viewModel.setSpeed(it)
-                showSpeedDialog = false
             },
             onDismiss = { showSpeedDialog = false },
         )
@@ -396,6 +397,8 @@ private fun BoxScope.FailureCard(message: String, onBack: () -> Unit) {
 @Composable
 private fun VideoControls(
     state: VideoUiState,
+    positionMs: StateFlow<Long>,
+    durationMs: StateFlow<Long>,
     fullscreen: Boolean,
     dragPosition: Float,
     onDragPositionChange: (Float) -> Unit,
@@ -406,7 +409,6 @@ private fun VideoControls(
     onLock: () -> Unit,
     onBack: () -> Unit,
 ) {
-    val shownPosition = if (dragPosition >= 0f) dragPosition else state.positionMs.toFloat()
     Box(Modifier.fillMaxSize()) {
         Row(
             Modifier
@@ -474,31 +476,13 @@ private fun VideoControls(
                 .navigationBarsPadding()
                 .padding(horizontal = 8.dp, vertical = 4.dp),
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    formatTime(shownPosition.toLong()),
-                    color = Color.White,
-                    style = MaterialTheme.typography.labelSmall,
-                )
-                Slider(
-                    value = shownPosition.coerceIn(0f, maxOf(state.durationMs, 1L).toFloat()),
-                    onValueChange = onDragPositionChange,
-                    onValueChangeFinished = onSeek,
-                    valueRange = 0f..maxOf(state.durationMs, 1L).toFloat(),
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(horizontal = 8.dp)
-                        .semantics {
-                            contentDescription =
-                                "video seekbar position=${shownPosition.toLong()} duration=${state.durationMs}"
-                        },
-                )
-                Text(
-                    formatTime(state.durationMs),
-                    color = Color.White,
-                    style = MaterialTheme.typography.labelSmall,
-                )
-            }
+            VideoSeekRow(
+                positionMs = positionMs,
+                durationMs = durationMs,
+                dragPosition = dragPosition,
+                onDragPositionChange = onDragPositionChange,
+                onSeek = onSeek,
+            )
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                 IconButton(
                     onClick = onSpeedClick,
@@ -527,28 +511,46 @@ private fun VideoControls(
     }
 }
 
+/**
+ * 进度条子树:独立收集 500ms 的位置/时长流,滑块与时间标签的刷新
+ * 不重组整页控制条(与 PlayerScreen 的 SeekRow 同一模式)。
+ */
 @Composable
-private fun SpeedDialog(current: Float, onSelect: (Float) -> Unit, onDismiss: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("倍速") },
-        text = {
-            Column {
-                PlaybackSpeed.SUPPORTED.forEach { speed ->
-                    TextButton(
-                        onClick = { onSelect(speed) },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(if (speed == current) "●  ${speed}x（当前）" else "${speed}x")
-                    }
-                }
-            }
-        },
-        confirmButton = {},
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
-        },
-    )
+private fun VideoSeekRow(
+    positionMs: StateFlow<Long>,
+    durationMs: StateFlow<Long>,
+    dragPosition: Float,
+    onDragPositionChange: (Float) -> Unit,
+    onSeek: () -> Unit,
+) {
+    val position by positionMs.collectAsStateWithLifecycle()
+    val duration by durationMs.collectAsStateWithLifecycle()
+    val shownPosition = if (dragPosition >= 0f) dragPosition else position.toFloat()
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            formatTime(shownPosition.toLong()),
+            color = Color.White,
+            style = MaterialTheme.typography.labelSmall,
+        )
+        Slider(
+            value = shownPosition.coerceIn(0f, maxOf(duration, 1L).toFloat()),
+            onValueChange = onDragPositionChange,
+            onValueChangeFinished = onSeek,
+            valueRange = 0f..maxOf(duration, 1L).toFloat(),
+            modifier = Modifier
+                .weight(1f)
+                .padding(horizontal = 8.dp)
+                .semantics {
+                    contentDescription =
+                        "video seekbar position=${shownPosition.toLong()} duration=$duration"
+                },
+        )
+        Text(
+            formatTime(duration),
+            color = Color.White,
+            style = MaterialTheme.typography.labelSmall,
+        )
+    }
 }
 
 private fun formatTime(ms: Long): String {
@@ -571,9 +573,6 @@ data class VideoUiState(
     val workTitle: String = "",
     val isPlaying: Boolean = false,
     val playbackState: Int = Player.STATE_IDLE,
-    val positionMs: Long = 0L,
-    val bufferedPositionMs: Long = 0L,
-    val durationMs: Long = 0L,
     val speed: Float = 1f,
 )
 
@@ -615,6 +614,15 @@ class VideoPlayerViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow(VideoUiState())
     val uiState: StateFlow<VideoUiState> = _uiState.asStateFlow()
+
+    // 500ms ticker 的专用进度流:与 VideoUiState 解耦,只让进度条子树订阅,
+    // 避免整页每 500ms 重组(PlayerScreen 同款模式)。
+    private val _positionMs = MutableStateFlow(0L)
+    val positionMs: StateFlow<Long> = _positionMs.asStateFlow()
+    private val _bufferedPositionMs = MutableStateFlow(0L)
+    val bufferedPositionMs: StateFlow<Long> = _bufferedPositionMs.asStateFlow()
+    private val _durationMs = MutableStateFlow(0L)
+    val durationMs: StateFlow<Long> = _durationMs.asStateFlow()
 
     private var controller: MediaController? = null
     private var controllerFuture: ListenableFuture<MediaController>? = null
@@ -719,8 +727,6 @@ class VideoPlayerViewModel @Inject constructor(
                 workTitle = item?.mediaMetadata?.artist?.toString().orEmpty(),
                 isPlaying = controller.isPlaying,
                 playbackState = controller.playbackState,
-                positionMs = controller.currentPosition,
-                durationMs = controller.duration,
                 speed = controller.playbackParameters.speed,
             )
         }
@@ -876,13 +882,9 @@ class VideoPlayerViewModel @Inject constructor(
         tickerJob = viewModelScope.launch {
             while (isActive) {
                 val c = controller ?: break
-                _uiState.update {
-                    it.copy(
-                        positionMs = c.currentPosition.coerceAtLeast(0L),
-                        bufferedPositionMs = c.bufferedPosition.coerceAtLeast(0L),
-                        durationMs = c.duration.coerceAtLeast(0L),
-                    )
-                }
+                _positionMs.value = c.currentPosition.coerceAtLeast(0L)
+                _bufferedPositionMs.value = c.bufferedPosition.coerceAtLeast(0L)
+                _durationMs.value = c.duration.coerceAtLeast(0L)
                 delay(POSITION_TICK_MS)
             }
         }
