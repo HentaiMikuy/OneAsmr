@@ -210,4 +210,24 @@ class SettingsStoreTest {
         assertFalse(restarted.asmrOneFallbackEnabled.first())
         assertEquals("https://api.asmr-100.com", restarted.asmrOneBaseUrl.first())
     }
+
+    // ---------- NSFW safe mode ----------
+
+    @Test
+    fun `nsfw enabled defaults to true and choice not asked`() = runTest {
+        val store = storeIn(file("nsfw-default").open())
+        assertEquals(true, store.nsfwEnabled.first())
+        assertEquals(false, store.nsfwChoiceAsked.first())
+    }
+
+    @Test
+    fun `nsfw toggle and choice round trip across store instances`() = runTest {
+        val tf = file("nsfw")
+        val store = storeIn(tf.open())
+        store.setNsfwEnabled(false)
+        store.setNsfwChoiceAsked()
+        val restarted = storeIn(tf.restart())
+        assertEquals(false, restarted.nsfwEnabled.first())
+        assertEquals(true, restarted.nsfwChoiceAsked.first())
+    }
 }

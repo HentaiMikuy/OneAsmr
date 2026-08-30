@@ -184,6 +184,18 @@ class SettingsStore @Inject constructor(
     val videoBackgroundPlayback: Flow<Boolean> =
         dataStore.data.map { it[KEY_VIDEO_BACKGROUND_PLAYBACK] ?: true }
 
+    /**
+     * NSFW 模式开关(安全模式)。默认开 = 完整显示所有封面与曲名;关 =
+     * 安全模式,未分级(null)/R15/R18 作品的封面与曲名被隐藏,适合公共场合。
+     * 首次启动的对话框选定一次,之后由设置页开关随时修改。
+     */
+    val nsfwEnabled: Flow<Boolean> =
+        dataStore.data.map { it[KEY_NSFW_ENABLED] ?: true }
+
+    /** 首次启动 NSFW 对话框是否已应答(应答一次后永不再问)。 */
+    val nsfwChoiceAsked: Flow<Boolean> =
+        dataStore.data.map { it[KEY_NSFW_CHOICE_ASKED] ?: false }
+
     suspend fun setThemeMode(mode: ThemeMode) {
         dataStore.edit { it[KEY_THEME_MODE] = mode.name }
     }
@@ -207,6 +219,15 @@ class SettingsStore @Inject constructor(
 
     suspend fun setVideoBackgroundPlayback(enabled: Boolean) {
         dataStore.edit { it[KEY_VIDEO_BACKGROUND_PLAYBACK] = enabled }
+    }
+
+    suspend fun setNsfwEnabled(enabled: Boolean) {
+        dataStore.edit { it[KEY_NSFW_ENABLED] = enabled }
+    }
+
+    /** Records that the first-launch NSFW dialog was answered (idempotent). */
+    suspend fun setNsfwChoiceAsked() {
+        dataStore.edit { it[KEY_NSFW_CHOICE_ASKED] = true }
     }
 
     /** Sets the asmr.one mirror base-url; blank restores [DEFAULT_ASMR_ONE_BASE_URL]. */
@@ -274,6 +295,8 @@ class SettingsStore @Inject constructor(
         private val KEY_ASMR_ONE_FALLBACK_ENABLED = booleanPreferencesKey("asmr_one_fallback_enabled")
         private val KEY_VIDEO_BACKGROUND_PLAYBACK = booleanPreferencesKey("video_background_playback")
         private val KEY_ASMR_ONE_BASE_URL = stringPreferencesKey("asmr_one_base_url")
+        private val KEY_NSFW_ENABLED = booleanPreferencesKey("nsfw_enabled")
+        private val KEY_NSFW_CHOICE_ASKED = booleanPreferencesKey("nsfw_choice_asked")
 
         /** Unit separator: the only forbidden character in a search term. */
         private const val SEPARATOR = "\u001F"

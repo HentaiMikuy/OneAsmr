@@ -197,6 +197,8 @@ class SettingsViewModelTest {
                 override suspend fun findBundledCover(rootFolderUri: String, relativeDir: String): String? = null
             },
             cacheCapBytes = { capBytes },
+            // 磁盘枚举/删除走虚拟调度器:与 Main 共享同一 scheduler,runCurrent 可确定推进。
+            ioDispatcher = StandardTestDispatcher(scheduler),
         )
         workDao = FakeWorkDao()
         playbackDao = FakePlaybackStateDao()
@@ -448,5 +450,19 @@ class SettingsViewModelTest {
             "https://api.asmr-100.com",
             harness.viewModel.asmrOneBaseUrl.first { it.isNotBlank() },
         )
+    }
+
+    // ---- NSFW safe mode toggle ----------------------------------------------
+
+    @Test
+    fun `nsfw toggle emits default true and persists through the store`() = runTest(scheduler) {
+        assertEquals(true, harness.viewModel.nsfwEnabled.first())
+
+        harness.viewModel.setNsfwEnabled(false)
+        assertEquals(false, harness.viewModel.nsfwEnabled.first { !it })
+        assertEquals(false, settings.nsfwEnabled.first())
+
+        harness.viewModel.setNsfwEnabled(true)
+        assertEquals(true, harness.viewModel.nsfwEnabled.first { it })
     }
 }

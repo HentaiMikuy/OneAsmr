@@ -118,6 +118,7 @@ private fun ReviewRow(item: ReviewListItem, onClick: () -> Unit) {
                 type = CoverType.THUMB_240,
                 rootFolderUri = root,
                 relativeDir = item.relativeDir.orEmpty(),
+                ageRating = item.ageRating,
                 modifier = Modifier
                     .size(width = 56.dp, height = 56.dp)
                     .clip(MaterialTheme.shapes.small),

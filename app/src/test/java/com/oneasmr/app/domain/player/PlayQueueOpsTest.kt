@@ -136,4 +136,80 @@ class PlayQueueOpsTest {
         assertEquals(-1, QueueOps.nextIndex(0, size = 0, RepeatMode.ALL))
         assertEquals(-1, QueueOps.nextIndex(0, size = 0, RepeatMode.ONE))
     }
+
+    // ------------------------------------------------------------------
+    // harmonizedTitles: safe-mode track-title censoring (pure, no state)
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `harmonized titles rewrite every track title to audio N`() {
+        val q = queue(3, startIndex = 1)
+        val out = q.harmonizedTitles()
+        assertEquals(listOf("音频 1", "音频 2", "音频 3"), out.items.map { it.trackTitle })
+    }
+
+    @Test
+    fun `harmonized titles leave identity uri index and work untouched`() {
+        val q = queue(3, startIndex = 2)
+        val out = q.harmonizedTitles()
+        assertEquals(2, out.startIndex)
+        assertEquals("local:RJ100200", out.workId)
+        assertEquals(listOf(1, 2, 3), out.items.map { it.trackIndex })
+        assertEquals(listOf("content://doc/1", "content://doc/2", "content://doc/3"), out.items.map { it.uri })
+        assertEquals(listOf("local", "local", "local"), out.items.map { it.sourceScope })
+        assertEquals(listOf("RJ100200", "RJ100200", "RJ100200"), out.items.map { it.rjCode })
+        assertEquals(listOf("w", "w", "w"), out.items.map { it.workTitle })
+    }
+
+    @Test
+    fun `harmonized titles on an empty queue stays empty`() {
+        val q = queue(0)
+        assertEquals(emptyList<PlayQueueItem>(), q.harmonizedTitles().items)
+        assertEquals(0, q.harmonizedTitles().startIndex)
+    }
+
+    // ------------------------------------------------------------------
+    // safeModeTitle: per-item title decision for live safe-mode toggling
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `safe mode title harmonizes to audio N when censoring`() {
+        assertEquals(
+            "音频 3",
+            safeModeTitle(trackIndex = 3, realTitle = "track3.mp3", currentTitle = "track3.mp3", harmonize = true),
+        )
+        // 和谐时不依赖真实曲名与当前标题。
+        assertEquals(
+            "音频 1",
+            safeModeTitle(trackIndex = 1, realTitle = null, currentTitle = null, harmonize = true),
+        )
+    }
+
+    @Test
+    fun `safe mode title restores the real title when not censoring`() {
+        assertEquals(
+            "track2.mp3",
+            safeModeTitle(trackIndex = 2, realTitle = "track2.mp3", currentTitle = "音频 2", harmonize = false),
+        )
+    }
+
+    @Test
+    fun `safe mode title falls back to current title when real title is unknown`() {
+        assertEquals(
+            "音频 2",
+            safeModeTitle(trackIndex = 2, realTitle = null, currentTitle = "音频 2", harmonize = false),
+        )
+        assertEquals(
+            null,
+            safeModeTitle(trackIndex = 2, realTitle = null, currentTitle = null, harmonize = false),
+        )
+    }
+
+    @Test
+    fun `safe mode title with unknown track index keeps current when harmonizing`() {
+        assertEquals(
+            null,
+            safeModeTitle(trackIndex = null, realTitle = "track1.mp3", currentTitle = "x", harmonize = true),
+        )
+    }
 }

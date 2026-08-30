@@ -11,6 +11,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.painter.ColorPainter
 import androidx.compose.ui.layout.ContentScale
 import coil3.compose.AsyncImage
+import com.oneasmr.app.data.local.AgeRating
 import com.oneasmr.app.data.repository.CoverStore
 import com.oneasmr.app.data.repository.CoverType
 
@@ -24,6 +25,12 @@ import com.oneasmr.app.data.repository.CoverType
  * Uses the default Coil singleton loader, which OneAsmrApp wires to the
  * Hilt-provided ImageLoader (CoverModule).
  *
+ * Safe-mode hook: with NSFW off (see [LocalNsfwEnabled]) and a sensitive
+ * [ageRating] (null/R15/R18) the cover renders as [CensoredCoverPlaceholder]
+ * instead — no decode, no blur. An explicit [censored] overrides the local
+ * (callers that already know the answer, e.g. the mini player) so the
+ * placeholder branch short-circuits before any model resolution.
+ *
  * @param coverStore Task 10's cover cache; pass via remember { } from the
  *   ViewModel/Hilt in the calling screen (Task 12).
  * @param rootFolderUri + relativeDir locate the work folder for the bundled
@@ -36,8 +43,15 @@ fun CoverImage(
     type: CoverType,
     rootFolderUri: String?,
     relativeDir: String?,
+    ageRating: AgeRating? = null,
+    censored: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
+    val censored = censored || (!LocalNsfwEnabled.current && ageRating.isCensored())
+    if (censored) {
+        CensoredCoverPlaceholder(modifier)
+        return
+    }
     var model by remember(rjCode, type, rootFolderUri, relativeDir) { mutableStateOf<Any?>(null) }
     LaunchedEffect(rjCode, type, rootFolderUri, relativeDir) {
         model = coverStore.coverModelFor(rjCode, type, rootFolderUri, relativeDir)

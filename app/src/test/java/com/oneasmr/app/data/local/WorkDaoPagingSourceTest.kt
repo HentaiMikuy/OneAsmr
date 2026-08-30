@@ -122,6 +122,23 @@ class WorkDaoPagingSourceTest {
     }
 
     @Test
+    fun `work list items carry the manual age rating for safe mode`() = runBlocking {
+        commitWork("RJ100001")
+        commitWork("RJ100002")
+        commitWork("RJ100003")
+        runBlocking {
+            db.workDao().upsert(db.workDao().getById("local:RJ100001")!!.copy(ageRating = AgeRating.ALL_AGES))
+            db.workDao().upsert(db.workDao().getById("local:RJ100002")!!.copy(ageRating = AgeRating.R18))
+            // RJ100003 stays 未分级 (null).
+        }
+        val page = refreshPage(db.workDao().pagingSource(WorkOrder.ID, descending = false, keyword = null, randomSeed = 1L), loadSize = 10)
+        val byId = page.data.associateBy { it.id }
+        assertEquals(AgeRating.ALL_AGES, byId.getValue("local:RJ100001").ageRating)
+        assertEquals(AgeRating.R18, byId.getValue("local:RJ100002").ageRating)
+        assertNull(byId.getValue("local:RJ100003").ageRating)
+    }
+
+    @Test
     fun `missing works and no-review works map to their flags`() = runBlocking {
         commitWork("RJ100001")
         commitWork("RJ100002")

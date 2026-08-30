@@ -67,6 +67,7 @@ fun MiniPlayerBarHost(
     viewModel: MiniPlayerViewModel = hiltViewModel(),
 ) {
     val snapshot by viewModel.snapshot.collectAsStateWithLifecycle()
+    val censored by viewModel.censored.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val coverStore = rememberMiniCoverStore()
 
@@ -92,6 +93,7 @@ fun MiniPlayerBarHost(
     MiniPlayerBar(
         snapshot = snapshot,
         coverStore = coverStore,
+        censored = censored,
         onTap = onTap,
         onTogglePlayPause = viewModel::togglePlayPause,
         onStop = viewModel::stopPlayback,
@@ -113,6 +115,7 @@ fun MiniPlayerBarHost(
 private fun MiniPlayerBar(
     snapshot: PlayerSnapshot,
     coverStore: CoverStore,
+    censored: Boolean,
     onTap: () -> Unit,
     onTogglePlayPause: () -> Unit,
     onStop: () -> Unit,
@@ -163,6 +166,7 @@ private fun MiniPlayerBar(
                             type = CoverType.MAIN,
                             rootFolderUri = null,
                             relativeDir = null,
+                            censored = censored,
                             modifier = Modifier
                                 .padding(start = 10.dp, end = 12.dp)
                                 .size(44.dp)

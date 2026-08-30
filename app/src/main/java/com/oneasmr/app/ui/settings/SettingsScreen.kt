@@ -88,6 +88,7 @@ fun SettingsScreen(
     val asmrOneFallbackEnabled by viewModel.asmrOneFallbackEnabled.collectAsStateWithLifecycle()
     val asmrOneBaseUrl by viewModel.asmrOneBaseUrl.collectAsStateWithLifecycle()
     val asmrOneMirrorDialogVisible by viewModel.asmrOneMirrorDialogVisible.collectAsStateWithLifecycle()
+    val nsfwEnabled by viewModel.nsfwEnabled.collectAsStateWithLifecycle()
 
     var licensesVisible by remember { mutableStateOf(false) }
 
@@ -333,6 +334,26 @@ fun SettingsScreen(
                 onCheckedChange = { viewModel.setVideoBackgroundPlayback(it) },
             )
         }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { viewModel.setNsfwEnabled(!nsfwEnabled) }
+                .padding(vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("NSFW 模式", style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    "关闭后进入安全模式：未分级/R15/R18 作品的封面与曲名将被隐藏",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(
+                checked = nsfwEnabled,
+                onCheckedChange = { viewModel.setNsfwEnabled(it) },
+            )
+        }
         Spacer(Modifier.height(16.dp))
         HorizontalDivider()
         Spacer(Modifier.height(24.dp))
@@ -564,6 +585,8 @@ class SettingsViewModel @Inject constructor(
         .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, true)
     val asmrOneBaseUrl: StateFlow<String> = settingsStore.asmrOneBaseUrl
         .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, "")
+    val nsfwEnabled: StateFlow<Boolean> = settingsStore.nsfwEnabled
+        .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, true)
 
     private val _cacheUsageBytes = MutableStateFlow(0L)
     val cacheUsageBytes: StateFlow<Long> = _cacheUsageBytes.asStateFlow()
@@ -611,6 +634,10 @@ class SettingsViewModel @Inject constructor(
 
     fun setVideoBackgroundPlayback(enabled: Boolean) {
         viewModelScope.launch { settingsStore.setVideoBackgroundPlayback(enabled) }
+    }
+
+    fun setNsfwEnabled(enabled: Boolean) {
+        viewModelScope.launch { settingsStore.setNsfwEnabled(enabled) }
     }
 
     fun setResumeMode(mode: ResumeMode) {

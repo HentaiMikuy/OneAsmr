@@ -59,7 +59,8 @@ data class WorkSearchHit(val workId: String, val matchedIn: String)
 /** One library card/row (Task 12): the work joined with its circle name and
  * user progress so the grid/list renders everything from a single paged query
  * — no per-item lookups during scrolling (the "no IO in item recomposition"
- * rule).
+ * rule). The manual age rating rides along so safe-mode (NSFW off) can censor
+ * the cover in place, with no extra query.
  */
 data class WorkListItem(
     val id: String,
@@ -72,6 +73,8 @@ data class WorkListItem(
     val progress: ProgressState?,
     val rootFolderUri: String,
     val relativeDir: String,
+    /** 手动年龄分级(安全模式和谐封面用);null = 未分级,按敏感处理。 */
+    val ageRating: AgeRating? = null,
 ) {
     /** Bare RJ/BJ/VJ code (KeySpec); falls back to the raw id for safety. */
     val rjCode: String get() = KeySpec.parseWorkId(id)?.rjCode ?: id
@@ -316,7 +319,8 @@ interface WorkDao {
         "SELECT w.id AS id, w.title AS title, c.name AS circleName, " +
             "w.rateAverage2dp AS rateAverage2dp, w.missing AS missing, " +
             "w.scrapeStatus AS scrapeStatus, r.progress AS progress, " +
-            "w.rootFolderUri AS rootFolderUri, w.relativeDir AS relativeDir " +
+            "w.rootFolderUri AS rootFolderUri, w.relativeDir AS relativeDir, " +
+            "w.ageRating AS ageRating " +
             "FROM work w " +
             "LEFT JOIN circle c ON c.id = w.circleId " +
             "LEFT JOIN review r ON r.workId = w.id " +
@@ -373,7 +377,8 @@ interface WorkDao {
         "SELECT w.id AS id, w.title AS title, c.name AS circleName, " +
             "w.rateAverage2dp AS rateAverage2dp, w.missing AS missing, " +
             "w.scrapeStatus AS scrapeStatus, r.progress AS progress, " +
-            "w.rootFolderUri AS rootFolderUri, w.relativeDir AS relativeDir " +
+            "w.rootFolderUri AS rootFolderUri, w.relativeDir AS relativeDir, " +
+            "w.ageRating AS ageRating " +
             "FROM work w " +
             "LEFT JOIN circle c ON c.id = w.circleId " +
             "LEFT JOIN review r ON r.workId = w.id " +
@@ -448,7 +453,8 @@ interface WorkDao {
             "SELECT w.id AS id, w.title AS title, c.name AS circleName, " +
             "w.rateAverage2dp AS rateAverage2dp, w.missing AS missing, " +
             "w.scrapeStatus AS scrapeStatus, r.progress AS progress, " +
-            "w.rootFolderUri AS rootFolderUri, w.relativeDir AS relativeDir " +
+            "w.rootFolderUri AS rootFolderUri, w.relativeDir AS relativeDir, " +
+            "w.ageRating AS ageRating " +
             "FROM work w " +
             "LEFT JOIN circle c ON c.id = w.circleId " +
             "LEFT JOIN review r ON r.workId = w.id" +
@@ -540,7 +546,8 @@ interface WorkDao {
         "SELECT w.id AS id, w.title AS title, c.name AS circleName, " +
             "w.rateAverage2dp AS rateAverage2dp, w.missing AS missing, " +
             "w.scrapeStatus AS scrapeStatus, r.progress AS progress, " +
-            "w.rootFolderUri AS rootFolderUri, w.relativeDir AS relativeDir " +
+            "w.rootFolderUri AS rootFolderUri, w.relativeDir AS relativeDir, " +
+            "w.ageRating AS ageRating " +
             "FROM work w " +
             "LEFT JOIN circle c ON c.id = w.circleId " +
             "LEFT JOIN review r ON r.workId = w.id " +
@@ -559,7 +566,8 @@ interface WorkDao {
         "SELECT w.id AS id, w.title AS title, c.name AS circleName, " +
             "w.rateAverage2dp AS rateAverage2dp, w.missing AS missing, " +
             "w.scrapeStatus AS scrapeStatus, r.progress AS progress, " +
-            "w.rootFolderUri AS rootFolderUri, w.relativeDir AS relativeDir " +
+            "w.rootFolderUri AS rootFolderUri, w.relativeDir AS relativeDir, " +
+            "w.ageRating AS ageRating " +
             "FROM work w " +
             "LEFT JOIN circle c ON c.id = w.circleId " +
             "LEFT JOIN review r ON r.workId = w.id " +
@@ -579,7 +587,8 @@ interface WorkDao {
         "SELECT w.id AS id, w.title AS title, c.name AS circleName, " +
             "w.rateAverage2dp AS rateAverage2dp, w.missing AS missing, " +
             "w.scrapeStatus AS scrapeStatus, r.progress AS progress, " +
-            "w.rootFolderUri AS rootFolderUri, w.relativeDir AS relativeDir " +
+            "w.rootFolderUri AS rootFolderUri, w.relativeDir AS relativeDir, " +
+            "w.ageRating AS ageRating " +
             "FROM work w " +
             "LEFT JOIN circle c ON c.id = w.circleId " +
             "LEFT JOIN review r ON r.workId = w.id " +
@@ -706,6 +715,8 @@ data class ReviewListItem(
     val missing: Boolean,
     val rootFolderUri: String?,
     val relativeDir: String?,
+    /** 手动年龄分级(安全模式和谐封面用);null = 未分级,按敏感处理。 */
+    val ageRating: AgeRating? = null,
 ) {
     /** Bare RJ/BJ/VJ code (KeySpec); falls back to the raw id for safety. */
     val rjCode: String get() = KeySpec.parseWorkId(workId)?.rjCode ?: workId
@@ -751,7 +762,8 @@ interface ReviewDao {
         "SELECT r.workId AS workId, r.rating AS rating, r.reviewText AS reviewText, " +
             "r.progress AS progress, r.updatedAt AS updatedAt, " +
             "w.title AS title, w.missing AS missing, " +
-            "w.rootFolderUri AS rootFolderUri, w.relativeDir AS relativeDir " +
+            "w.rootFolderUri AS rootFolderUri, w.relativeDir AS relativeDir, " +
+            "w.ageRating AS ageRating " +
             "FROM review r LEFT JOIN work w ON w.id = r.workId " +
             "ORDER BY r.updatedAt DESC",
     )

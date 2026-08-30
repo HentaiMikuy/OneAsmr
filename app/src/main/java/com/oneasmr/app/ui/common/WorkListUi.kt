@@ -71,6 +71,7 @@ internal fun WorkListRow(
             type = CoverType.THUMB_240,
             rootFolderUri = item.rootFolderUri,
             relativeDir = item.relativeDir,
+            ageRating = item.ageRating,
             modifier = Modifier
                 .size(width = 56.dp, height = 56.dp)
                 .clip(MaterialTheme.shapes.small),
