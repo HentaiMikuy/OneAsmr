@@ -31,8 +31,9 @@ import com.oneasmr.app.data.scanner.RoomScanPersister
 import com.oneasmr.app.data.scanner.ScanRoot
 import com.oneasmr.app.data.scanner.TrackNode
 import com.oneasmr.app.data.scanner.TrackTreeBuilder
-import com.oneasmr.app.data.scanner.TrackTreeResult
 import com.oneasmr.app.data.scanner.WorkPathResolver
+import com.oneasmr.app.domain.trackgroup.TrackGrouper
+import com.oneasmr.app.domain.trackgroup.TrackGroupResult
 import com.oneasmr.app.navigation.Routes
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -42,6 +43,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -102,6 +104,10 @@ data class WorkDetailUiState(
     val reviewInitialized: Boolean = false,
     /** Task 19: remembered playback positions by trackIndex (detail-page progress bars). */
     val trackProgress: Map<Int, TrackProgress> = emptyMap(),
+    /** 树视图行(IO 上预计算,组合阶段不再主线程遍历;仅 Ready 时非空)。 */
+    val trackRows: List<TreeRow> = emptyList(),
+    /** 分组视图分组(同上)。 */
+    val trackGroups: List<TrackGroupResult> = emptyList(),
 ) {
     /** Derived invalid state — the screen renders the rescan CTA instead of content. */
     val invalid: InvalidReason? get() = when {
@@ -215,8 +221,10 @@ class WorkDetailViewModel @Inject constructor(
         }
         // Task 19: live playback positions for THIS work's tracks (Room
         // invalidation re-emits when PlaybackService writes playback_state).
+        // distinctUntilChanged: 只在该作品的进度实际变化时重发,播放中其他
+        // 作品/无关写入不会让整页每 5s 重组。
         viewModelScope.launch {
-            playbackStateDao.getAllForWorkFlow("$workId:").collect { rows ->
+            playbackStateDao.getAllForWorkFlow("$workId:").distinctUntilChanged().collect { rows ->
                 val byIndex = rows.mapNotNull { row ->
                     KeySpec.parseTrackKey(row.trackKey)?.trackIndex
                         ?.let { it to TrackProgress(row.positionMs, row.durationMs) }
@@ -283,7 +291,20 @@ class WorkDetailViewModel @Inject constructor(
         } else {
             current.expanded + relativePath
         }
+        // 展开状态即时生效(UI 立即响应);行列表在 IO 上重算,大作品折叠/
+        // 展开不冻结主线程。落地时校验展开态未变,避免连点竞态覆盖。
         _uiState.update { it.copy(tree = current.copy(expanded = expanded)) }
+        viewModelScope.launch {
+            val rows = withContext(ioDispatcher) { flattenTree(current.root, expanded) }
+            _uiState.update { state ->
+                val tree = state.tree
+                if (tree is TrackTreeUiState.Ready && tree.expanded == expanded) {
+                    state.copy(trackRows = rows)
+                } else {
+                    state
+                }
+            }
+        }
     }
 
     /**
@@ -380,13 +401,33 @@ class WorkDetailViewModel @Inject constructor(
                     val fs = fsFactory.create(work.rootFolderUri)
                     when (val resolved = WorkPathResolver(fs).resolve(work.relativeDir)) {
                         is WorkPathResolver.Result.NotFound -> throw WorkFolderUnavailable(resolved.message)
-                        is WorkPathResolver.Result.Found ->
-                            TrackTreeBuilder(fs).build(resolved.path, resolved.displayName, resolved.documentUri)
+                        is WorkPathResolver.Result.Found -> {
+                            val treeResult = TrackTreeBuilder(fs).build(
+                                resolved.path, resolved.displayName, resolved.documentUri,
+                            )
+                            // 展开集合、树视图行、分组都在 IO 上算好,
+                            // 首帧组合阶段不再主线程全树遍历。
+                            val expanded = initialExpansion(treeResult.root)
+                            TrackTreeReady(
+                                root = treeResult.root,
+                                expanded = expanded,
+                                rows = flattenTree(treeResult.root, expanded),
+                                groups = TrackGrouper.group(treeResult.root),
+                            )
+                        }
                     }
                 }
             }
             outcome
-                .onSuccess { treeResult -> onTreeReady(treeResult) }
+                .onSuccess { ready ->
+                    _uiState.update {
+                        it.copy(
+                            tree = TrackTreeUiState.Ready(ready.root, ready.expanded),
+                            trackRows = ready.rows,
+                            trackGroups = ready.groups,
+                        )
+                    }
+                }
                 .onFailure { e ->
                     if (e is CancellationException) throw e
                     val detail = (e as? WorkFolderUnavailable)?.message ?: (e.message ?: "读取作品文件夹失败")
@@ -395,11 +436,13 @@ class WorkDetailViewModel @Inject constructor(
         }
     }
 
-    private fun onTreeReady(treeResult: TrackTreeResult) {
-        _uiState.update {
-            it.copy(tree = TrackTreeUiState.Ready(treeResult.root, initialExpansion(treeResult.root)))
-        }
-    }
+    /** IO 上一次性算好的树展示数据(根 + 展开集 + 两种视图的行/组)。 */
+    private data class TrackTreeReady(
+        val root: TrackNode,
+        val expanded: Set<String>,
+        val rows: List<TreeRow>,
+        val groups: List<TrackGroupResult>,
+    )
 
     /** Root + first-level folders expanded; deeper folders collapsed (plan: 默认折叠深层目录). */
     private fun initialExpansion(root: TrackNode): Set<String> {

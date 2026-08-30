@@ -6,7 +6,6 @@ import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.core.EaseOut
 import androidx.compose.animation.core.animate
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -254,11 +253,10 @@ fun OneAsmrNavHost(
 
     // 非根路由：底簇不自动隐藏，内容底边上移簇高以免列表末尾被迷你播放器
     // 遮住；根路由必须保持 0（全高），滚动隐藏底栏时才不留死区。
-    val contentBottomPadding by animateDpAsState(
-        targetValue = if (isRootRoute) 0.dp else clusterHeightDp.value,
-        animationSpec = tween(250, easing = EaseOut),
-        label = "contentBottomPadding",
-    )
+    // 静态留白（不做动画）：animateDpAsState 会让整棵 NavHost 在导航期间
+    // 每帧重测量/重布局，与过渡动画叠加是切页掉帧的主因；簇高是实测值，
+    // 跳变仅在会话起停时发生一次，可接受。
+    val contentBottomPadding = if (isRootRoute) 0.dp else clusterHeightDp.value
 
     Scaffold(
         modifier = modifier,
@@ -294,14 +292,14 @@ fun OneAsmrNavHost(
             startDestination = Routes.LIBRARY,
             modifier = Modifier.fillMaxSize(),
             enterTransition = {
-                slideInHorizontally(animationSpec = tween(300, easing = EaseOut)) { it } +
-                    fadeIn(animationSpec = tween(300))
+                slideInHorizontally(animationSpec = tween(220, easing = EaseOut)) { it } +
+                    fadeIn(animationSpec = tween(220))
             },
-            exitTransition = { fadeOut(animationSpec = tween(300)) },
-            popEnterTransition = { fadeIn(animationSpec = tween(300)) },
+            exitTransition = { fadeOut(animationSpec = tween(220)) },
+            popEnterTransition = { fadeIn(animationSpec = tween(220)) },
             popExitTransition = {
-                slideOutHorizontally(animationSpec = tween(300, easing = EaseOut)) { it } +
-                    fadeOut(animationSpec = tween(300))
+                slideOutHorizontally(animationSpec = tween(220, easing = EaseOut)) { it } +
+                    fadeOut(animationSpec = tween(220))
             },
         ) {
             composable(

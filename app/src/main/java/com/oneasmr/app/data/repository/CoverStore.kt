@@ -3,6 +3,7 @@ package com.oneasmr.app.data.repository
 import com.oneasmr.app.data.remote.dlsite.ScrapedWork
 import java.io.File
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -72,6 +73,20 @@ class CoverStore(
     private val cacheCapBytes: () -> Long,
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
+
+    /** 测试专用:注入虚拟调度器保证确定性(WorkDetailViewModel 同款模式)。 */
+    internal constructor(
+        coversDir: File,
+        downloader: CoverDownloader,
+        bundledLocator: BundledCoverLocator,
+        cacheCapBytes: () -> Long,
+        ioDispatcher: CoroutineDispatcher,
+    ) : this(coversDir, downloader, bundledLocator, cacheCapBytes) {
+        this.ioDispatcher = ioDispatcher
+    }
+
+    /** 磁盘枚举/删除的调度器;生产用 IO,测试注入虚拟调度器。 */
+    private var ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 
     private val lock = Mutex()
 
@@ -270,10 +285,13 @@ class CoverStore(
      * be in flight while this runs). Missing dir → 0, never throws.
      */
     suspend fun totalSizeBytes(): Long = lock.withLock {
-        coversDir.listFiles()
-            ?.filter { it.isFile && !it.name.endsWith(PART_SUFFIX) }
-            ?.sumOf { it.length() }
-            ?: 0L
+        // 磁盘枚举是阻塞 IO,不能占用调用方(Main)线程。
+        withContext(ioDispatcher) {
+            coversDir.listFiles()
+                ?.filter { it.isFile && !it.name.endsWith(PART_SUFFIX) }
+                ?.sumOf { it.length() }
+                ?: 0L
+        }
     }
 
     /**
@@ -285,8 +303,10 @@ class CoverStore(
      */
     suspend fun clearAll() {
         lock.withLock {
-            coversDir.listFiles()?.forEach { file ->
-                if (file.isFile) file.delete()
+            withContext(ioDispatcher) {
+                coversDir.listFiles()?.forEach { file ->
+                    if (file.isFile) file.delete()
+                }
             }
             entries.clear()
             // 文件已全部删除:解析缓存一并清空,coverModelFor 必须重新解析。

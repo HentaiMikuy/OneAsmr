@@ -10,11 +10,13 @@ import com.oneasmr.app.navigation.Routes
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.io.IOException
 import javax.inject.Inject
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Built-in text viewer state (plan Task 14: "text 节点→内置文本查看器（编码自动
@@ -66,7 +68,8 @@ class TextFileViewModel @Inject constructor(
                 _uiState.update { it.copy(loading = false, error = e.message ?: "无法读取文件") }
                 return@launch
             }
-            val detected = TextDecoding.detectEncoding(bytes)
+            // 检测/校验是 CPU 密集(最多 4MB 统计检测 + 解码 + 往返校验),丢到 Default。
+            val detected = withContext(Dispatchers.Default) { TextDecoding.detectEncoding(bytes) }
             if (detected == null) {
                 _uiState.update {
                     it.copy(
@@ -79,7 +82,7 @@ class TextFileViewModel @Inject constructor(
                 return@launch
             }
             val decoded = try {
-                TextDecoding.decodeAndVerify(bytes, detected)
+                withContext(Dispatchers.Default) { TextDecoding.decodeAndVerify(bytes, detected) }
             } catch (e: DecodeFailure) {
                 _uiState.update {
                     it.copy(
@@ -123,7 +126,7 @@ class TextFileViewModel @Inject constructor(
                 return@launch
             }
             val decoded = try {
-                TextDecoding.decodeAndVerify(bytes, charsetName)
+                withContext(Dispatchers.Default) { TextDecoding.decodeAndVerify(bytes, charsetName) }
             } catch (e: DecodeFailure) {
                 _uiState.update {
                     it.copy(

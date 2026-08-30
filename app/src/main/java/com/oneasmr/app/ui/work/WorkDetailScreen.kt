@@ -99,7 +99,9 @@ import com.oneasmr.app.data.scanner.TrackNode
 import com.oneasmr.app.data.scanner.TrackNodeType
 import com.oneasmr.app.domain.trackgroup.TrackGroup
 import com.oneasmr.app.domain.trackgroup.TrackGroupResult
-import com.oneasmr.app.domain.trackgroup.TrackGrouper
+import com.oneasmr.app.ui.common.CensoredCoverPlaceholder
+import com.oneasmr.app.ui.common.LocalNsfwEnabled
+import com.oneasmr.app.ui.common.isCensored
 import com.oneasmr.app.ui.common.sharedWorkCover
 import com.oneasmr.app.ui.library.rememberCoverStore
 
@@ -310,16 +312,13 @@ private fun DetailContent(
     animatedContentScope: AnimatedContentScope?,
 ) {
     val work = state.work!!
-    val treeRows = remember(state.tree) {
-        (state.tree as? TrackTreeUiState.Ready)?.let { flattenTree(it.root, it.expanded) }
-    }
+    // 树视图行 / 分组数据在 ViewModel 的 IO 上下文预计算(见 trackRows/
+    // trackGroups),组合阶段不再主线程全树遍历。
+    val treeRows = state.trackRows
     // 分组/树状视图状态：仅本屏 rememberSaveable（不落盘），默认分组。
-    // 分组数据与 treeRows 一样在屏内从 state.tree 派生，不进 ViewModel。
     var groupedTrackView by rememberSaveable { mutableStateOf(true) }
     var selectedTrackGroup by rememberSaveable { mutableStateOf<String?>(null) }
-    val trackGroups = remember(state.tree) {
-        (state.tree as? TrackTreeUiState.Ready)?.let { TrackGrouper.group(it.root) }.orEmpty()
-    }
+    val trackGroups = state.trackGroups
     LazyColumn(Modifier.fillMaxSize()) {
         item(key = "header") {
             WorkHeader(
@@ -419,7 +418,7 @@ private fun DetailContent(
                         }
                     }
                 } else {
-                val rows = treeRows.orEmpty()
+                val rows = treeRows
                 items(count = rows.size, key = { rows[it].node.relativePath }) { index ->
                     val row = rows[index]
                     TreeRowItem(
@@ -454,9 +453,11 @@ private fun DetailContent(
  * (72dp top gap + cover + 24dp melt band) rather than a fixed constant, so
  * cover and backdrop never drift apart across screen widths — a fixed height
  * against a fractional-width cover left a variable blank gap above the title.
- * Both images share one resolved model (the same
- * local-first [CoverStore.coverModelFor] resolution [CoverImage] uses — Coil
- * caches the second decode), because CoverImage does not expose its model.
+ * Both images resolve independently: the hero decodes the full-size MAIN
+ * cover (sharp, it is the page's centerpiece), the backdrop decodes the
+ * THUMB_360 file (it is blurred at 28dp anyway — a full-size decode there
+ * only wastes memory and frame time). The fallback chain inside
+ * [CoverStore.coverModelFor] guarantees a model either way.
  */
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
@@ -471,14 +472,24 @@ private fun WorkHeader(
     val work = state.work!!
     val rjCode = work.rjCodeText()
     var scrapeMenuExpanded by remember { mutableStateOf(false) }
-    var coverModel by remember(rjCode, work.rootFolderUri, work.relativeDir) {
+    var heroModel by remember(rjCode, work.rootFolderUri, work.relativeDir) {
+        mutableStateOf<Any?>(null)
+    }
+    var backdropModel by remember(rjCode, work.rootFolderUri, work.relativeDir) {
         mutableStateOf<Any?>(null)
     }
     LaunchedEffect(rjCode, work.rootFolderUri, work.relativeDir) {
-        coverModel = coverStore.coverModelFor(
+        heroModel = coverStore.coverModelFor(
             rjCode, CoverType.MAIN, work.rootFolderUri, work.relativeDir,
         )
+        // 背景被 28dp 模糊,用小图解码即可:省掉全尺寸 MAIN 的解码与显存,
+        // 模糊后观感无差别(原共享单个 model 的说明已不适用)。
+        backdropModel = coverStore.coverModelFor(
+            rjCode, CoverType.THUMB_360, work.rootFolderUri, work.relativeDir,
+        )
     }
+    // 安全模式:敏感作品(未分级/R15/R18)的 backdrop 与 hero 都换成占位。
+    val censored = !LocalNsfwEnabled.current && work.ageRating.isCensored()
     // 封面边长显式取屏宽 0.62 份，背景高度随之推导（见 KDoc），
     // 不再用固定 420dp 去凑按宽度比例变化的封面。
     val coverSize = (LocalConfiguration.current.screenWidthDp * 0.62f).dp
@@ -493,15 +504,19 @@ private fun WorkHeader(
             } else {
                 Modifier.fillMaxSize()
             }
-            AsyncImage(
-                model = coverModel,
-                contentDescription = null,
-                modifier = backdropModifier,
-                contentScale = ContentScale.Crop,
-                alignment = Alignment.TopCenter,
-                placeholder = ColorPainter(MaterialTheme.colorScheme.surfaceVariant),
-                error = ColorPainter(MaterialTheme.colorScheme.surfaceVariant),
-            )
+            if (censored) {
+                CensoredCoverPlaceholder(backdropModifier)
+            } else {
+                AsyncImage(
+                    model = backdropModel,
+                    contentDescription = null,
+                    modifier = backdropModifier,
+                    contentScale = ContentScale.Crop,
+                    alignment = Alignment.TopCenter,
+                    placeholder = ColorPainter(MaterialTheme.colorScheme.surfaceVariant),
+                    error = ColorPainter(MaterialTheme.colorScheme.surfaceVariant),
+                )
+            }
             // Legibility scrim (see KDoc): backdrop melts into the page.
             Box(
                 Modifier
@@ -520,18 +535,28 @@ private fun WorkHeader(
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Spacer(Modifier.height(72.dp))
-                AsyncImage(
-                    model = coverModel,
-                    contentDescription = null,
-                    modifier = Modifier
-                        .sharedWorkCover(sharedTransitionScope, animatedContentScope, work.id)
-                        .size(coverSize)
-                        .shadow(24.dp, MaterialTheme.shapes.large)
-                        .clip(MaterialTheme.shapes.large),
-                    contentScale = ContentScale.Crop,
-                    placeholder = ColorPainter(MaterialTheme.colorScheme.surfaceVariant),
-                    error = ColorPainter(MaterialTheme.colorScheme.surfaceVariant),
-                )
+                if (censored) {
+                    CensoredCoverPlaceholder(
+                        modifier = Modifier
+                            .sharedWorkCover(sharedTransitionScope, animatedContentScope, work.id)
+                            .size(coverSize)
+                            .shadow(24.dp, MaterialTheme.shapes.large)
+                            .clip(MaterialTheme.shapes.large),
+                    )
+                } else {
+                    AsyncImage(
+                        model = heroModel,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .sharedWorkCover(sharedTransitionScope, animatedContentScope, work.id)
+                            .size(coverSize)
+                            .shadow(24.dp, MaterialTheme.shapes.large)
+                            .clip(MaterialTheme.shapes.large),
+                        contentScale = ContentScale.Crop,
+                        placeholder = ColorPainter(MaterialTheme.colorScheme.surfaceVariant),
+                        error = ColorPainter(MaterialTheme.colorScheme.surfaceVariant),
+                    )
+                }
             }
             // Back affordance over the backdrop: the NavHost provides no top
             // bar on this route, so without this the only way back was the
@@ -1030,7 +1055,7 @@ private fun trackTypeIcon(type: TrackNodeType): ImageVector = when (type) {
 }
 
 /** One rendered row of the expanded tree. */
-internal data class TreeRow(val node: TrackNode, val depth: Int, val expanded: Boolean)
+data class TreeRow(val node: TrackNode, val depth: Int, val expanded: Boolean)
 
 /** Depth-first flatten of the tree honoring [expanded] folder paths. */
 internal fun flattenTree(root: TrackNode, expanded: Set<String>): List<TreeRow> {
