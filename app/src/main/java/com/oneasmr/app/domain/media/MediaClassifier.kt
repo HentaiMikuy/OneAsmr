@@ -3,10 +3,11 @@ package com.oneasmr.app.domain.media
 /**
  * Classifies a file by extension (case-insensitive) into a [MediaType].
  *
- * Whitelist (plan Task 3, exact — do not add/remove entries):
+ * Whitelist (plan Task 3; vtt added later for DLsite `<name>.<audioext>.vtt`
+ * subtitles):
  *  - AUDIO: mp3 / wav / flac / ogg / opus / aac / m4a
  *  - VIDEO: mp4 / webm / mkv / mov
- *  - TEXT:  lrc / srt / ass / txt
+ *  - TEXT:  lrc / vtt / srt / ass / txt
  *  - IMAGE: jpg / jpeg / png / webp
  * Everything else (including missing/blank extension) is [MediaType.OTHER].
  */
@@ -18,8 +19,8 @@ object MediaClassifier {
     /** VIDEO whitelist — exact entries from plan Task 3. */
     private val VIDEO_EXTENSIONS = setOf("mp4", "webm", "mkv", "mov")
 
-    /** TEXT whitelist — exact entries from plan Task 3. */
-    private val TEXT_EXTENSIONS = setOf("lrc", "srt", "ass", "txt")
+    /** TEXT whitelist — Task 3 entries + vtt (字幕自动关联需要可见/可读)。 */
+    private val TEXT_EXTENSIONS = setOf("lrc", "vtt", "srt", "ass", "txt")
 
     /** IMAGE whitelist — exact entries from plan Task 3. */
     private val IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "webp")

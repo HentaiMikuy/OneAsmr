@@ -10,12 +10,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Task 20 LRC loading: raw bytes -> charset auto-detect (juniversalchardet +
- * Task 14 round-trip guard) -> parsed lyrics. Fixture bytes with KNOWN
+ * Lyrics/subtitle loading: raw bytes -> charset auto-detect
+ * (juniversalchardet + Task 14 round-trip guard) -> parser picked by file
+ * extension (vtt/srt -> cue parser, else LRC). Fixture bytes with KNOWN
  * encodings must yield the exact expected text; corrupt/undecodable input
  * yields null, never a crash.
  */
-class LrcLoaderTest {
+class LyricsLoaderTest {
 
     private fun encode(text: String, charset: String): ByteArray {
         val buffer = Charset.forName(charset).encode(text)
@@ -24,12 +25,12 @@ class LrcLoaderTest {
         return out
     }
 
-    private fun loader(bytes: ByteArray): LrcLoader = LrcLoader(TextFileReader { bytes })
+    private fun loader(bytes: ByteArray): LyricsLoader = LyricsLoader(TextFileReader { bytes })
 
     @Test
     fun `utf8 lrc parses to exact lyrics`() = runTest {
         val bytes = encode("[ti:测试]\n[00:01.00]第一行歌词\n[00:02.00]第二行歌词\n", "UTF-8")
-        val lyrics = loader(bytes).load("content://x")!!
+        val lyrics = loader(bytes).load("content://x", "a.lrc")!!
 
         assertEquals("测试", lyrics.metadata.title)
         assertEquals(listOf("第一行歌词", "第二行歌词"), lyrics.lines.map { it.text })
@@ -39,7 +40,7 @@ class LrcLoaderTest {
     @Test
     fun `shift_jis lrc decodes without mojibake`() = runTest {
         val bytes = encode("[00:01.00]おやすみなさい\n[00:02.00]また明日\n", "Shift_JIS")
-        val lyrics = loader(bytes).load("content://x")!!
+        val lyrics = loader(bytes).load("content://x", "a.lrc")!!
 
         assertEquals(listOf("おやすみなさい", "また明日"), lyrics.lines.map { it.text })
     }
@@ -47,7 +48,7 @@ class LrcLoaderTest {
     @Test
     fun `gbk lrc decodes without mojibake`() = runTest {
         val bytes = encode("[00:01.00]中文歌词测试\n[00:02.00]第二行\n", "GBK")
-        val lyrics = loader(bytes).load("content://x")!!
+        val lyrics = loader(bytes).load("content://x", "a.lrc")!!
 
         assertEquals(listOf("中文歌词测试", "第二行"), lyrics.lines.map { it.text })
     }
@@ -55,7 +56,7 @@ class LrcLoaderTest {
     @Test
     fun `corrupt rows survive loading with skipped count`() = runTest {
         val bytes = encode("[00:01.00]好行\ngarbage\n[00:99.00]坏行\n[00:02.00]好行二\n", "UTF-8")
-        val lyrics = loader(bytes).load("content://x")!!
+        val lyrics = loader(bytes).load("content://x", "a.lrc")!!
 
         assertEquals(listOf("好行", "好行二"), lyrics.lines.map { it.text })
         assertEquals(2, lyrics.skippedLines)
@@ -63,35 +64,67 @@ class LrcLoaderTest {
 
     @Test
     fun `read failure returns null`() = runTest {
-        val failing = LrcLoader(TextFileReader { throw java.io.IOException("boom") })
-        assertNull(failing.load("content://x"))
+        val failing = LyricsLoader(TextFileReader { throw java.io.IOException("boom") })
+        assertNull(failing.load("content://x", "a.lrc"))
     }
 
     @Test
     fun `undecodable bytes return null`() = runTest {
         val garbage = ByteArray(512) { i -> (i * 37 % 256).toByte() }
-        assertNull(loader(garbage).load("content://x"))
+        assertNull(loader(garbage).load("content://x", "a.lrc"))
     }
 
     @Test
     fun `metadata only lrc returns null`() = runTest {
         val bytes = encode("[ti:只有标题]\n[ar:某人]\n", "UTF-8")
-        assertNull(loader(bytes).load("content://x"))
+        assertNull(loader(bytes).load("content://x", "a.lrc"))
     }
 
     @Test
     fun `empty file returns null`() = runTest {
-        assertNull(loader(ByteArray(0)).load("content://x"))
+        assertNull(loader(ByteArray(0)).load("content://x", "a.lrc"))
     }
 
     @Test
     fun `utf8 with bom detected and parsed`() = runTest {
         val bom = byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte())
         val body = encode("[00:01.00]带BOM行\n", "UTF-8")
-        val lyrics = loader(bom + body).load("content://x")!!
+        val lyrics = loader(bom + body).load("content://x", "a.lrc")!!
 
         assertEquals(listOf("带BOM行"), lyrics.lines.map { it.text })
         assertTrue(lyrics.lines.isNotEmpty())
         assertNotNull(lyrics)
+    }
+
+    @Test
+    fun `vtt extension dispatches to the cue parser`() = runTest {
+        val vtt = "WEBVTT\n\n00:01.000 --> 00:04.000\nこんにちは\n\n00:05.500 --> 00:08.000\n第二句\n"
+        val lyrics = loader(encode(vtt, "UTF-8")).load("content://x", "track01.mp3.vtt")!!
+
+        assertEquals(listOf("こんにちは", "第二句"), lyrics.lines.map { it.text })
+        assertEquals(listOf(1_000L, 5_500L), lyrics.lines.map { it.timestampMs })
+    }
+
+    @Test
+    fun `srt extension dispatches to the cue parser`() = runTest {
+        val srt = "1\n00:00:01,000 --> 00:00:04,000\n第一句\n\n2\n00:00:05,000 --> 00:00:08,000\n第二句\n"
+        val lyrics = loader(encode(srt, "UTF-8")).load("content://x", "track01.srt")!!
+
+        assertEquals(listOf("第一句", "第二句"), lyrics.lines.map { it.text })
+        assertEquals(listOf(1_000L, 5_000L), lyrics.lines.map { it.timestampMs })
+    }
+
+    @Test
+    fun `txt with lrc content parses as lyrics`() = runTest {
+        val bytes = encode("[00:01.00]txt里的歌词\n[00:02.00]第二行\n", "UTF-8")
+        val lyrics = loader(bytes).load("content://x", "track01.txt")!!
+
+        assertEquals(listOf("txt里的歌词", "第二行"), lyrics.lines.map { it.text })
+    }
+
+    @Test
+    fun `plain prose txt returns null`() = runTest {
+        val bytes = encode("这是一个没有时间戳的台本文件。\n第二段说明文字。\n", "UTF-8")
+        assertNull(loader(bytes).load("content://x", "track01.txt"))
     }
 }

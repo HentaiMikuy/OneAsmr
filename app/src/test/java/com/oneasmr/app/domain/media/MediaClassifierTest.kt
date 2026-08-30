@@ -7,7 +7,7 @@ import org.junit.Test
  * Spec tests for [MediaClassifier] (plan Task 3 whitelist, case-insensitive):
  * AUDIO: mp3/wav/flac/ogg/opus/aac/m4a
  * VIDEO: mp4/webm/mkv/mov
- * TEXT:  lrc/srt/ass/txt
+ * TEXT:  lrc/vtt/srt/ass/txt
  * IMAGE: jpg/jpeg/png/webp
  * OTHER: everything else, including missing/blank extension.
  */
@@ -45,8 +45,16 @@ class MediaClassifierTest {
             "b.srt" to MediaType.TEXT,
             "c.ass" to MediaType.TEXT,
             "d.txt" to MediaType.TEXT,
+            "e.vtt" to MediaType.TEXT,
         )
         expected.forEach { (name, type) -> assertEquals(type, MediaClassifier.classify(name)) }
+    }
+
+    @Test
+    fun `appended vtt subtitle naming is text`() {
+        // DLsite 官方字幕命名：完整音频文件名 + .vtt（按最后一段扩展名分类）。
+        assertEquals(MediaType.TEXT, MediaClassifier.classify("track01.mp3.vtt"))
+        assertEquals(MediaType.TEXT, MediaClassifier.classify("track01.wav.vtt"))
     }
 
     @Test
