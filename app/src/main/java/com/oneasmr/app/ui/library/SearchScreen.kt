@@ -33,6 +33,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -269,6 +272,7 @@ class SearchViewModel @Inject constructor(
 fun SearchScreen(
     onOpenWork: (String) -> Unit = {},
     viewModel: SearchViewModel = hiltViewModel(),
+    scrapeViewModel: ScrapeViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val query by viewModel.queryText.collectAsStateWithLifecycle()
@@ -276,9 +280,16 @@ fun SearchScreen(
     val sortOrder by viewModel.sortOrder.collectAsStateWithLifecycle()
     val sortDescending by viewModel.sortDescending.collectAsStateWithLifecycle()
     val lazyItems = viewModel.pagingDataFlow.collectAsLazyPagingItems()
-    // 同 LibraryScreen:详情页刮削期间本页无收集器,返回时缓存代已过期,
-    // 组合重建时刷新一代。
-    LaunchedEffect(Unit) { lazyItems.refresh() }
+    val scrapeState by scrapeViewModel.uiState.collectAsStateWithLifecycle()
+    // 同 LibraryScreen:详情页刮削期间本页无收集器,返回时缓存代已过期;
+    // 仅在离开期间确有刮削成功时才刷新一代,避免每次返回都整页重建。
+    var lastScrapeVersion by rememberSaveable { mutableStateOf(0) }
+    LaunchedEffect(scrapeState.completedVersion) {
+        if (scrapeState.completedVersion > lastScrapeVersion) {
+            lazyItems.refresh()
+            lastScrapeVersion = scrapeState.completedVersion
+        }
+    }
 
     Column(
         modifier = Modifier

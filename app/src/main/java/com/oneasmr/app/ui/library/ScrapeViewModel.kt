@@ -36,6 +36,8 @@ data class ScrapeUiState(
     val singleMessage: String? = null,
     val batch: BatchScrapeState = BatchScrapeState.IDLE,
     val batchNotice: String? = null,
+    /** 成功刮削完成计数(单条成功 + 批量收尾各 +1):列表页用它判断返回时是否需要刷新分页。 */
+    val completedVersion: Int = 0,
 ) {
     companion object {
         val EMPTY = ScrapeUiState()
@@ -72,7 +74,16 @@ class ScrapeViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            batchFlow.collect { state -> _uiState.update { it.copy(batch = state) } }
+            batchFlow.collect { state ->
+                _uiState.update {
+                    // 批量收尾(FINISHED)时 +1,列表页据此刷新分页。
+                    val finished = state.phase == BatchPhase.FINISHED && it.batch.phase != BatchPhase.FINISHED
+                    it.copy(
+                        batch = state,
+                        completedVersion = it.completedVersion + if (finished) 1 else 0,
+                    )
+                }
+            }
         }
     }
 
@@ -90,6 +101,9 @@ class ScrapeViewModel @Inject constructor(
                         is com.oneasmr.app.data.repository.ScrapeOutcome.Failed ->
                             "刮削失败：${failureLabel(outcome.kind)}"
                     },
+                    // 只有成功才改库,版本号也随之 +1(失败不触发列表刷新)。
+                    completedVersion = it.completedVersion +
+                        (if (outcome is com.oneasmr.app.data.repository.ScrapeOutcome.Success) 1 else 0),
                 )
             }
         }

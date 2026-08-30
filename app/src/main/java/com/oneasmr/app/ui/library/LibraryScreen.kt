@@ -65,6 +65,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -341,13 +342,17 @@ fun LibraryScreen(
                     )
                 }
                 val pagingItems = viewModel.pagingDataFlow.collectAsLazyPagingItems()
-                // 返回本页时强制刷新一代:详情页刮削的写库发生在本页无
-                // 收集器期间,cachedIn 只会向重挂载的差分器重放旧一代 ——
-                // 刮削结果(标题/封面/评分)回来后不显示。下拉刷新走的是
-                // 重扫(位置未变 = UNCHANGED,不写库),救不回,故在组合
-                // 重建(含导航返回)时无条件 refresh;数据在本地 DB,代价
-                // 只是一次分页查询。
-                LaunchedEffect(Unit) { pagingItems.refresh() }
+                // 返回本页时只在「离开期间确实有刮削成功」才刷新一代:cachedIn
+                // 只会向重挂载的差分器重放旧代,详情页刮削的写库发生在本页无
+                // 收集器期间;无条件刷新会把每次返回都变成整页重建。版本号由
+                // ScrapeViewModel 维护(与库条目同生命周期,导航期间存活)。
+                var lastScrapeVersion by rememberSaveable { mutableStateOf(0) }
+                LaunchedEffect(scrapeState.completedVersion) {
+                    if (scrapeState.completedVersion > lastScrapeVersion) {
+                        pagingItems.refresh()
+                        lastScrapeVersion = scrapeState.completedVersion
+                    }
+                }
                 LibraryContent(
                     items = pagingItems,
                     coverStore = coverStore,
