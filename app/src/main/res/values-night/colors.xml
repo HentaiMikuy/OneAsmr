@@ -1,12 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!--
-        Dark-mode adaptation of the brand color (plan Task 28): the launcher
+        Dark-mode adaptation of the window/splash background: the platform
         picks the -night variant when the device is in dark mode, so the
-        adaptive-icon background (and the splash background, which shares the
-        resource) shifts to a purple-tinted dark that matches the lavender
-        glyph. The themed-icon monochrome layer additionally handles contrast
-        on API 33+.
+        splash and cold-start window deepen the midnight navy slightly. The
+        launcher icon's gradient background layer is unaffected; the
+        themed-icon monochrome layer handles contrast on API 33+.
     -->
-    <color name="ic_launcher_background">#211E2A</color>
+    <color name="ic_launcher_background">#14234A</color>
 </resources>

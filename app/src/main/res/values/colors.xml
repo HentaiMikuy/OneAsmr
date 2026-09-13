@@ -1,4 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#1B1B1F</color>
+    <!--
+        Window/splash background (icon vol.3): the midnight navy from the
+        middle of the launcher-background gradient (ic_launcher_background
+        drawable), so the splash disc and the cold-start window frame sit on
+        a matching flat tone. The launcher icon itself no longer uses this
+        color; its background layer is the gradient drawable.
+    -->
+    <color name="ic_launcher_background">#1A2C55</color>
 </resources>

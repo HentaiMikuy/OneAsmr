@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    OneAsmr launcher background (vol.3): a midnight indigo-to-teal gradient
+    with a soft glow behind the character and faint concentric "sound rings"
+    that radiate from the centre. Kept as its own layer so launchers can
+    parallax it behind the foreground glyph.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Midnight gradient -->
+    <path
+        android:pathData="M0,0 H108 V108 H0 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="linear" android:startX="20" android:startY="0" android:endX="88" android:endY="108">
+                <item android:offset="0" android:color="#2C2F63" />
+                <item android:offset="0.55" android:color="#1B2E5A" />
+                <item android:offset="1" android:color="#10334A" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <!-- Soft glow behind the head -->
+    <path
+        android:pathData="M0,0 H108 V108 H0 Z"
+        android:fillAlpha="0.42">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="radial" android:centerX="54" android:centerY="50" android:gradientRadius="40">
+                <item android:offset="0" android:color="#5A78C8" />
+                <item android:offset="0.6" android:color="#00000000" />
+                <item android:offset="1" android:color="#00000000" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <!-- Sound ring r=24 -->
+    <path
+        android:pathData="M30,54 A24,24 0 1 0 78,54 A24,24 0 1 0 30,54 Z"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.1"
+        android:strokeLineCap="round"
+        android:strokeAlpha="0.1" />
+    <path
+        android:pathData="M21,54 A33,33 0 1 0 87,54 A33,33 0 1 0 21,54 Z"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.1"
+        android:strokeLineCap="round"
+        android:strokeAlpha="0.07" />
+    <path
+        android:pathData="M11,54 A43,43 0 1 0 97,54 A43,43 0 1 0 11,54 Z"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.1"
+        android:strokeLineCap="round"
+        android:strokeAlpha="0.06" />
+    <path
+        android:pathData="M0,54 A54,54 0 1 0 108,54 A54,54 0 1 0 0,54 Z"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.1"
+        android:strokeLineCap="round"
+        android:strokeAlpha="0.04" />
+</vector>
