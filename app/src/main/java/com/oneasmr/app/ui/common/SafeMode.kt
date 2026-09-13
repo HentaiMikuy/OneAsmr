@@ -12,13 +12,9 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.oneasmr.app.data.local.AgeRating
 
 /** 全局 NSFW 模式开关(MainActivity 从 SettingsStore 提供)。 */
 val LocalNsfwEnabled = staticCompositionLocalOf { true }
-
-/** 和谐规则:未分级(null)/R15/R18 均为敏感;仅 ALL_AGES 豁免。 */
-fun AgeRating?.isCensored(): Boolean = this != AgeRating.ALL_AGES
 
 /**
  * 和谐封面占位:surfaceVariant 底 + 居中 24dp 锁图标。刻意不用模糊——

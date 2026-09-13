@@ -87,6 +87,7 @@ import coil3.compose.AsyncImage
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.oneasmr.app.data.local.AgeRating
+import com.oneasmr.app.data.local.isCensored
 import com.oneasmr.app.data.local.KeySpec
 import com.oneasmr.app.data.local.ProgressState
 import com.oneasmr.app.data.local.ScrapeStatus
@@ -101,7 +102,6 @@ import com.oneasmr.app.domain.trackgroup.TrackGroup
 import com.oneasmr.app.domain.trackgroup.TrackGroupResult
 import com.oneasmr.app.ui.common.CensoredCoverPlaceholder
 import com.oneasmr.app.ui.common.LocalNsfwEnabled
-import com.oneasmr.app.ui.common.isCensored
 import com.oneasmr.app.ui.common.sharedWorkCover
 import com.oneasmr.app.ui.library.rememberCoverStore
 

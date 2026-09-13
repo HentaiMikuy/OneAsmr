@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ActivityInfo
+import android.net.Uri
 import android.os.Bundle
 import android.util.Log
 import android.view.LayoutInflater
@@ -90,12 +91,14 @@ import com.oneasmr.app.data.local.KeySpec
 import com.oneasmr.app.data.local.SingleFileDao
 import com.oneasmr.app.data.local.SingleFileKind
 import com.oneasmr.app.data.local.WorkDao
+import com.oneasmr.app.data.local.isCensored
 import com.oneasmr.app.data.local.settings.SettingsStore
 import com.oneasmr.app.data.scanner.TrackTreeBuilder
 import com.oneasmr.app.data.scanner.WorkPathResolver
 import com.oneasmr.app.domain.player.PlaybackSpeed
 import com.oneasmr.app.navigation.Routes
 import com.oneasmr.app.player.PlaybackService
+import com.oneasmr.app.player.coverArtUri
 import com.oneasmr.app.player.ResumePositionResolver
 import com.oneasmr.app.player.SessionConnection
 import com.oneasmr.app.player.VideoEntryDecision
@@ -104,6 +107,7 @@ import com.oneasmr.app.ui.work.DocumentFsFactory
 import com.oneasmr.app.ui.player.SpeedPickerSheet
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.io.File
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -777,6 +781,7 @@ class VideoPlayerViewModel @Inject constructor(
                         MediaMetadata.Builder()
                             .setTitle(video.name)
                             .setArtist(video.workTitle)
+                            .apply { video.artworkUri?.let(::setArtworkUri) }
                             .build(),
                     )
                     .build()
@@ -807,6 +812,11 @@ class VideoPlayerViewModel @Inject constructor(
                     name = file.displayTitle,
                     documentUri = uri,
                     workTitle = file.channel ?: "单档库",
+                    // 单档缩略图(边车图/抽帧):thumbSource 原样作 artworkUri,
+                    // 本地绝对路径补 file://(通用解码分支)。
+                    artworkUri = file.thumbSource?.let { path ->
+                        if (path.startsWith("content:")) Uri.parse(path) else Uri.fromFile(File(path))
+                    },
                 )
             }
         }.getOrElse { e ->
@@ -833,6 +843,12 @@ class VideoPlayerViewModel @Inject constructor(
 
     private suspend fun loadWorkVideoNode(): VideoFile? {
         val work = workDao.getById(checkNotNull(workId)) ?: return null
+        // 通知栏封面:作品附属视频沿用作品封面与和谐决策(安全模式下
+        // 同样只显示默认占位,见 MediaItemMapper.coverArtUri)。
+        val censoredArt = !settingsStore.nsfwEnabled.first() && work.ageRating.isCensored()
+        val artwork = KeySpec.parseWorkId(work.id)?.let {
+            coverArtUri(it.sourceScope, it.rjCode, censoredArt)
+        }
         return runCatching {
             val fs = fsFactory.create(work.rootFolderUri)
             when (val resolved = WorkPathResolver(fs).resolve(work.relativeDir)) {
@@ -842,7 +858,12 @@ class VideoPlayerViewModel @Inject constructor(
                         resolved.path, resolved.displayName, resolved.documentUri,
                     )
                     VideoTrackFinder.find(tree.root, trackIndex)?.let { node ->
-                        VideoFile(name = node.name, documentUri = node.documentUri, workTitle = work.title)
+                        VideoFile(
+                            name = node.name,
+                            documentUri = node.documentUri,
+                            workTitle = work.title,
+                            artworkUri = artwork,
+                        )
                     }
                 }
             }
@@ -853,7 +874,12 @@ class VideoPlayerViewModel @Inject constructor(
         }
     }
 
-    private data class VideoFile(val name: String, val documentUri: String, val workTitle: String)
+    private data class VideoFile(
+        val name: String,
+        val documentUri: String,
+        val workTitle: String,
+        val artworkUri: Uri? = null,
+    )
 
     private val controllerListener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) {

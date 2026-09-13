@@ -97,6 +97,7 @@ import androidx.paging.cachedIn
 import androidx.paging.compose.LazyPagingItems
 import androidx.paging.compose.collectAsLazyPagingItems
 import com.oneasmr.app.data.local.AgeRating
+import com.oneasmr.app.data.local.isCensored
 import com.oneasmr.app.data.local.OneAsmrDatabase
 import com.oneasmr.app.data.local.ProgressState
 import com.oneasmr.app.data.local.ScrapeStatus
@@ -123,7 +124,6 @@ import coil3.compose.AsyncImage
 import com.oneasmr.app.ui.common.CensoredCoverPlaceholder
 import com.oneasmr.app.ui.common.LocalNsfwEnabled
 import com.oneasmr.app.ui.common.formatScanSummary
-import com.oneasmr.app.ui.common.isCensored
 import com.oneasmr.app.ui.common.progressLabel
 import com.oneasmr.app.ui.common.rememberPressScale
 import com.oneasmr.app.ui.common.sharedWorkCover

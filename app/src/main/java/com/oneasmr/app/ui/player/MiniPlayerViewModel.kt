@@ -3,10 +3,10 @@ package com.oneasmr.app.ui.player
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.oneasmr.app.data.local.KeySpec
+import com.oneasmr.app.data.local.isCensored
 import com.oneasmr.app.data.local.WorkDao
 import com.oneasmr.app.data.local.settings.SettingsStore
 import com.oneasmr.app.player.SessionConnection
-import com.oneasmr.app.ui.common.isCensored
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.ExperimentalCoroutinesApi

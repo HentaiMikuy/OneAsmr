@@ -111,6 +111,7 @@ import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
 import com.oneasmr.app.data.local.KeySpec
+import com.oneasmr.app.data.local.isCensored
 import com.oneasmr.app.data.local.Work
 import com.oneasmr.app.data.local.WorkDao
 import com.oneasmr.app.data.local.settings.QueueStore
@@ -131,15 +132,15 @@ import com.oneasmr.app.domain.player.harmonizedTitles
 import com.oneasmr.app.domain.player.safeModeTitle
 import com.oneasmr.app.navigation.Routes
 import com.oneasmr.app.player.PlayQueueBuilder
+import com.oneasmr.app.player.coverArtUri
+import com.oneasmr.app.player.toMediaItems
 import com.oneasmr.app.ui.player.SpeedPickerSheet
 import com.oneasmr.app.player.PlaybackService
 import com.oneasmr.app.player.ResumePositionResolver
 import com.oneasmr.app.player.SessionConnection
 import com.oneasmr.app.player.toMedia3
-import com.oneasmr.app.player.toMediaItem
 import com.oneasmr.app.player.toRepeatMode
 import com.oneasmr.app.ui.common.CensoredCoverPlaceholder
-import com.oneasmr.app.ui.common.isCensored
 import com.oneasmr.app.ui.common.rememberPressScale
 import com.oneasmr.app.ui.work.DocumentFsFactory
 import dagger.hilt.EntryPoint
@@ -431,8 +432,10 @@ class PlayerViewModel @Inject constructor(
                     throw IllegalStateException("该作品没有可播放的音频")
                 }
                 // 安全模式(NSFW 关 + 敏感评级):队列交给会话前把曲名
-                // 和谐为「音频 N」,通知栏/播放页展示的即和谐后曲名。
-                val finalQueue = if (!settingsStore.nsfwEnabled.first() && work.ageRating.isCensored()) {
+                // 和谐为「音频 N」,通知栏封面同刻换默认占位 —— 和谐决策
+                // 编码进 artworkUri 的 censored 参数(见 MediaItemMapper)。
+                val censoredArt = !settingsStore.nsfwEnabled.first() && work.ageRating.isCensored()
+                val finalQueue = if (censoredArt) {
                     queue.harmonizedTitles()
                 } else {
                     queue
@@ -441,7 +444,7 @@ class PlayerViewModel @Inject constructor(
                 val startPositionMs = resumePositionResolver.resolve(
                     KeySpec.trackKey(startItem.sourceScope, startItem.rjCode, startItem.trackIndex),
                 )
-                PlaybackLaunch(finalQueue, startPositionMs, work)
+                PlaybackLaunch(finalQueue, startPositionMs, work, censoredArt)
             }
         }
     }
@@ -454,7 +457,7 @@ class PlayerViewModel @Inject constructor(
             )
         }
         controller.setMediaItems(
-            launch.queue.items.map { it.toMediaItem() },
+            launch.queue.toMediaItems(censored = launch.censoredArt),
             launch.queue.startIndex,
             launch.startPositionMs,
         )
@@ -466,7 +469,12 @@ class PlayerViewModel @Inject constructor(
         startTicker()
     }
 
-    private data class PlaybackLaunch(val queue: PlayQueue, val startPositionMs: Long, val work: Work)
+    private data class PlaybackLaunch(
+        val queue: PlayQueue,
+        val startPositionMs: Long,
+        val work: Work,
+        val censoredArt: Boolean,
+    )
 
     /**
      * 重算当前封面和谐状态:NSFW 关 且 评级敏感(未分级/R15/R18;评级
@@ -479,10 +487,11 @@ class PlayerViewModel @Inject constructor(
     }
 
     /**
-     * 安全模式开关变化后同步会话队列曲名:NSFW 关 且 评级敏感 → 全部替换
-     * 为「音频 N」;重新打开 → 还原真实曲名(依赖 [realTitlesByIndex],缺失时
-     * 先补加载音轨树)。只换 title,mediaId/uri 不变;保留当前曲目、进度与
-     * 播放状态。标题无变化时直接返回,不触碰会话。
+     * 安全模式开关变化后同步会话队列:NSFW 关 且 评级敏感 → 曲名全部替换
+     * 为「音频 N」且 artworkUri 换和谐形态;重新打开 → 还原真实曲名与真实
+     * 封面 URI(真实曲名依赖 [realTitlesByIndex],缺失时先补加载音轨树)。
+     * 只换 metadata 里的 title/artworkUri,mediaId/uri 不变;保留当前曲目、
+     * 进度与播放状态。两者都无变化时直接返回,不触碰会话。
      */
     private suspend fun syncQueueTitlesToSafeMode() {
         val c = controller ?: return
@@ -503,21 +512,31 @@ class PlayerViewModel @Inject constructor(
             timeline.getWindow(i, window)
             val item = window.mediaItem ?: continue
             val currentTitle = item.mediaMetadata.title?.toString()
-            val trackIndex = item.mediaId?.let(KeySpec::parseTrackKey)?.trackIndex
+            val parts = item.mediaId?.let(KeySpec::parseTrackKey)
+            val trackIndex = parts?.trackIndex
             val desired = safeModeTitle(
                 trackIndex = trackIndex,
                 realTitle = trackIndex?.let(realTitlesByIndex::get),
                 currentTitle = currentTitle,
                 harmonize = harmonize,
             )
+            // 封面与曲名共用 harmonize 决策:目标 artworkUri 编码了 censored
+            // 状态(Media3 通知侧按 URI 缓存,状态必须进 URI 才能换图)。
+            val desiredArtwork = parts?.let { coverArtUri(it.sourceScope, it.rjCode, harmonize) }
+            val artworkChanged = desiredArtwork != null &&
+                item.mediaMetadata.artworkUri != desiredArtwork
             if (i == c.currentMediaItemIndex) currentItemTitle = desired ?: currentTitle
-            if (desired == null || desired == currentTitle) {
+            if ((desired == null || desired == currentTitle) && !artworkChanged) {
                 replacement += item
                 continue
             }
             changed = true
+            val metadata = item.mediaMetadata.buildUpon()
+                .setTitle(desired ?: currentTitle)
+                .apply { desiredArtwork?.let(::setArtworkUri) }
+                .build()
             replacement += item.buildUpon()
-                .setMediaMetadata(item.mediaMetadata.buildUpon().setTitle(desired).build())
+                .setMediaMetadata(metadata)
                 .build()
         }
         if (!changed) return

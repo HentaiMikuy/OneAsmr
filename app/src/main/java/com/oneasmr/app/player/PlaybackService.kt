@@ -34,8 +34,11 @@ import com.oneasmr.app.data.local.PlaybackStateDao
 import com.oneasmr.app.data.local.ProgressState
 import com.oneasmr.app.data.local.Review
 import com.oneasmr.app.data.local.ReviewDao
+import com.oneasmr.app.data.local.WorkDao
+import com.oneasmr.app.data.local.isCensored
 import com.oneasmr.app.data.local.settings.PersistedQueue
 import com.oneasmr.app.data.local.settings.QueueStore
+import com.oneasmr.app.data.local.settings.SettingsStore
 import com.oneasmr.app.domain.player.FairDeckShuffle
 import com.oneasmr.app.domain.player.PlayQueueItem
 import dagger.hilt.android.AndroidEntryPoint
@@ -59,7 +62,10 @@ import kotlinx.coroutines.launch
  *   buttons — 睡眠定时 (sleep-timer countdown display; Task 19 fills the real
  *   timer via [SleepTimerController.onExpired]) and 标记进度 (six-state
  *   toggle through [ProgressStateCycle]). NO "收藏" action — favorites are
- *   explicitly out of scope (plan must-not).
+ *   explicitly out of scope (plan must-not). Artwork: the session bitmap
+ *   loader ([CoverArtBitmapLoader]) resolves the oneasmr-cover: artworkUri
+ *   every item carries — scraped work cover, or the default lock placeholder
+ *   when the safe-mode decision (encoded at build time) says censored.
  * - Audio focus / noisy / wake mode are configured on the player in
  *   [PlayerModule]; Bluetooth media buttons reach the session through the
  *   manifest MediaButtonReceiver (API 26-32) and the platform session
@@ -99,6 +105,15 @@ class PlaybackService : MediaSessionService() {
 
     @Inject
     lateinit var resumePositionResolver: ResumePositionResolver
+
+    @Inject
+    lateinit var workDao: WorkDao
+
+    @Inject
+    lateinit var settingsStore: SettingsStore
+
+    @Inject
+    lateinit var coverArtLoader: CoverArtBitmapLoader
 
     private lateinit var notificationProvider: DefaultMediaNotificationProvider
     private var mediaSession: MediaSession? = null
@@ -163,6 +178,7 @@ class PlaybackService : MediaSessionService() {
 
         mediaSession = MediaSession.Builder(this, player)
             .setCallback(SessionCallback())
+            .setBitmapLoader(coverArtLoader)
             .setSessionActivity(
                 PendingIntent.getActivity(
                     this,
@@ -708,7 +724,15 @@ class PlaybackService : MediaSessionService() {
             val startKey = persisted.items.getOrNull(startIndex)
                 ?.let { KeySpec.trackKey(it.sourceScope, it.rjCode, it.trackIndex) }
             val startPositionMs = resumePositionResolver.resolve(startKey)
-            player.setMediaItems(persisted.items.map { it.toMediaItem() }, startIndex, startPositionMs)
+            // 通知栏封面(见 MediaItemMapper):冷恢复也要按当前 NSFW 开关 +
+            // 作品评级重建和谐决策,否则恢复出的队列在安全模式下会漏出真实封面。
+            val work = if (KeySpec.parseWorkId(persisted.workId)?.sourceScope == KeySpec.LOCAL_SOURCE) {
+                workDao.getById(persisted.workId)
+            } else {
+                null
+            }
+            val censoredArt = !settingsStore.nsfwEnabled.first() && work?.ageRating.isCensored()
+            player.setMediaItems(persisted.items.map { it.toMediaItem(censoredArt) }, startIndex, startPositionMs)
             Log.i(
                 TAG,
                 "session restored: ${persisted.items.size} items at index $startIndex " +

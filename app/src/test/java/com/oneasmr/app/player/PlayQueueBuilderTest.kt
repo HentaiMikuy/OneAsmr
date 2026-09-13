@@ -1,5 +1,6 @@
 package com.oneasmr.app.player
 
+import com.oneasmr.app.data.local.KeySpec
 import com.oneasmr.app.data.scanner.TrackNode
 import com.oneasmr.app.data.scanner.TrackNodeType
 import org.junit.Assert.assertEquals
@@ -106,15 +107,16 @@ class PlayQueueBuilderTest {
         assertEquals("local", item.sourceScope)
         assertEquals("RJ100200", item.rjCode)
         assertEquals("content://doc/t2", item.uri)
-        // The mapper derives the normative trackKey from these fields.
-        assertEquals("local:RJ100200:2", item.toMediaItem().mediaId)
+        // The mapper derives the normative trackKey from these fields
+        // (MediaItemMapperTest exercises the mapper itself under Robolectric).
+        assertEquals("local:RJ100200:2", KeySpec.trackKey(item.sourceScope, item.rjCode, item.trackIndex))
     }
 
     @Test
     fun `remote work id propagates the source scope`() {
         val queue = builder.build("srv1:RJ100200", "w", workTree(), startTrackIndex = 1)
         assertEquals("srv1", queue.items[0].sourceScope)
-        assertEquals("srv1:RJ100200:1", queue.items[0].toMediaItem().mediaId)
+        assertEquals("srv1:RJ100200:1", KeySpec.trackKey(queue.items[0].sourceScope, queue.items[0].rjCode, queue.items[0].trackIndex))
     }
 
     @Test

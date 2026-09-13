@@ -22,6 +22,13 @@ enum class AgeRating(val label: String) {
 }
 
 /**
+ * 和谐规则:未分级(null)/R15/R18 均为敏感;仅 ALL_AGES 豁免。UI(安全模式
+ * 封面/曲名)与播放服务(通知栏封面)共用这一条判定,故与 [AgeRating] 同住
+ * 数据层,供 ui 与 player 两侧引用。
+ */
+fun AgeRating?.isCensored(): Boolean = this != AgeRating.ALL_AGES
+
+/**
  * 单文件的媒体类别。刻意不用 domain 的 MediaType:后者含 TEXT/IMAGE/OTHER,
  * 对 single_file 行是非法值——扫描白名单只放行音视频。
  */
