@@ -43,6 +43,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.oneasmr.app.data.repository.CoverStore
 import com.oneasmr.app.data.repository.CoverType
 import com.oneasmr.app.ui.common.CoverImage
+import com.oneasmr.app.ui.common.SingleFileThumb
 
 private const val TAG = "MiniPlayerBar"
 
@@ -67,7 +68,7 @@ fun MiniPlayerBarHost(
     viewModel: MiniPlayerViewModel = hiltViewModel(),
 ) {
     val snapshot by viewModel.snapshot.collectAsStateWithLifecycle()
-    val censored by viewModel.censored.collectAsStateWithLifecycle()
+    val cover by viewModel.cover.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val coverStore = rememberMiniCoverStore()
 
@@ -93,7 +94,7 @@ fun MiniPlayerBarHost(
     MiniPlayerBar(
         snapshot = snapshot,
         coverStore = coverStore,
-        censored = censored,
+        cover = cover,
         onTap = onTap,
         onTogglePlayPause = viewModel::togglePlayPause,
         onStop = viewModel::stopPlayback,
@@ -110,12 +111,18 @@ fun MiniPlayerBarHost(
  * backdrop mirrors the pill silhouette so the errorContainer flash during the
  * swipe tracks the same footprint. Data sources and interactions are
  * unchanged: tap -> open player, swipe -> stop, button -> play/pause.
+ *
+ * The thumb is the plain [CoverImage] path fed by [MiniCover]: identical
+ * cover chain and identical safe-mode rule as a library card, so the pill can
+ * only ever show what the library shows for the same work. Single-file items
+ * (Videos tab) show their own thumb instead, the same source the singles list
+ * renders.
  */
 @Composable
 private fun MiniPlayerBar(
     snapshot: PlayerSnapshot,
     coverStore: CoverStore,
-    censored: Boolean,
+    cover: MiniCover,
     onTap: () -> Unit,
     onTogglePlayPause: () -> Unit,
     onStop: () -> Unit,
@@ -160,18 +167,26 @@ private fun MiniPlayerBar(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     snapshot.rjCode?.let { rjCode ->
-                        CoverImage(
-                            coverStore = coverStore,
-                            rjCode = rjCode,
-                            type = CoverType.MAIN,
-                            rootFolderUri = null,
-                            relativeDir = null,
-                            censored = censored,
-                            modifier = Modifier
-                                .padding(start = 10.dp, end = 12.dp)
-                                .size(44.dp)
-                                .clip(CircleShape),
-                        )
+                        val thumbModifier = Modifier
+                            .padding(start = 10.dp, end = 12.dp)
+                            .size(44.dp)
+                            .clip(CircleShape)
+                        when (val art = cover) {
+                            is MiniCover.Work -> CoverImage(
+                                coverStore = coverStore,
+                                rjCode = rjCode,
+                                type = CoverType.MAIN,
+                                rootFolderUri = art.rootFolderUri,
+                                relativeDir = art.relativeDir,
+                                ageRating = art.ageRating,
+                                modifier = thumbModifier,
+                            )
+                            is MiniCover.Single -> SingleFileThumb(
+                                thumbSource = art.thumbSource,
+                                kind = art.kind,
+                                modifier = thumbModifier,
+                            )
+                        }
                     }
                     Column(Modifier.weight(1f)) {
                         Text(
@@ -182,10 +197,13 @@ private fun MiniPlayerBar(
                         )
                         // Mono work code matches the Wave B/C card language;
                         // the work title is the fallback when no code exists.
+                        // Single-file keys carry the row id in the code slot,
+                        // so their subtitle is the channel / 单档库 line only.
+                        val monoCode = snapshot.rjCode?.takeIf { cover is MiniCover.Work }
                         Text(
-                            snapshot.rjCode ?: snapshot.workTitle,
+                            monoCode ?: snapshot.workTitle,
                             style = MaterialTheme.typography.labelSmall,
-                            fontFamily = if (snapshot.rjCode != null) FontFamily.Monospace else null,
+                            fontFamily = if (monoCode != null) FontFamily.Monospace else null,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,

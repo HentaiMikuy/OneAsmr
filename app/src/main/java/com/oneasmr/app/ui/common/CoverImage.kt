@@ -12,7 +12,6 @@ import androidx.compose.ui.graphics.painter.ColorPainter
 import androidx.compose.ui.layout.ContentScale
 import coil3.compose.AsyncImage
 import com.oneasmr.app.data.local.AgeRating
-import com.oneasmr.app.data.local.isCensored
 import com.oneasmr.app.data.repository.CoverStore
 import com.oneasmr.app.data.repository.CoverType
 
@@ -28,14 +27,18 @@ import com.oneasmr.app.data.repository.CoverType
  *
  * Safe-mode hook: with NSFW off (see [LocalNsfwEnabled]) and a sensitive
  * [ageRating] (null/R15/R18) the cover renders as [CensoredCoverPlaceholder]
- * instead — no decode, no blur. An explicit [censored] overrides the local
- * (callers that already know the answer, e.g. the mini player) so the
- * placeholder branch short-circuits before any model resolution.
+ * instead — no decode, no blur. The decision comes from [safeModeHidesCover]
+ * and nowhere else, so every caller that passes the work row's real rating
+ * (list card, search row, mini player) masks the cover at exactly the same
+ * threshold.
  *
  * @param coverStore Task 10's cover cache; pass via remember { } from the
  *   ViewModel/Hilt in the calling screen (Task 12).
  * @param rootFolderUri + relativeDir locate the work folder for the bundled
  *   cover fallback; pass null (e.g. remote works) to skip the fallback.
+ * @param ageRating the work row's manual rating (null = 未标记, treated as
+ *   sensitive under safe mode); pass it through rather than pre-computing a
+ *   hidden/shown boolean at the call site.
  */
 @Composable
 fun CoverImage(
@@ -45,11 +48,9 @@ fun CoverImage(
     rootFolderUri: String?,
     relativeDir: String?,
     ageRating: AgeRating? = null,
-    censored: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
-    val censored = censored || (!LocalNsfwEnabled.current && ageRating.isCensored())
-    if (censored) {
+    if (safeModeHidesCover(LocalNsfwEnabled.current, ageRating)) {
         CensoredCoverPlaceholder(modifier)
         return
     }
