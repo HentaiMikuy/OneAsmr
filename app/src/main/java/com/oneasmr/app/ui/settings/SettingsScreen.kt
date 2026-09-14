@@ -324,7 +324,7 @@ fun SettingsScreen(
             Column(Modifier.weight(1f)) {
                 Text("视频后台续播", style = MaterialTheme.typography.bodyLarge)
                 Text(
-                    "关屏或切后台时视频继续播放（仅解码音频以省电，回到前台恢复画面）；关闭则后台自动暂停",
+                    "关屏、切后台或退出视频页后继续播放（仅解码音频以省电，回到前台/重进页面恢复画面）；关闭则离开页面或后台时暂停",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

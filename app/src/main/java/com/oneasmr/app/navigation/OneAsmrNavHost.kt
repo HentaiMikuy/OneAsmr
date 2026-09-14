@@ -63,6 +63,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import androidx.navigation.navDeepLink
+import com.oneasmr.app.data.local.KeySpec
 import com.oneasmr.app.ui.browse.BrowseDimensionScreen
 import com.oneasmr.app.ui.browse.DimensionWorksScreen
 import com.oneasmr.app.ui.library.LibraryScreen
@@ -541,7 +542,17 @@ fun OneAsmrNavHost(
                 Box(if (isRootRoute) Modifier else Modifier.navigationBarsPadding()) {
                     MiniPlayerBarHost(
                         onOpenPlayer = { workId, trackIndex ->
-                            navController.navigate(Routes.player(workId, trackIndex))
+                            // 单档条目(散音视频)的播放页是视频页的单档路由:
+                            // workId 的 scope 决定去处,否则音频播放页会拿
+                            // "single:{fileId}" 去 work 表查而报"作品不在库中"。
+                            val singleFileId = KeySpec.parseWorkId(workId)
+                                ?.takeIf { it.sourceScope == KeySpec.SINGLE_SOURCE }
+                                ?.rjCode?.toLongOrNull()
+                            if (singleFileId != null) {
+                                navController.navigate(Routes.videoPlayerSingle(singleFileId))
+                            } else {
+                                navController.navigate(Routes.player(workId, trackIndex))
+                            }
                         },
                     )
                 }

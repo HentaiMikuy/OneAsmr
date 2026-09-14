@@ -176,10 +176,10 @@ class SettingsStore @Inject constructor(
         dataStore.data.map { it[KEY_ASMR_ONE_BASE_URL] ?: "" }
 
     /**
-     * 视频后台续播开关(默认开)。开:视频页切后台/关屏时不暂停,只临时
-     * 禁用视频轨(仅解码音频,省电接近纯音频播放),回前台恢复画面 ——
-     * ASMR 视频关屏听声音是核心场景。关:保持旧行为,后台即暂停。
-     * 纯音频单文件不受此开关约束,无条件后台续播。
+     * 视频后台续播开关(默认开)。开:视频页切后台/关屏、以及退出单档视频页时
+     * 都不暂停,只临时禁用视频轨(仅解码音频,省电接近纯音频播放),回前台/
+     * 重进页面恢复画面 —— ASMR 视频关屏听声音是核心场景。关:保持旧行为,
+     * 离开页面或后台即暂停。纯音频单文件不受此开关约束,无条件续播。
      */
     val videoBackgroundPlayback: Flow<Boolean> =
         dataStore.data.map { it[KEY_VIDEO_BACKGROUND_PLAYBACK] ?: true }

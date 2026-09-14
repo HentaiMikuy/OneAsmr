@@ -98,16 +98,17 @@ import com.oneasmr.app.data.scanner.WorkPathResolver
 import com.oneasmr.app.domain.player.PlaybackSpeed
 import com.oneasmr.app.navigation.Routes
 import com.oneasmr.app.player.PlaybackService
+import com.oneasmr.app.player.continuesAfterPageExit
 import com.oneasmr.app.player.coverArtUri
 import com.oneasmr.app.player.ResumePositionResolver
 import com.oneasmr.app.player.SessionConnection
 import com.oneasmr.app.player.VideoEntryDecision
 import com.oneasmr.app.player.VideoTrackFinder
+import com.oneasmr.app.ui.common.singleThumbModel
 import com.oneasmr.app.ui.work.DocumentFsFactory
 import com.oneasmr.app.ui.player.SpeedPickerSheet
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
-import java.io.File
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -144,10 +145,16 @@ import kotlinx.coroutines.withContext
  *    [PlaybackService.ACTION_VIDEO_EXIT] restores it verbatim — so
  *    "返回音频队列时恢复音频上下文" is deterministic, not dependent on
  *    process survival.
- * 4. The video is a single-item replacement timeline that is removed on exit;
- *    it never enters the audio queue, so it can never hit repeat/shuffle logic
- *    (plan must-not). The service skips QueueStore persistence in video mode,
- *    so even a force-stop mid-video cold-restores the AUDIO queue.
+ * 4. The video is a single-item replacement timeline that never enters the
+ *    audio queue, so it can never hit repeat/shuffle logic (plan must-not).
+ *    The service skips QueueStore persistence for it, so even a force-stop
+ *    mid-video cold-restores the AUDIO queue.
+ *
+ * Single-file entries (单档, the Videos tab) share the page but not the
+ * attached-video exit contract: this page IS their player page, so leaving it
+ * keeps them playing as ordinary session items ([exitSingleFile]) — mini
+ * player pill, notification, lockscreen controls and resume memory included —
+ * while attached videos are still removed on exit (see [exitVideo]).
  *
  * The MediaItem source is generic ([MediaItem.Builder.setUri]) — this page
  * is local-only today, playing content:// SAF uris from the local library.
@@ -641,6 +648,13 @@ class VideoPlayerViewModel @Inject constructor(
     private var videoTrackDisabledForBackground = false
 
     /**
+     * 「视频后台续播」开关的进程内快照。单档页面退出时([exitVideo])必须同步
+     * 决策是否继续播放,而设置只可能在页面关闭后修改 —— 打开页面时读一次
+     * 就是最新值(设置页在别的路由,页面存活期间改不了)。
+     */
+    private var videoBackgroundPlaybackEnabled = true
+
+    /**
      * The session player for the PlayerView binding(连接完成后才非 null)。
      * 必须是 StateFlow 而非普通属性:AndroidView 的 update lambda 只在其
      * 读取的快照状态变化时重跑 —— 普通属性会让「服务冷启动、控制器晚于
@@ -663,6 +677,10 @@ class VideoPlayerViewModel @Inject constructor(
 
     init {
         connectAndStart()
+        // 退出决策用的开关快照(见 videoBackgroundPlaybackEnabled)。
+        viewModelScope.launch {
+            videoBackgroundPlaybackEnabled = settingsStore.videoBackgroundPlayback.first()
+        }
         // The service's error-restore can supersede the transient player
         // ERROR state before MediaController propagates it (device-verified
         // race), so the explicit app-local failure broadcast is the reliable
@@ -752,6 +770,12 @@ class VideoPlayerViewModel @Inject constructor(
                 _uiState.update { it.copy(loading = false, error = "未找到视频文件") }
                 return@launch
             }
+            // 页面在解析期间就被退出(慢速 SAF 解析 + 用户立刻返回):不要
+            // 背着他启动播放 —— 主线程上此检查与退出/入口互斥,不存在窗口。
+            if (exitRequested) {
+                Log.i(TAG, "video entry aborted: page already left")
+                return@launch
+            }
             _uiState.update {
                 it.copy(
                     loading = false,
@@ -812,11 +836,9 @@ class VideoPlayerViewModel @Inject constructor(
                     name = file.displayTitle,
                     documentUri = uri,
                     workTitle = file.channel ?: "单档库",
-                    // 单档缩略图(边车图/抽帧):thumbSource 原样作 artworkUri,
-                    // 本地绝对路径补 file://(通用解码分支)。
-                    artworkUri = file.thumbSource?.let { path ->
-                        if (path.startsWith("content:")) Uri.parse(path) else Uri.fromFile(File(path))
-                    },
+                    // 单档缩略图(边车图/抽帧):thumbSource 经共享规则解析成
+                    // 通知栏封面 model(与单档列表/胶囊缩略图同一条)。
+                    artworkUri = file.thumbSource?.let(::singleThumbModel),
                 )
             }
         }.getOrElse { e ->
@@ -975,17 +997,34 @@ class VideoPlayerViewModel @Inject constructor(
     }
 
     /**
-     * Video exit (back / page removed): pause first — the service flushes the
-     * video position (Task 19 rules) — then ask the service to restore the
-     * saved audio context. Idempotent via [exitRequested]; the safety-net
-     * [onCleared] path lands here too. When the video FAILED the service has
-     * already restored the audio context, so only the page pops (sending
-     * VIDEO_EXIT then would pause+clear the RESTORED queue).
+     * Page exit (back / page removed). Two different contracts:
+     *
+     * - Attached video (作品附属视频): pause first — the service flushes the
+     *   video position (Task 19 rules) — then ask the service to restore the
+     *   saved audio context. Unchanged Task 22 behaviour.
+     * - Single file (单档, the Videos tab): this page IS the file's player
+     *   page, so leaving it does not stop playback — the item stays in the
+     *   session and keeps playing, with the video track disabled while nobody
+     *   is watching the picture (battery; the same treatment as backgrounding),
+     *   and the mini player pill / notification / lockscreen controls / resume
+     *   memory all work on it like any other item. [continuesAfterPageExit]
+     *   decides whether it continues: audio-only singles always do, video
+     *   singles follow the persisted 「视频后台续播」switch (off => pause and
+     *   roll the audio context back).
+     *
+     * Idempotent via [exitRequested]; the safety-net [onCleared] path lands
+     * here too. When the playback FAILED the service has already restored the
+     * audio context, so only the page pops (sending an exit command then would
+     * pause+clear the RESTORED queue).
      */
     fun exitVideo() {
         if (exitRequested) return
         exitRequested = true
         val c = controller ?: return
+        if (singleFileId != null) {
+            exitSingleFile(c)
+            return
+        }
         // 离开视频页前复位视频轨参数:共享播放器把它带回音频队列虽无
         // 感知,但属状态泄漏,下个视频会莫名黑屏。
         if (videoTrackDisabledForBackground) setVideoTrackDisabled(false)
@@ -995,21 +1034,48 @@ class VideoPlayerViewModel @Inject constructor(
             return
         }
         runCatching { if (c.playWhenReady) c.pause() }
-        val future = c.sendCustomCommand(
-            SessionCommand(PlaybackService.ACTION_VIDEO_EXIT, Bundle.EMPTY),
-            Bundle.EMPTY,
-        )
+        sendVideoCommand(c, PlaybackService.ACTION_VIDEO_EXIT, "video exit: paused + restore command sent")
+    }
+
+    /**
+     * 单档页面退出。ATTACH 进入的页面(胶囊点回)不改变播放状态 —— 会话本就
+     * 没被这类页面打断过,退出只把画面让出去,不需要任何服务命令;ENTER 过的
+     * 页面才需要收尾:继续播放(禁用视频轨 + 让服务结束视频模式,条目留在会话
+     * 里)或暂停回滚(旧行为,「视频后台续播」关时)。
+     */
+    private fun exitSingleFile(c: MediaController) {
+        if (_uiState.value.playbackFailed) {
+            Log.i(TAG, "single exit after failure: service already restored, popping only")
+            return
+        }
+        if (!enteredVideoMode) {
+            setVideoTrackDisabled(true)
+            return
+        }
+        if (continuesAfterPageExit(isAudioOnlySingle, videoBackgroundPlaybackEnabled)) {
+            // 画面无人看:与后台同款省电,只解码音频;条目留在会话里继续播。
+            setVideoTrackDisabled(true)
+            sendVideoCommand(
+                c,
+                PlaybackService.ACTION_VIDEO_LEAVE_PLAYING,
+                "single exit: playback continues (video track disabled)",
+            )
+            return
+        }
+        runCatching { if (c.playWhenReady) c.pause() }
+        sendVideoCommand(c, PlaybackService.ACTION_VIDEO_EXIT, "single exit: paused + audio context restored")
+    }
+
+    /** Fire-and-log a video-mode session command (main-thread executor callback). */
+    private fun sendVideoCommand(c: MediaController, action: String, logMessage: String) {
+        val future = c.sendCustomCommand(SessionCommand(action, Bundle.EMPTY), Bundle.EMPTY)
         future.addListener({
             val result = runCatching { future.get() }.getOrNull()
             if (result?.resultCode != SessionResult.RESULT_SUCCESS) {
-                Log.w(
-                    TAG,
-                    "video exit: restore command failed (code=${result?.resultCode}); " +
-                        "audio queue survives in QueueStore",
-                )
+                Log.w(TAG, "command $action failed (code=${result?.resultCode}); audio queue survives in QueueStore")
             }
         }, ContextCompat.getMainExecutor(context))
-        Log.i(TAG, "video exit: paused + restore command sent")
+        Log.i(TAG, logMessage)
     }
 
     override fun onCleared() {

@@ -293,6 +293,29 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
+    /**
+     * VIDEO_LEAVE_PLAYING handler (单档页面退出但继续播放): ends the video
+     * interruption WITHOUT rolling the audio context back — the item keeps
+     * playing as an ordinary session item, so the mini player pill, the
+     * notification, the lockscreen controls and the Task 19 position memory
+     * all work on it unchanged.
+     *
+     * Clearing [videoMode] here is required, not cosmetic: the flag means
+     * "an attached-video page owns the session" and while set it suppresses
+     * queue persistence for EVERY timeline — leaving it on would silently
+     * stop persisting whatever the user plays next. The dropped
+     * [savedAudioContext] is unreachable anyway (only VIDEO_EXIT reads it,
+     * and every VIDEO_ENTER overwrites it), and the user just chose the
+     * playing item over the pre-video audio queue.
+     */
+    private fun leaveVideoModePlaying() {
+        val dropped = savedAudioContext?.items?.size ?: 0
+        videoMode = false
+        savedAudioContext = null
+        serviceScope.launch { progressWriter.flush() }
+        Log.i(TAG, "video leave-playing: video mode off, item keeps playing (audio context dropped: $dropped items)")
+    }
+
     // ---------------------------------------------------------------------
     // Notification custom actions
     // ---------------------------------------------------------------------
@@ -668,6 +691,15 @@ class PlaybackService : MediaSessionService() {
             Log.i(TAG, "queue snapshot skipped (video mode)")
             return
         }
+        // 单档(散音视频)会话同样是瞬态的:PersistedQueue 只存 trackKey/uri,
+        // 单档缩略图(thumbSource)与现场解析出的 document uri 不在模型里 ——
+        // 写进去只会在冷启动恢复出一个没有封面的残余条目,所以永远保持
+        // "冷启动恢复音频队列"的既有语义。进程内恢复快照([lastQueue],上面已
+        // 更新)不受影响,仍带完整 MediaItem(含缩略图)。
+        if (playQueueItems.isNotEmpty() && playQueueItems.all { it.sourceScope == KeySpec.SINGLE_SOURCE }) {
+            Log.i(TAG, "queue snapshot persistence skipped (single-file session)")
+            return
+        }
         val currentIndex = session.player.currentMediaItemIndex
         serviceScope.launch {
             if (playQueueItems.isEmpty()) {
@@ -774,6 +806,7 @@ class PlaybackService : MediaSessionService() {
                 .add(SessionCommand(ACTION_TOGGLE_PROGRESS, Bundle.EMPTY))
                 .add(SessionCommand(ACTION_VIDEO_ENTER, Bundle.EMPTY))
                 .add(SessionCommand(ACTION_VIDEO_EXIT, Bundle.EMPTY))
+                .add(SessionCommand(ACTION_VIDEO_LEAVE_PLAYING, Bundle.EMPTY))
                 .build()
             return ConnectionResult.accept(
                 sessionCommands,
@@ -814,6 +847,10 @@ class PlaybackService : MediaSessionService() {
                 }
                 ACTION_VIDEO_EXIT -> {
                     exitVideoMode()
+                    return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+                }
+                ACTION_VIDEO_LEAVE_PLAYING -> {
+                    leaveVideoModePlaying()
                     return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
                 }
             }
@@ -901,6 +938,12 @@ class PlaybackService : MediaSessionService() {
         /** Task 22: attached-video page enter/exit (shared-session video mode). */
         const val ACTION_VIDEO_ENTER = "oneasmr.command.video_enter"
         const val ACTION_VIDEO_EXIT = "oneasmr.command.video_exit"
+
+        /**
+         * 单档页面退出但继续播放:结束视频模式(不再抑制持久化 / 不再回滚
+         * 音频上下文),当前条目留在会话里继续播。
+         */
+        const val ACTION_VIDEO_LEAVE_PLAYING = "oneasmr.command.video_leave_playing"
 
         /** Task 22: video playback failed (service restored the audio context). */
         const val ACTION_VIDEO_PLAYBACK_FAILED = "oneasmr.app.video_playback_failed"
