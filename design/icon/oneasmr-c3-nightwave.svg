@@ -44,22 +44,22 @@
 
   <g id="background-layer">
     <rect width="108" height="108" fill="url(#c3-bg)"/>
-    <circle cx="50" cy="54" r="44" fill="url(#c3-halo)"/>
-    <circle cx="78" cy="52" r="26" fill="url(#c3-warm)"/>
+    <circle cx="52.5" cy="57.5" r="44" fill="url(#c3-halo)"/>
+    <circle cx="80.5" cy="55.5" r="26" fill="url(#c3-warm)"/>
     <rect width="108" height="108" fill="url(#c3-sheen)"/>
     <rect width="108" height="108" fill="url(#c3-vignette)"/>
   </g>
 
   <g id="glyph-layer" fill="none" stroke-linecap="round" stroke-linejoin="round">
     <g stroke="url(#c3-line)">
-      <path d="M25,54 C30.5,54 32,38 38,38 C44,38 45.5,70 51.5,70
-               C57.5,70 59,31 65,31 C71,31 72.5,54 78,54"
+      <path d="M27.5,57.5 C33.0,57.5 34.5,41.5 40.5,41.5 C46.5,41.5 48.0,73.5 54.0,73.5
+               C60.0,73.5 61.5,34.5 67.5,34.5 C73.5,34.5 75.0,57.5 80.5,57.5"
             stroke-width="13" stroke-opacity="0.05"/>
-      <path d="M25,54 C30.5,54 32,38 38,38 C44,38 45.5,70 51.5,70
-               C57.5,70 59,31 65,31 C71,31 72.5,54 78,54"
+      <path d="M27.5,57.5 C33.0,57.5 34.5,41.5 40.5,41.5 C46.5,41.5 48.0,73.5 54.0,73.5
+               C60.0,73.5 61.5,34.5 67.5,34.5 C73.5,34.5 75.0,57.5 80.5,57.5"
             stroke-width="7" stroke-opacity="0.09"/>
-      <path d="M25,54 C30.5,54 32,38 38,38 C44,38 45.5,70 51.5,70
-               C57.5,70 59,31 65,31 C71,31 72.5,54 78,54"
+      <path d="M27.5,57.5 C33.0,57.5 34.5,41.5 40.5,41.5 C46.5,41.5 48.0,73.5 54.0,73.5
+               C60.0,73.5 61.5,34.5 67.5,34.5 C73.5,34.5 75.0,57.5 80.5,57.5"
             stroke-width="4"/>
     </g>
   </g>

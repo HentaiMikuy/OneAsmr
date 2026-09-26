@@ -17,7 +17,7 @@
 
     <!-- 辉光外层 -->
     <path
-        android:pathData="M25,54 C30.5,54 32,38 38,38 C44,38 45.5,70 51.5,70 C57.5,70 59,31 65,31 C71,31 72.5,54 78,54"
+        android:pathData="M27.5,57.5 C33,57.5 34.5,41.5 40.5,41.5 C46.5,41.5 48,73.5 54,73.5 C60,73.5 61.5,34.5 67.5,34.5 C73.5,34.5 75,57.5 80.5,57.5"
         android:strokeWidth="13"
         android:strokeAlpha="0.05"
         android:strokeLineCap="round"
@@ -25,8 +25,8 @@
         <aapt:attr name="android:strokeColor">
             <gradient
                 android:type="linear"
-                android:startX="25" android:startY="54"
-                android:endX="78" android:endY="54">
+                android:startX="27.5" android:startY="57.5"
+                android:endX="80.5" android:endY="57.5">
                 <item android:offset="0" android:color="#2FE3D2" />
                 <item android:offset="0.5" android:color="#74EBFF" />
                 <item android:offset="1" android:color="#FFC46B" />
@@ -36,7 +36,7 @@
 
     <!-- 辉光内层 -->
     <path
-        android:pathData="M25,54 C30.5,54 32,38 38,38 C44,38 45.5,70 51.5,70 C57.5,70 59,31 65,31 C71,31 72.5,54 78,54"
+        android:pathData="M27.5,57.5 C33,57.5 34.5,41.5 40.5,41.5 C46.5,41.5 48,73.5 54,73.5 C60,73.5 61.5,34.5 67.5,34.5 C73.5,34.5 75,57.5 80.5,57.5"
         android:strokeWidth="7"
         android:strokeAlpha="0.09"
         android:strokeLineCap="round"
@@ -44,8 +44,8 @@
         <aapt:attr name="android:strokeColor">
             <gradient
                 android:type="linear"
-                android:startX="25" android:startY="54"
-                android:endX="78" android:endY="54">
+                android:startX="27.5" android:startY="57.5"
+                android:endX="80.5" android:endY="57.5">
                 <item android:offset="0" android:color="#2FE3D2" />
                 <item android:offset="0.5" android:color="#74EBFF" />
                 <item android:offset="1" android:color="#FFC46B" />
@@ -55,15 +55,15 @@
 
     <!-- 主线 -->
     <path
-        android:pathData="M25,54 C30.5,54 32,38 38,38 C44,38 45.5,70 51.5,70 C57.5,70 59,31 65,31 C71,31 72.5,54 78,54"
+        android:pathData="M27.5,57.5 C33,57.5 34.5,41.5 40.5,41.5 C46.5,41.5 48,73.5 54,73.5 C60,73.5 61.5,34.5 67.5,34.5 C73.5,34.5 75,57.5 80.5,57.5"
         android:strokeWidth="4"
         android:strokeLineCap="round"
         android:strokeLineJoin="round">
         <aapt:attr name="android:strokeColor">
             <gradient
                 android:type="linear"
-                android:startX="25" android:startY="54"
-                android:endX="78" android:endY="54">
+                android:startX="27.5" android:startY="57.5"
+                android:endX="80.5" android:endY="57.5">
                 <item android:offset="0" android:color="#2FE3D2" />
                 <item android:offset="0.5" android:color="#74EBFF" />
                 <item android:offset="1" android:color="#FFC46B" />
