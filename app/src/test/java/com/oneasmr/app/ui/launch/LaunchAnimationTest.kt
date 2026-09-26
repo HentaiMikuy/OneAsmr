@@ -196,18 +196,51 @@ class LaunchAnimationTest {
         assertEquals(LaunchAnimationSpec.HOLD_MS, branded.holdMs)
         assertTrue(branded.holdMs < branded.markEndMs)
         assertTrue(branded.wordStartMs < branded.markEndMs)
-        assertTrue(branded.wordEndMs == branded.exitStartMs)
+        assertTrue(branded.exitStartMs > branded.wordEndMs)
         assertEquals(branded.exitStartMs + LaunchAnimationSpec.EXIT_MS, branded.totalMs)
-        assertEquals(unbranded.wordEndMs, unbranded.exitStartMs)
         assertEquals(unbranded.exitStartMs + LaunchAnimationSpec.EXIT_MS, unbranded.totalMs)
         // The branded hold is the only difference in length.
         assertEquals(branded.totalMs - unbranded.totalMs, LaunchAnimationSpec.HOLD_MS)
     }
 
+    /**
+     * The finished composition (mark + wordmark) must hold still before the
+     * exit fade — user feedback on device was that ~0.9s of motion was over
+     * before the animation could be read.
+     */
     @Test
-    fun `the whole animation stays inside the about nine tenths of a second budget`() {
-        assertTrue("branded=${branded.totalMs}", branded.totalMs in 800..1000)
-        assertTrue("unbranded=${unbranded.totalMs}", unbranded.totalMs in 700..1000)
+    fun `the finished composition lingers for one and a half seconds`() {
+        assertEquals(1500, LaunchAnimationSpec.LINGER_MS)
+        assertEquals(LaunchAnimationSpec.LINGER_MS, branded.exitStartMs - branded.wordEndMs)
+        assertEquals(LaunchAnimationSpec.LINGER_MS, unbranded.exitStartMs - unbranded.wordEndMs)
+    }
+
+    @Test
+    fun `every frame inside the linger is identical and fully settled`() {
+        val settled = branded.frameAt(branded.wordEndMs)
+        assertEquals(1f, settled.markScale, 1e-4f)
+        assertEquals(1f, settled.markAlpha, 1e-4f)
+        assertEquals(0f, settled.glowAlpha, 1e-4f)
+        assertEquals(0f, settled.sweepAlpha, 1e-4f)
+        assertEquals(1f, settled.wordAlpha, 1e-4f)
+        assertEquals(0f, settled.wordRiseFraction, 1e-4f)
+        assertEquals(1f, settled.overlayAlpha, 0f)
+        assertEquals(1f, settled.contentScale, 0f)
+        // Sampled through the whole pause: nothing moves.
+        for (t in branded.wordEndMs..branded.exitStartMs step 50) {
+            assertEquals("elapsed=$t", settled, branded.frameAt(t))
+        }
+    }
+
+    @Test
+    fun `the motion itself still fits the nine tenths of a second budget`() {
+        // Motion = identity hold + breath + wordmark, i.e. everything up to the
+        // start of the linger; the total is motion + linger + exit.
+        assertTrue("motion=${branded.wordEndMs}", branded.wordEndMs in 600..900)
+        assertEquals(
+            branded.wordEndMs + LaunchAnimationSpec.LINGER_MS + LaunchAnimationSpec.EXIT_MS,
+            branded.totalMs,
+        )
         assertTrue(branded.wordEndMs < branded.totalMs)
         assertTrue(LaunchAnimationSpec.EXIT_MS < LaunchAnimationSpec.MARK_MS)
     }

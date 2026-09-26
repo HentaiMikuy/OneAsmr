@@ -25,11 +25,16 @@ import kotlin.math.sin
  * ## Timeline (branded variant, total [LaunchAnimationSpec.totalMs] ≈ 880ms)
  *
  * ```
- *  0 ─── hold ─── mark window ─────────────── exit ─── end
- *  │     100ms    (breath + glow + sweep)     180ms
+ *  0 ─── hold ─── mark window ─────────── linger ─────── exit ─── end
+ *  │     100ms    (breath + glow + sweep)  1500ms        180ms
  *  │              ├─ wordmark fades/rises (overlaps the mark tail)
  *  └ identity frame == platform splash's last frame
  * ```
+ *
+ * The linger is deliberate: the finished composition (mark + wordmark) holds
+ * still for [LaunchAnimationSpec.LINGER_MS] before the exit fade, otherwise
+ * the whole animation is over before it can be read (user feedback on device).
+ * Its frames are all at their settled values, so the hold is genuinely static.
  *
  * Every value below is expressed relative to the spec's own windows, so
  * changing a duration constant keeps the phases consistent.
@@ -107,8 +112,16 @@ internal class LaunchAnimationSpec(
     val wordStartMs: Int = markEndMs - WORD_OVERLAP_MS
     val wordEndMs: Int = wordStartMs + WORD_MS
 
+    /**
+     * The finished composition (mark + wordmark, everything settled) holds
+     * still for this long before the exit fade starts. Without it the whole
+     * animation was over in ~0.9s and could not be read on a real device
+     * (user feedback), so the pause is part of the contract now.
+     */
+    val lingerMs: Int = LINGER_MS
+
     /** The splash layer fades out while the app content pushes in. */
-    val exitStartMs: Int = wordEndMs
+    val exitStartMs: Int = wordEndMs + lingerMs
     val totalMs: Int = exitStartMs + EXIT_MS
 
     /** Light-sweep sub-window inside the mark window. */
@@ -193,6 +206,13 @@ internal class LaunchAnimationSpec(
         /** Wordmark animation, overlapping the mark's tail by [WORD_OVERLAP_MS]. */
         const val WORD_MS = 320
         const val WORD_OVERLAP_MS = 140
+
+        /**
+         * Still pause on the finished composition before the exit fade.
+         * 1500ms is the user-requested reading time; the sum with the motion
+         * above (~0.7s) and the exit (~0.2s) makes the whole splash ~2.4s.
+         */
+        const val LINGER_MS = 1500
 
         /** Splash fade-out (content push-in runs in the same window). */
         const val EXIT_MS = 180
