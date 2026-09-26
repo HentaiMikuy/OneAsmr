@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  OneAsmr 风格探索 S ——「复古胶印卡带」（两色印刷 + 套印错位）
+
+  语言：奶油纸底色 + 两色印刷（深墨蓝 + 琥珀）＋ 故意错位 2.6 的品红套印，
+  整体是丝网/胶印海报的观感。素材选磁带——"录音"最经典的物质符号，
+  也贴合"本地作品库"的收藏语义。
+  这一稿刻意用浅底，是要和其余深色稿形成强对比；错位用"先画偏移副本"实现，
+  不用混合模式，转 Android 矢量时不会失真。
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 108 108"
+     role="img" aria-label="OneAsmr 风格 S：复古胶印卡带">
+  <title>OneAsmr — S「复古胶印卡带」</title>
+
+  <defs>
+    <linearGradient id="s-paper" x1="0" y1="0" x2="0.4" y2="1">
+      <stop offset="0%" stop-color="#F6EFE0"/>
+      <stop offset="100%" stop-color="#E7DCC6"/>
+    </linearGradient>
+  </defs>
+
+  <g id="background-layer">
+    <rect width="108" height="108" fill="url(#s-paper)"/>
+  </g>
+
+  <g id="glyph-layer">
+    <!-- 套印错位副本（品红，往右下偏 2.6） -->
+    <g transform="translate(2.6,2.6)">
+      <rect x="24" y="38" width="60" height="36" rx="5" fill="#FF73B5"/>
+    </g>
+    <!-- 磁带主体：深墨蓝 -->
+    <rect x="24" y="38" width="60" height="36" rx="5" fill="#17324F"/>
+    <!-- 顶部纸标签 -->
+    <rect x="29" y="42.5" width="50" height="10" rx="2.2" fill="#E8A33D"/>
+    <!-- 两个卷轴窗与卷轴（缩小并拉开，避免和中间窗连成一片） -->
+    <circle cx="41" cy="63" r="7.2" fill="#F6EFE0"/>
+    <circle cx="67" cy="63" r="7.2" fill="#F6EFE0"/>
+    <circle cx="41" cy="63" r="2.8" fill="#17324F"/>
+    <circle cx="67" cy="63" r="2.8" fill="#17324F"/>
+    <!-- 中间观察窗：竖长窄槽（卷轴之间），不做成方块 -->
+    <rect x="52.2" y="59.5" width="3.6" height="7" rx="1.6" fill="#F6EFE0"/>
+    <!-- 底部两个定位孔 -->
+    <rect x="34.5" y="70.5" width="3.6" height="3.6" rx="1" fill="#0E2338" opacity="0.75"/>
+    <rect x="69.9" y="70.5" width="3.6" height="3.6" rx="1" fill="#0E2338" opacity="0.75"/>
+    <!-- 纸标签上的一小段声波（印刷短线） -->
+    <g fill="#17324F">
+      <rect x="34" y="45.6" width="1.8" height="3.8" rx="0.9"/>
+      <rect x="38" y="44.6" width="1.8" height="5.8" rx="0.9"/>
+      <rect x="42" y="43.6" width="1.8" height="7.8" rx="0.9"/>
+      <rect x="46" y="45.6" width="1.8" height="3.8" rx="0.9"/>
+    </g>
+  </g>
+</svg>

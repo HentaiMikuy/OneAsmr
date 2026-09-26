@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  OneAsmr 标志稿 D ——「听者」
+
+  简化的人形标记：实心脑袋 + 肩线 + 一条耳机头梁 + 两只耳罩，共 7 个元素。
+  它说的是这个应用的功能本身（"一个人戴着耳机在听"），但没有五官、没有发色、
+  没有角色属性，因此不属于二次元路线。
+
+  先前试过"字母 O 兼作脑袋"的版本（环 + 头梁 + 两只耳罩），实测两个同心圆
+  只会读成"双层圆环"，双关失败，故改为实心剪影。
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 108 108"
+     role="img" aria-label="OneAsmr 标志 D：戴着耳机的听者">
+  <title>OneAsmr — D「听者」</title>
+  <defs>
+    <radialGradient id="d-bg" cx="50%" cy="44%" r="66%">
+      <stop offset="0%" stop-color="#2E4A82"/>
+      <stop offset="55%" stop-color="#182A55"/>
+      <stop offset="100%" stop-color="#0D1730"/>
+    </radialGradient>
+    <linearGradient id="d-cream" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#D4DEF4"/>
+    </linearGradient>
+  </defs>
+
+  <g id="background-layer">
+    <rect width="108" height="108" fill="url(#d-bg)"/>
+    <circle cx="54" cy="52" r="33" fill="#8FB4FF" opacity="0.06"/>
+  </g>
+
+  <g id="glyph-layer">
+    <!-- 头 + 肩合成一个连续剪影（不留缝，避免看成两截） -->
+    <path fill="url(#d-cream)"
+          d="M54,33 C62,33 68,39 68,47.5 C68,53.5 65,58.5 60.4,61.4
+             C67,64.4 70,71 70,84 L38,84 C38,71 41,64.4 47.6,61.4
+             C43,58.5 40,53.5 40,47.5 C40,39 46,33 54,33 Z"/>
+    <!-- 耳机头梁 -->
+    <path d="M32,48 A22,22 0 0 1 76,48" fill="none"
+          stroke="url(#d-cream)" stroke-width="4.4" stroke-linecap="round"/>
+    <!-- 两只耳罩 -->
+    <ellipse cx="32" cy="50" rx="5.8" ry="7.2" fill="url(#d-cream)"/>
+    <ellipse cx="76" cy="50" rx="5.8" ry="7.2" fill="url(#d-cream)"/>
+    <ellipse cx="32" cy="50" rx="2.5" ry="3.2" fill="#25305A"/>
+    <ellipse cx="76" cy="50" rx="2.5" ry="3.2" fill="#25305A"/>
+  </g>
+</svg>

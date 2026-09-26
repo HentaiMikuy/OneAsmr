@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  OneAsmr 商业级完成度 C1 ——「声波场 · 冷」
+
+  这是 I 稿的产品级做法：概念不变（强色场 + 极简白色声波），但把"完成度"做足：
+    1. 背景 = 三段主渐变 + 左上大范围光源 + 四角暗角 + 顶部斜向柔光（四层叠出来）
+    2. 图形 = 白色但带一层极淡的受光渐变（上白下微冷），不是死白
+    3. 柱高 16/30/46/30/16、等间距，光学居中；图形后方一层柔光把主体托起来
+  全部为渐变与实心形状，无滤镜/混合模式，可直接转 Android 矢量。
+  配色：靛蓝 → 宝蓝 → 青绿（冷色品牌版）。
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 108 108"
+     role="img" aria-label="OneAsmr C1：声波场（冷）">
+  <title>OneAsmr — C1「声波场 · 冷」</title>
+
+  <defs>
+    <linearGradient id="c1-field" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#5A6BF5"/>
+      <stop offset="52%" stop-color="#2450DC"/>
+      <stop offset="100%" stop-color="#0FA9BE"/>
+    </linearGradient>
+    <radialGradient id="c1-light" cx="28%" cy="14%" r="72%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.20"/>
+      <stop offset="58%" stop-color="#FFFFFF" stop-opacity="0.07"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="c1-vignette" cx="50%" cy="52%" r="74%">
+      <stop offset="55%" stop-color="#05123A" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#05123A" stop-opacity="0.40"/>
+    </radialGradient>
+    <linearGradient id="c1-sheen" x1="0" y1="0" x2="0.6" y2="1">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.12"/>
+      <stop offset="60%" stop-color="#FFFFFF" stop-opacity="0.02"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="c1-ink" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#DCE7FF"/>
+    </linearGradient>
+    <radialGradient id="c1-glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.16"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <g id="background-layer">
+    <rect width="108" height="108" fill="url(#c1-field)"/>
+    <rect width="108" height="108" fill="url(#c1-light)"/>
+    <rect width="108" height="108" fill="url(#c1-sheen)"/>
+    <rect width="108" height="108" fill="url(#c1-vignette)"/>
+  </g>
+
+  <g id="glyph-layer">
+    <circle cx="54" cy="54" r="40" fill="url(#c1-glow)"/>
+    <g fill="url(#c1-ink)">
+      <rect x="26.9" y="46.5" width="6.2" height="15" rx="3.1"/>
+      <rect x="38.9" y="40" width="6.2" height="28" rx="3.1"/>
+      <rect x="50.9" y="34" width="6.2" height="40" rx="3.1"/>
+      <rect x="62.9" y="40" width="6.2" height="28" rx="3.1"/>
+      <rect x="74.9" y="46.5" width="6.2" height="15" rx="3.1"/>
+    </g>
+  </g>
+</svg>

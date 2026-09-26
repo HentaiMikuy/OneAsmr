@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  OneAsmr 标志稿 G ——「暖光声环」（趋势：lit-from-within 玻璃光 + 同心涟漪）
+
+  借鉴的不是某个具体图标，而是当下音频/冥想类的共同手法：
+    * 深色径向底 + 一层大面积柔光晕 => "从内部被点亮"
+    * 前景只留一个会发光的球体 + 两圈极淡的声波环
+    * 球体左上角一枚椭圆形镜面高光（玻璃质感的关键）
+  颜色用应用主题里的琥珀主色 #E5B36B 家族：深夜里的暖光，正好对上"睡前听音"。
+  自适应图标：背景层 = 底色 + 光晕，图形层 = 声环 + 光球。
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 108 108"
+     role="img" aria-label="OneAsmr 标志 G：暖光声环">
+  <title>OneAsmr — G「暖光声环」</title>
+
+  <defs>
+    <radialGradient id="g-bg" cx="50%" cy="46%" r="72%">
+      <stop offset="0%" stop-color="#1D2E5E"/>
+      <stop offset="58%" stop-color="#101C3C"/>
+      <stop offset="100%" stop-color="#070E1F"/>
+    </radialGradient>
+    <radialGradient id="g-halo" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FFC978" stop-opacity="0.30"/>
+      <stop offset="55%" stop-color="#FFC978" stop-opacity="0.09"/>
+      <stop offset="100%" stop-color="#FFC978" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="g-orb" cx="36%" cy="30%" r="76%">
+      <stop offset="0%" stop-color="#FFF3D6"/>
+      <stop offset="42%" stop-color="#F6C377"/>
+      <stop offset="100%" stop-color="#D57F26"/>
+    </radialGradient>
+  </defs>
+
+  <g id="background-layer">
+    <rect width="108" height="108" fill="url(#g-bg)"/>
+    <circle cx="54" cy="54" r="40" fill="url(#g-halo)"/>
+  </g>
+
+  <g id="glyph-layer">
+    <!-- 声环：越远越淡，带一点青绿以免发灰 -->
+    <circle cx="54" cy="54" r="33" fill="none" stroke="#CFEDE9" stroke-opacity="0.10" stroke-width="1.4"/>
+    <circle cx="54" cy="54" r="25.5" fill="none" stroke="#CFEDE9" stroke-opacity="0.18" stroke-width="1.7"/>
+    <!-- 光球 -->
+    <circle cx="54" cy="54" r="15.5" fill="url(#g-orb)"/>
+    <!-- 镜面高光 -->
+    <ellipse cx="48.4" cy="47.2" rx="4.6" ry="2.8" fill="#FFFFFF" opacity="0.5"
+             transform="rotate(-30 48.4 47.2)"/>
+  </g>
+</svg>

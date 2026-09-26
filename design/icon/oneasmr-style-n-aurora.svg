@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  OneAsmr 风格探索 N ——「极光渐层」（Aurora mesh，助眠/冥想气质）  v2
+
+  v1 的教训：青绿 + 暖金 + 紫罗兰三色低透明度叠在近黑底上，中间混出了脏灰
+  （互补色在低饱和下必然发灰）。v2 改两点：
+    * 主色改同一色系（青绿 → 青蓝 → 紫罗兰），只在右上留一抹品牌品红做暖点，
+      避免互补色大面积相接；
+    * 中心透明度提高（0.62/0.5/0.5），并加一层四周压暗的 vignette，
+      让柔光像"发光"而不是"脏印子"。
+  全部径向渐变实现，无滤镜。
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 108 108"
+     role="img" aria-label="OneAsmr 风格 N：极光渐层与声波线">
+  <title>OneAsmr — N「极光渐层」</title>
+
+  <defs>
+    <radialGradient id="n-bg" cx="50%" cy="50%" r="76%">
+      <stop offset="0%" stop-color="#0D1830"/>
+      <stop offset="100%" stop-color="#04060E"/>
+    </radialGradient>
+    <radialGradient id="n-aur1" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#21E0CC" stop-opacity="0.62"/>
+      <stop offset="58%" stop-color="#21E0CC" stop-opacity="0.16"/>
+      <stop offset="100%" stop-color="#21E0CC" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="n-aur2" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#4A8BFF" stop-opacity="0.5"/>
+      <stop offset="58%" stop-color="#4A8BFF" stop-opacity="0.13"/>
+      <stop offset="100%" stop-color="#4A8BFF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="n-aur3" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#8A5BFF" stop-opacity="0.5"/>
+      <stop offset="58%" stop-color="#8A5BFF" stop-opacity="0.13"/>
+      <stop offset="100%" stop-color="#8A5BFF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="n-warm" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FF73B5" stop-opacity="0.5"/>
+      <stop offset="60%" stop-color="#FF73B5" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#FF73B5" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="n-vignette" cx="50%" cy="50%" r="72%">
+      <stop offset="52%" stop-color="#04060E" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#04060E" stop-opacity="0.6"/>
+    </radialGradient>
+  </defs>
+
+  <g id="background-layer">
+    <rect width="108" height="108" fill="url(#n-bg)"/>
+    <circle cx="34" cy="36" r="42" fill="url(#n-aur1)"/>
+    <circle cx="78" cy="44" r="34" fill="url(#n-aur2)"/>
+    <circle cx="44" cy="86" r="40" fill="url(#n-aur3)"/>
+    <circle cx="88" cy="26" r="22" fill="url(#n-warm)"/>
+    <rect width="108" height="108" fill="url(#n-vignette)"/>
+  </g>
+
+  <g id="glyph-layer">
+    <!-- 极细声波线 + 一层柔光描边 -->
+    <g fill="none" stroke-linecap="round">
+      <path d="M29,54 C34.5,54 36,45 41.5,45 C47,45 48.5,63 54,63
+               C59.5,63 61,37 66.5,37 C72,37 73.5,54 79,54"
+            stroke="#FFFFFF" stroke-opacity="0.22" stroke-width="7"/>
+      <path d="M29,54 C34.5,54 36,45 41.5,45 C47,45 48.5,63 54,63
+               C59.5,63 61,37 66.5,37 C72,37 73.5,54 79,54"
+            stroke="#FFFFFF" stroke-opacity="0.94" stroke-width="3.2"/>
+    </g>
+  </g>
+</svg>

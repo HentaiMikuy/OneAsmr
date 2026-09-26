@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  OneAsmr 风格探索 Q ——「等距声波柱」（伪 3D / 等距）
+
+  语言：把均衡器柱做成等距立体块——每个柱体 = 正面 + 顶面 + 右侧面三块颜色，
+  统一往右上偏 3.2/1.9，底部加一片椭圆地影把它按在"地面"上。
+  这是 2025-2026 应用图标里很常见的"3D 渲染感"，与前面所有平面稿都不撞。
+  全部是矩形与多边形，没有滤镜/混合模式，可 1:1 转 Android 矢量。
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 108 108"
+     role="img" aria-label="OneAsmr 风格 Q：等距声波柱">
+  <title>OneAsmr — Q「等距声波柱」</title>
+
+  <defs>
+    <radialGradient id="q-bg" cx="50%" cy="40%" r="74%">
+      <stop offset="0%" stop-color="#1B2C58"/>
+      <stop offset="60%" stop-color="#0F1A36"/>
+      <stop offset="100%" stop-color="#070D1D"/>
+    </radialGradient>
+    <radialGradient id="q-ambient" cx="50%" cy="56%" r="50%">
+      <stop offset="0%" stop-color="#FFC978" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#FFC978" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="q-floor" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#000814" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#000814" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="q-front" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#F7B863"/>
+      <stop offset="100%" stop-color="#DE9433"/>
+    </linearGradient>
+  </defs>
+
+  <g id="background-layer">
+    <rect width="108" height="108" fill="url(#q-bg)"/>
+    <circle cx="54" cy="52" r="42" fill="url(#q-ambient)"/>
+  </g>
+
+  <g id="glyph-layer">
+    <!-- 地影 -->
+    <ellipse cx="56" cy="78.5" rx="32" ry="5.8" fill="url(#q-floor)"/>
+
+    <!-- 柱 1（高 14，基准线 y=76，深度 3.4/2） -->
+    <polygon points="26.25,62 29.65,60 37.65,60 34.25,62" fill="#FFD79A"/>
+    <polygon points="34.25,62 37.65,60 37.65,74 34.25,76" fill="#B96F1C"/>
+    <rect x="26.25" y="62" width="8" height="14" rx="1.3" fill="url(#q-front)"/>
+
+    <!-- 柱 2（高 24） -->
+    <polygon points="38.25,52 41.65,50 49.65,50 46.25,52" fill="#FFD79A"/>
+    <polygon points="46.25,52 49.65,50 49.65,74 46.25,76" fill="#B96F1C"/>
+    <rect x="38.25" y="52" width="8" height="24" rx="1.3" fill="url(#q-front)"/>
+
+    <!-- 柱 3（高 34，最高） -->
+    <polygon points="50.25,42 53.65,40 61.65,40 58.25,42" fill="#FFE3B8"/>
+    <polygon points="58.25,42 61.65,40 61.65,74 58.25,76" fill="#C87A1F"/>
+    <rect x="50.25" y="42" width="8" height="34" rx="1.3" fill="url(#q-front)"/>
+
+    <!-- 柱 4（高 24） -->
+    <polygon points="62.25,52 65.65,50 73.65,50 70.25,52" fill="#FFD79A"/>
+    <polygon points="70.25,52 73.65,50 73.65,74 70.25,76" fill="#B96F1C"/>
+    <rect x="62.25" y="52" width="8" height="24" rx="1.3" fill="url(#q-front)"/>
+
+    <!-- 柱 5（高 14） -->
+    <polygon points="74.25,62 77.65,60 85.65,60 82.25,62" fill="#FFD79A"/>
+    <polygon points="82.25,62 85.65,60 85.65,74 82.25,76" fill="#B96F1C"/>
+    <rect x="74.25" y="62" width="8" height="14" rx="1.3" fill="url(#q-front)"/>
+  </g>
+</svg>

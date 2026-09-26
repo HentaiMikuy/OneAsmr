@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  OneAsmr 商业级完成度 C2 ——「声波场 · 暖」
+
+  与 C1 同一套结构与打磨流程（主渐变 + 光源 + 柔光 + 暗角 + 受光图形），
+  只把品牌色换成暖色：琥珀 → 珊瑚 → 品红。
+  这样你可以只挑"气质"，不用再挑"形式"——同一枚标志两个配色版本。
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 108 108"
+     role="img" aria-label="OneAsmr C2：声波场（暖）">
+  <title>OneAsmr — C2「声波场 · 暖」</title>
+
+  <defs>
+    <linearGradient id="c2-field" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#FFB259"/>
+      <stop offset="52%" stop-color="#FF5E7A"/>
+      <stop offset="100%" stop-color="#C31E8C"/>
+    </linearGradient>
+    <radialGradient id="c2-light" cx="28%" cy="14%" r="72%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.22"/>
+      <stop offset="58%" stop-color="#FFFFFF" stop-opacity="0.07"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="c2-vignette" cx="50%" cy="52%" r="74%">
+      <stop offset="55%" stop-color="#3A0518" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#3A0518" stop-opacity="0.38"/>
+    </radialGradient>
+    <linearGradient id="c2-sheen" x1="0" y1="0" x2="0.6" y2="1">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.12"/>
+      <stop offset="60%" stop-color="#FFFFFF" stop-opacity="0.02"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="c2-ink" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#FFE9F3"/>
+    </linearGradient>
+    <radialGradient id="c2-glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <g id="background-layer">
+    <rect width="108" height="108" fill="url(#c2-field)"/>
+    <rect width="108" height="108" fill="url(#c2-light)"/>
+    <rect width="108" height="108" fill="url(#c2-sheen)"/>
+    <rect width="108" height="108" fill="url(#c2-vignette)"/>
+  </g>
+
+  <g id="glyph-layer">
+    <circle cx="54" cy="54" r="40" fill="url(#c2-glow)"/>
+    <g fill="url(#c2-ink)">
+      <rect x="26.9" y="46.5" width="6.2" height="15" rx="3.1"/>
+      <rect x="38.9" y="40" width="6.2" height="28" rx="3.1"/>
+      <rect x="50.9" y="34" width="6.2" height="40" rx="3.1"/>
+      <rect x="62.9" y="40" width="6.2" height="28" rx="3.1"/>
+      <rect x="74.9" y="46.5" width="6.2" height="15" rx="3.1"/>
+    </g>
+  </g>
+</svg>

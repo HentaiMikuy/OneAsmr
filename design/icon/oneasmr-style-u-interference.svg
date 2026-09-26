@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  OneAsmr 风格探索 U ——「双波干涉」（两条波交织）
+
+  两条波相位相反、振幅此消彼长（一条 15→9，另一条 9→15），在画面里反复交叉；
+  在交叉点处把青绿那条重新压在暖金那条之上，形成"编织"的上下关系。
+  青绿→青 与 暖金→品红 两套渐变各走一条波，暗底上像两道互相干涉的光。
+  两条波的折线坐标同样由脚本算出（1.75 个周期，跨度 22..86）。
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 108 108"
+     role="img" aria-label="OneAsmr 风格 U：双波干涉">
+  <title>OneAsmr — U「双波干涉」</title>
+
+  <defs>
+    <radialGradient id="u-bg" cx="50%" cy="48%" r="72%">
+      <stop offset="0%" stop-color="#152546"/>
+      <stop offset="60%" stop-color="#0A1226"/>
+      <stop offset="100%" stop-color="#04070E"/>
+    </radialGradient>
+    <radialGradient id="u-halo" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#5AA8FF" stop-opacity="0.14"/>
+      <stop offset="100%" stop-color="#5AA8FF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="u-cool" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#3FD9CE"/>
+      <stop offset="100%" stop-color="#74EBFF"/>
+    </linearGradient>
+    <linearGradient id="u-warm" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#FFC46B"/>
+      <stop offset="100%" stop-color="#FF73B5"/>
+    </linearGradient>
+    <path id="u-a"
+          d="M22.0,54.0 L23.07,51.28 L24.13,48.7 L25.2,46.32 L26.27,44.23 L27.33,42.5 L28.4,41.17
+             L29.47,40.29 L30.53,39.88 L31.6,39.94 L32.67,40.48 L33.73,41.45 L34.8,42.84 L35.87,44.57
+             L36.93,46.59 L38.0,48.83 L39.07,51.21 L40.13,53.65 L41.2,56.06 L42.27,58.37 L43.33,60.5
+             L44.4,62.38 L45.47,63.95 L46.53,65.16 L47.6,65.98 L48.67,66.39 L49.73,66.38 L50.8,65.96
+             L51.87,65.15 L52.93,63.97 L54.0,62.49 L55.07,60.74 L56.13,58.8 L57.2,56.73 L58.27,54.61
+             L59.33,52.5 L60.4,50.48 L61.47,48.61 L62.53,46.95 L63.6,45.56 L64.67,44.47 L65.73,43.73
+             L66.8,43.33 L67.87,43.3 L68.93,43.63 L70.0,44.3 L71.07,45.28 L72.13,46.53 L73.2,48.0
+             L74.27,49.65 L75.33,51.41 L76.4,53.22 L77.47,55.02 L78.53,56.75 L79.6,58.36 L80.67,59.78
+             L81.73,60.99 L82.8,61.93 L83.87,62.59 L84.93,62.95 L86.0,63.0"/>
+    <path id="u-b"
+          d="M22.0,54.0 L23.07,55.66 L24.13,57.3 L25.2,58.86 L26.27,60.29 L27.33,61.54 L28.4,62.55
+             L29.47,63.3 L30.53,63.75 L31.6,63.87 L32.67,63.66 L33.73,63.12 L34.8,62.25 L35.87,61.09
+             L36.93,59.66 L38.0,58.02 L39.07,56.2 L40.13,54.28 L41.2,52.31 L42.27,50.36 L43.33,48.5
+             L44.4,46.79 L45.47,45.3 L46.53,44.07 L47.6,43.16 L48.67,42.6 L49.73,42.42 L50.8,42.62
+             L51.87,43.22 L52.93,44.19 L54.0,45.51 L55.07,47.15 L56.13,49.04 L57.2,51.13 L58.27,53.35
+             L59.33,55.63 L60.4,57.89 L61.47,60.06 L62.53,62.06 L63.6,63.81 L64.67,65.26 L65.73,66.35
+             L66.8,67.04 L67.87,67.3 L68.93,67.11 L70.0,66.47 L71.07,65.41 L72.13,63.94 L73.2,62.11
+             L74.27,59.98 L75.33,57.62 L76.4,55.11 L77.47,52.52 L78.53,49.94 L79.6,47.46 L80.67,45.17
+             L81.73,43.15 L82.8,41.47 L83.87,40.18 L84.93,39.35 L86.0,39.0"/>
+  </defs>
+
+  <g id="background-layer">
+    <rect width="108" height="108" fill="url(#u-bg)"/>
+    <circle cx="54" cy="54" r="42" fill="url(#u-halo)"/>
+  </g>
+
+  <g id="glyph-layer" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <!-- 两层辉光 -->
+    <use href="#u-a" stroke="url(#u-cool)" stroke-width="10" stroke-opacity="0.11"/>
+    <use href="#u-b" stroke="url(#u-warm)" stroke-width="10" stroke-opacity="0.11"/>
+    <!-- 主线：冷色在下、暖色压上来 -->
+    <use href="#u-a" stroke="url(#u-cool)" stroke-width="3.8"/>
+    <use href="#u-b" stroke="url(#u-warm)" stroke-width="3.8"/>
+    <!-- 交叉处把冷色重新压回，做出"编织"的上下关系 -->
+    <path d="M39.07,51.21 L40.13,53.65 L41.2,56.06" stroke="url(#u-cool)" stroke-width="3.8"/>
+    <path d="M76.4,53.22 L77.47,55.02 L78.53,56.75" stroke="url(#u-cool)" stroke-width="3.8"/>
+  </g>
+</svg>

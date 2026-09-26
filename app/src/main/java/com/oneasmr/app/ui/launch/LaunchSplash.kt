@@ -23,11 +23,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
@@ -182,9 +179,9 @@ private fun LaunchSplashLayer(frame: State<LaunchAnimationFrame>) {
         )
 
         Box(Modifier.size(MARK_SIZE_DP.dp), contentAlignment = Alignment.Center) {
-            // The mark. 288dp is the splash-screen icon budget the platform
-            // draws `ic_splash` at; the drawable itself keeps the glyph inside
-            // the central 2/3 (192dp) circle, i.e. exactly the disc size below.
+            // The mark（「暗夜声线」波形）。288dp 是平台启动图画 `ic_splash` 的
+            // 图标预算；drawable 自身把波形收在画布中央（跨度 25–78 / 108），
+            // 所以这里按原尺寸居中绘制即可与平台那一帧逐像素对齐。
             Image(
                 painter = painterResource(R.drawable.ic_splash),
                 contentDescription = null,
@@ -197,32 +194,29 @@ private fun LaunchSplashLayer(frame: State<LaunchAnimationFrame>) {
                         alpha = f.markAlpha
                     },
             )
-            // Light sweep, clipped to the disc (the disc is the central 192dp
-            // circle of the 288dp canvas: 72/108 of the viewport).
+            // 掠过一层斜向柔光（玻璃反光）。波形没有"圆盘"可裁剪，所以光带
+            // 直接铺在 288dp 标记框上：只在穿过波形与背景时各加一点点亮度。
             Box(
                 Modifier
-                    .size(DISC_SIZE_DP.dp)
+                    .size(MARK_SIZE_DP.dp)
                     .drawWithContent {
                         drawContent()
                         val f = frame.value
                         if (f.sweepAlpha > 0f) {
-                            val disc = Path().apply { addOval(Rect(Offset.Zero, size)) }
-                            clipPath(disc) {
-                                val band = size.width * 0.5f
-                                val cx = size.width * (f.sweepX + 1f) / 2f
-                                drawRect(
-                                    brush = Brush.linearGradient(
-                                        colors = listOf(
-                                            Color.Transparent,
-                                            Color.White,
-                                            Color.Transparent,
-                                        ),
-                                        start = Offset(cx - band / 2f, 0f),
-                                        end = Offset(cx + band / 2f, size.height),
+                            val band = size.width * 0.42f
+                            val cx = size.width * (f.sweepX + 1f) / 2f
+                            drawRect(
+                                brush = Brush.linearGradient(
+                                    colors = listOf(
+                                        Color.Transparent,
+                                        Color.White,
+                                        Color.Transparent,
                                     ),
-                                    alpha = f.sweepAlpha,
-                                )
-                            }
+                                    start = Offset(cx - band / 2f, 0f),
+                                    end = Offset(cx + band / 2f, size.height * 0.55f),
+                                ),
+                                alpha = f.sweepAlpha,
+                            )
                         }
                     },
             )
@@ -262,9 +256,6 @@ private fun LaunchSplashLayer(frame: State<LaunchAnimationFrame>) {
 
 /** Splash-screen icon budget the platform uses for `ic_splash` (288dp canvas). */
 private const val MARK_SIZE_DP = 288f
-
-/** The mark's disc: 72/108 of the 288dp canvas, per `ic_splash`'s viewport. */
-private const val DISC_SIZE_DP = 192f
 
 /** Wordmark centre offset (below the mark's canvas) and its rise distance. */
 private const val WORD_OFFSET_DP = 150f

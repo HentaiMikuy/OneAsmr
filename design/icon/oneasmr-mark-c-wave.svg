@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  OneAsmr 标志稿 C ——「声波环」
+
+  最直白的一条路：一个环 + 五根声波柱 = 音频 / 录音的通用语义。
+  环用奶白描边，柱用青绿渐变、中间一根品红点题；小尺寸下只剩"一个圈里有声音"，
+  信息量刚好。
+
+  注意：竖直直线的包围盒宽高为 0，青绿渐变必须用 userSpaceOnUse（objectBoundingBox
+  会退化成不可见——B 稿 v1 踩过这个坑）。
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 108 108"
+     role="img" aria-label="OneAsmr 标志 C：声波环">
+  <title>OneAsmr — C「声波环」</title>
+  <defs>
+    <radialGradient id="c-bg" cx="50%" cy="44%" r="66%">
+      <stop offset="0%" stop-color="#2E4A82"/>
+      <stop offset="55%" stop-color="#182A55"/>
+      <stop offset="100%" stop-color="#0D1730"/>
+    </radialGradient>
+    <linearGradient id="c-cream" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#D4DEF4"/>
+    </linearGradient>
+    <linearGradient id="c-teal" gradientUnits="userSpaceOnUse" x1="54" y1="34" x2="54" y2="74">
+      <stop offset="0%" stop-color="#8CF4E8"/>
+      <stop offset="100%" stop-color="#2BB9AF"/>
+    </linearGradient>
+  </defs>
+
+  <g id="background-layer">
+    <rect width="108" height="108" fill="url(#c-bg)"/>
+    <circle cx="54" cy="52" r="33" fill="#8FB4FF" opacity="0.06"/>
+  </g>
+
+  <g id="glyph-layer">
+    <circle cx="54" cy="54" r="30" fill="none" stroke="url(#c-cream)" stroke-width="4.6"/>
+    <g fill="none" stroke-linecap="round" stroke-width="3.6">
+      <path d="M42,47 V61" stroke="url(#c-teal)"/>
+      <path d="M48,40 V68" stroke="url(#c-teal)"/>
+      <path d="M54,34 V74" stroke="#FF73B5"/>
+      <path d="M60,40 V68" stroke="url(#c-teal)"/>
+      <path d="M66,47 V61" stroke="url(#c-teal)"/>
+    </g>
+  </g>
+</svg>

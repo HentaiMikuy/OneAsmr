@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  OneAsmr 风格探索 L ——「霓虹声线」（Neon glow line）
+
+  语言：近乎纯黑的底 + 一条青绿到暖金的霓虹声波曲线。
+  辉光不用 SVG 滤镜（Android 矢量不支持），而是把同一条曲线描三遍：
+  宽 10 / 透明 10%、宽 6 / 透明 18%、宽 3.2 / 不透明 —— 叠加出外发光。
+  这是"夜里开着均衡器听音"的画面，也是深色系播放器最常用的一种气质。
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 108 108"
+     role="img" aria-label="OneAsmr 风格 L：霓虹声线">
+  <title>OneAsmr — L「霓虹声线」</title>
+
+  <defs>
+    <radialGradient id="l-bg" cx="50%" cy="46%" r="74%">
+      <stop offset="0%" stop-color="#17264C"/>
+      <stop offset="62%" stop-color="#0B1327"/>
+      <stop offset="100%" stop-color="#070B16"/>
+    </radialGradient>
+    <radialGradient id="l-ambient" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#2FE3D2" stop-opacity="0.16"/>
+      <stop offset="100%" stop-color="#2FE3D2" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="l-line" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#2FE3D2"/>
+      <stop offset="52%" stop-color="#74EBFF"/>
+      <stop offset="100%" stop-color="#FFC46B"/>
+    </linearGradient>
+  </defs>
+
+  <g id="background-layer">
+    <rect width="108" height="108" fill="url(#l-bg)"/>
+    <circle cx="52" cy="54" r="42" fill="url(#l-ambient)"/>
+  </g>
+
+  <g id="glyph-layer">
+    <g fill="none" stroke-linecap="round" stroke-linejoin="round" stroke="url(#l-line)">
+      <path d="M25,54 C30.5,54 32,38 38,38 C44,38 45.5,70 51.5,70
+               C57.5,70 59,31 65,31 C71,31 72.5,54 78,54"
+            stroke-width="11" stroke-opacity="0.09"/>
+      <path d="M25,54 C30.5,54 32,38 38,38 C44,38 45.5,70 51.5,70
+               C57.5,70 59,31 65,31 C71,31 72.5,54 78,54"
+            stroke-width="6.5" stroke-opacity="0.16"/>
+      <path d="M25,54 C30.5,54 32,38 38,38 C44,38 45.5,70 51.5,70
+               C57.5,70 59,31 65,31 C71,31 72.5,54 78,54"
+            stroke-width="3.6"/>
+    </g>
+  </g>
+</svg>

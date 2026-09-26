@@ -2,13 +2,14 @@
 <resources>
     <!--
         API 31+ platform splash (plan Task 28): the starting window shows the
-        brand-colored background with the chibi glyph on its gradient disc,
-        then fades into the activity. windowSplashScreen* are framework attrs
-        introduced in API 31, so this variant file only applies where the
-        platform can honor them; API 26-30 fall back to the base theme's
-        branded window background. windowSplashScreenIconBackgroundColor is
-        intentionally not set: ic_splash paints its own disc, and leaving the
-        attribute out lets the icon use the full 288dp/192dp splash budget.
+        brand-colored background with the「暗夜声线」wave mark, then fades into
+        the activity. windowSplashScreen* are framework attrs introduced in
+        API 31, so this variant file only applies where the platform can honor
+        them; API 26-30 fall back to the base theme's branded window
+        background. windowSplashScreenIconBackgroundColor is intentionally not
+        set: ic_splash is a bare waveform (no plate to sit on), so leaving the
+        attribute out keeps it on the full 288dp/192dp splash budget and lets
+        the dark brand colour read through behind it.
     -->
     <style name="Theme.OneAsmr" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/ic_launcher_background</item>

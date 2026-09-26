@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  OneAsmr 风格探索 W ——「液态玻璃」（Liquid Glass：折射 + 高光）
+
+  语言：一块有机形状的液态玻璃浮在声波之上。关键做法不是画个玻璃球，而是
+  让"玻璃后面真的有东西"——青绿→暖金的声波画在背景层、横穿整幅画面，
+  再叠上几乎透明的玻璃体（白 30% → 6% 的径向渐变）。
+  于是透过玻璃看到的声波被压暗、被柔化，玻璃外的一段保持清晰，形成折射感。
+  再补一枚椭圆镜面高光和一点右下反光。
+  全部靠透明度叠加实现，没有混合模式与滤镜。
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 108 108"
+     role="img" aria-label="OneAsmr 风格 W：液态玻璃与声波">
+  <title>OneAsmr — W「液态玻璃」</title>
+
+  <defs>
+    <radialGradient id="w-bg" cx="50%" cy="44%" r="74%">
+      <stop offset="0%" stop-color="#1A2B58"/>
+      <stop offset="60%" stop-color="#0E1936"/>
+      <stop offset="100%" stop-color="#060B18"/>
+    </radialGradient>
+    <linearGradient id="w-line" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#2FE3D2"/>
+      <stop offset="52%" stop-color="#74EBFF"/>
+      <stop offset="100%" stop-color="#FFC46B"/>
+    </linearGradient>
+    <radialGradient id="w-glass" cx="34%" cy="26%" r="86%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.26"/>
+      <stop offset="55%" stop-color="#DCEBFF" stop-opacity="0.07"/>
+      <stop offset="100%" stop-color="#9FC6FF" stop-opacity="0.03"/>
+    </radialGradient>
+    <radialGradient id="w-warm" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FFC46B" stop-opacity="0.30"/>
+      <stop offset="100%" stop-color="#FFC46B" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <g id="background-layer">
+    <rect width="108" height="108" fill="url(#w-bg)"/>
+    <!-- 玻璃后面的声波：两端露在玻璃外，中间被玻璃盖住 -->
+    <g fill="none" stroke-linecap="round" stroke="url(#w-line)">
+      <path d="M18,54 C24,54 25.5,40 31.5,40 C37.5,40 39,68 45,68
+               C51,68 52.5,35 58.5,35 C64.5,35 66,54 72,54
+               C78,54 79.5,44 85.5,44 C91.5,44 93,54 96,54"
+            stroke-width="3.4" stroke-opacity="0.95"/>
+    </g>
+    <circle cx="76" cy="72" r="26" fill="url(#w-warm)"/>
+  </g>
+
+  <g id="glyph-layer">
+    <!-- 液态玻璃体 -->
+    <path d="M55,22.5 C70,22 82.5,33 82,48 C81.5,63 72,76.5 57,79.5
+             C43,82.3 29.5,73 27.5,58.5 C25.6,44.5 34,30.5 46,25.5
+             C49.1,24.2 52.1,22.7 55,22.5 Z"
+          fill="url(#w-glass)"/>
+    <path d="M55,22.5 C70,22 82.5,33 82,48 C81.5,63 72,76.5 57,79.5
+             C43,82.3 29.5,73 27.5,58.5 C25.6,44.5 34,30.5 46,25.5
+             C49.1,24.2 52.1,22.7 55,22.5 Z"
+          fill="none" stroke="#FFFFFF" stroke-opacity="0.5" stroke-width="1.2"/>
+    <!-- 镜面高光 + 右下反光 -->
+    <ellipse cx="43" cy="34" rx="6.4" ry="3.2" fill="#FFFFFF" opacity="0.5"
+             transform="rotate(-26 43 34)"/>
+    <ellipse cx="67" cy="66" rx="4.2" ry="2.4" fill="#FFFFFF" opacity="0.18"
+             transform="rotate(-24 67 66)"/>
+  </g>
+</svg>

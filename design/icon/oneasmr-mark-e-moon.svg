@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  OneAsmr 标志稿 E ——「夜与声波」
+
+  情绪向的一条路：暖金色的月牙（呼应应用主题里的琥珀主色 #E5B36B）开口朝右，
+  两道青绿波纹从开口扩散出去 = "夜里戴着耳机听声音"。月亮本身是"晚上/放松"，
+  波纹是"声音"，两个元素说明白用途，且完全不依赖角色。
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 108 108"
+     role="img" aria-label="OneAsmr 标志 E：月牙与声波">
+  <title>OneAsmr — E「夜与声波」</title>
+  <defs>
+    <radialGradient id="e-bg" cx="50%" cy="44%" r="66%">
+      <stop offset="0%" stop-color="#2E4A82"/>
+      <stop offset="55%" stop-color="#182A55"/>
+      <stop offset="100%" stop-color="#0D1730"/>
+    </radialGradient>
+    <linearGradient id="e-moon" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFE1A8"/>
+      <stop offset="100%" stop-color="#E2A94E"/>
+    </linearGradient>
+  </defs>
+
+  <g id="background-layer">
+    <rect width="108" height="108" fill="url(#e-bg)"/>
+    <circle cx="54" cy="52" r="33" fill="#8FB4FF" opacity="0.06"/>
+  </g>
+
+  <g id="glyph-layer">
+    <!-- 月牙：大圆减去偏右的小圆，开口朝右 -->
+    <path d="M70,34 A26,26 0 1 0 70,76 A22,22 0 1 1 70,34 Z" fill="url(#e-moon)"/>
+    <!-- 两道波纹从开口扩散 -->
+    <g fill="none" stroke="#4FDCD0" stroke-linecap="round">
+      <path d="M74,48 A8,8 0 0 1 74,62" stroke-width="4.2"/>
+      <path d="M81,39 A17,17 0 0 1 81,71" stroke-width="4.2"/>
+    </g>
+  </g>
+</svg>

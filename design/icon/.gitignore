@@ -1,0 +1,3 @@
+# 渲染/生成产物：用 `bash design/icon/render.sh` 可随时重出，不进版本库。
+*.png
+preview.html

@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  OneAsmr 图标设计稿 B ——「耳机 + 声波」  (v2)
+
+  v1 的 bug：五根声波柱用了 objectBoundingBox 线性渐变，而竖直直线的包围盒
+  宽高为 0，渐变退化成不可见 → 只剩中间那根纯色柱。v2 改成 userSpaceOnUse
+  渐变（显式坐标），并把声波画得更饱满。
+
+  构图：一条头梁弧 + 两只耳罩 + 中间五根声波柱（中间一根品红点题）。
+  #background-layer = ic_launcher_background，#glyph-layer = ic_launcher_foreground。
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 108 108"
+     role="img" aria-label="OneAsmr 图标 B：耳机与声波">
+  <title>OneAsmr — B「耳机 · 声波」</title>
+
+  <defs>
+    <radialGradient id="b-bg" cx="50%" cy="44%" r="66%">
+      <stop offset="0%" stop-color="#2E4A82"/>
+      <stop offset="55%" stop-color="#182A55"/>
+      <stop offset="100%" stop-color="#0D1730"/>
+    </radialGradient>
+    <linearGradient id="b-cream" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#D4DEF4"/>
+    </linearGradient>
+    <!-- userSpaceOnUse：竖直柱的包围盒宽高为 0，objectBoundingBox 会退化 -->
+    <linearGradient id="b-wave" gradientUnits="userSpaceOnUse" x1="54" y1="41" x2="54" y2="67">
+      <stop offset="0%" stop-color="#8CF4E8"/>
+      <stop offset="100%" stop-color="#2BB9AF"/>
+    </linearGradient>
+  </defs>
+
+  <!-- ================= 背景层 ================= -->
+  <g id="background-layer">
+    <rect width="108" height="108" fill="url(#b-bg)"/>
+    <circle cx="54" cy="52" r="33" fill="#8FB4FF" opacity="0.06"/>
+  </g>
+
+  <!-- ================= 图形层 ================= -->
+  <g id="glyph-layer">
+    <!-- 头梁 -->
+    <path d="M28,60 A26,26 0 0 1 80,60" fill="none"
+          stroke="url(#b-cream)" stroke-width="5.4" stroke-linecap="round"/>
+
+    <!-- 耳罩：奶白外壳 + 深蓝内盘 + 品红圈 -->
+    <g id="ear-cups">
+      <ellipse cx="28" cy="65" rx="7.4" ry="9.2" fill="url(#b-cream)"/>
+      <ellipse cx="80" cy="65" rx="7.4" ry="9.2" fill="url(#b-cream)"/>
+      <ellipse cx="28" cy="65" rx="4.4" ry="5.8" fill="#25305A"/>
+      <ellipse cx="80" cy="65" rx="4.4" ry="5.8" fill="#25305A"/>
+      <ellipse cx="28" cy="65" rx="4.4" ry="5.8" fill="none" stroke="#FF73B5" stroke-width="1.2"/>
+      <ellipse cx="80" cy="65" rx="4.4" ry="5.8" fill="none" stroke="#FF73B5" stroke-width="1.2"/>
+    </g>
+
+    <!-- 声波：五根圆头柱，中间一根品红 -->
+    <g id="waveform" fill="none" stroke-linecap="round" stroke-width="3.8">
+      <path d="M41.5,50.5 V59.5" stroke="url(#b-wave)"/>
+      <path d="M47.6,46.5 V63.5" stroke="url(#b-wave)"/>
+      <path d="M54,43 V67" stroke="#FF73B5"/>
+      <path d="M60.4,46.5 V63.5" stroke="url(#b-wave)"/>
+      <path d="M66.5,50.5 V59.5" stroke="url(#b-wave)"/>
+    </g>
+  </g>
+</svg>

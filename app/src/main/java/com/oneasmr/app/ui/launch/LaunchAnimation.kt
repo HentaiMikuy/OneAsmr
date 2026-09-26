@@ -41,9 +41,9 @@ internal data class LaunchAnimationFrame(
     val markAlpha: Float,
     /** Soft teal bloom behind the mark (0f = invisible, i.e. seam-safe). */
     val glowAlpha: Float,
-    /** Horizontal position of the light sweep across the disc: -1 left → 1 right. */
+    /** Horizontal position of the light sweep across the mark: -1 left → 1 right. */
     val sweepX: Float,
-    /** Alpha of the light sweep (0f = invisible). */
+    /** Alpha of the light sweep across the mark box (0f = invisible). */
     val sweepAlpha: Float,
     /** Alpha of the wordmark block. */
     val wordAlpha: Float,
@@ -142,7 +142,7 @@ internal class LaunchAnimationSpec(
         // Glow: zero at both window edges (so it never breaks the seam).
         val glowAlpha = GLOW_PEAK * markSwell
 
-        // Sweep: a band of light crossing the disc, alpha-faded at both ends.
+        // Sweep: a soft band of light crossing the mark, alpha-faded at both ends.
         val sweepP = fraction(t, sweepStartMs, sweepEndMs)
         val sweepAlpha = SWEEP_PEAK * sin(PI * sweepP.toDouble()).toFloat()
         val sweepX = -1f + 2f * sweepP
@@ -204,7 +204,7 @@ internal class LaunchAnimationSpec(
         const val MARK_IN_FROM_SCALE = 0.92f
 
         const val GLOW_PEAK = 0.55f
-        const val SWEEP_PEAK = 0.30f
+        const val SWEEP_PEAK = 0.12f
         const val EXIT_SCALE_GROWTH = 0.06f
 
         /** Peak swell of the content behind the fading splash (2%). */

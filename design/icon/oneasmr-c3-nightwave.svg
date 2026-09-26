@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  OneAsmr 商业级完成度 C3 ——「暗夜声线」（深色高级版 L）
+
+  深色系音频/助眠类产品的做法：底几乎全黑，但用一层大范围冷光把中心托起来，
+  再让波形本身发光。和 L 的区别在"完成度"：
+    * 底 = 两段暗渐变 + 中心冷光晕 + 顶部极淡高光 + 暗角，四层叠出纵深
+    * 线 = 青绿 → 青 → 暖金渐变，三层描边叠辉光，线宽收到 4
+    * 额外一层暖光晕落在右端，避免左右两端亮度一样平
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 108 108"
+     role="img" aria-label="OneAsmr C3：暗夜声线">
+  <title>OneAsmr — C3「暗夜声线」</title>
+
+  <defs>
+    <linearGradient id="c3-bg" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0%" stop-color="#141F3E"/>
+      <stop offset="55%" stop-color="#0A1124"/>
+      <stop offset="100%" stop-color="#05070F"/>
+    </linearGradient>
+    <radialGradient id="c3-halo" cx="46%" cy="50%" r="46%">
+      <stop offset="0%" stop-color="#3FD9CE" stop-opacity="0.20"/>
+      <stop offset="100%" stop-color="#3FD9CE" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="c3-warm" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FFC46B" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#FFC46B" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="c3-vignette" cx="50%" cy="52%" r="74%">
+      <stop offset="52%" stop-color="#02040A" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#02040A" stop-opacity="0.55"/>
+    </radialGradient>
+    <linearGradient id="c3-sheen" x1="0" y1="0" x2="0.5" y2="1">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.07"/>
+      <stop offset="55%" stop-color="#FFFFFF" stop-opacity="0.01"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="c3-line" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#2FE3D2"/>
+      <stop offset="50%" stop-color="#74EBFF"/>
+      <stop offset="100%" stop-color="#FFC46B"/>
+    </linearGradient>
+  </defs>
+
+  <g id="background-layer">
+    <rect width="108" height="108" fill="url(#c3-bg)"/>
+    <circle cx="50" cy="54" r="44" fill="url(#c3-halo)"/>
+    <circle cx="78" cy="52" r="26" fill="url(#c3-warm)"/>
+    <rect width="108" height="108" fill="url(#c3-sheen)"/>
+    <rect width="108" height="108" fill="url(#c3-vignette)"/>
+  </g>
+
+  <g id="glyph-layer" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <g stroke="url(#c3-line)">
+      <path d="M25,54 C30.5,54 32,38 38,38 C44,38 45.5,70 51.5,70
+               C57.5,70 59,31 65,31 C71,31 72.5,54 78,54"
+            stroke-width="13" stroke-opacity="0.05"/>
+      <path d="M25,54 C30.5,54 32,38 38,38 C44,38 45.5,70 51.5,70
+               C57.5,70 59,31 65,31 C71,31 72.5,54 78,54"
+            stroke-width="7" stroke-opacity="0.09"/>
+      <path d="M25,54 C30.5,54 32,38 38,38 C44,38 45.5,70 51.5,70
+               C57.5,70 59,31 65,31 C71,31 72.5,54 78,54"
+            stroke-width="4"/>
+    </g>
+  </g>
+</svg>

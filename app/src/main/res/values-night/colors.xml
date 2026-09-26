@@ -1,11 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!--
-        Dark-mode adaptation of the window/splash background: the platform
-        picks the -night variant when the device is in dark mode, so the
-        splash and cold-start window deepen the midnight navy slightly. The
-        launcher icon's gradient background layer is unaffected; the
-        themed-icon monochrome layer handles contrast on API 33+.
+        深色模式下的窗口/启动底：新图标本身就是深色，夜间再压深一档，
+        让启动画面与图标在纯黑壁纸下都不至于"浮起来"。
     -->
-    <color name="ic_launcher_background">#14234A</color>
+    <color name="ic_launcher_background">#070C18</color>
 </resources>

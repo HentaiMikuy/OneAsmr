@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  OneAsmr 风格探索 K ——「玻璃负形」（Glassmorphism + 负空间）
+
+  语言：一块琥珀玻璃圆盘，声波不是"画上去的"，而是从盘面上挖出来的槽
+  （槽内填底色，视觉上等于镂空），再配左上角的镜面边缘光和右下角的
+  内阴影，让盘面像一片有厚度的玻璃。
+  和 I 稿的区别：I 是"强色场 + 白符号"，K 是"色块在图形层、负形做符号"，
+  主色也从科技蓝换成品牌琥珀。
+  说明：全部是实心形状，没有用滤镜，之后转 Android 矢量时可直接落地。
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 108 108"
+     role="img" aria-label="OneAsmr 风格 K：玻璃负形">
+  <title>OneAsmr — K「玻璃负形」</title>
+
+  <defs>
+    <radialGradient id="k-bg" cx="50%" cy="44%" r="72%">
+      <stop offset="0%" stop-color="#1B2B58"/>
+      <stop offset="58%" stop-color="#0F1B3A"/>
+      <stop offset="100%" stop-color="#070D1E"/>
+    </radialGradient>
+    <radialGradient id="k-ambient" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FFC978" stop-opacity="0.20"/>
+      <stop offset="100%" stop-color="#FFC978" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="k-glass" x1="0.12" y1="0" x2="0.88" y2="1">
+      <stop offset="0%" stop-color="#FFE0AE"/>
+      <stop offset="46%" stop-color="#F0AE55"/>
+      <stop offset="100%" stop-color="#C2741D"/>
+    </linearGradient>
+  </defs>
+
+  <g id="background-layer">
+    <rect width="108" height="108" fill="url(#k-bg)"/>
+    <circle cx="54" cy="54" r="44" fill="url(#k-ambient)"/>
+  </g>
+
+  <g id="glyph-layer">
+    <!-- 玻璃盘 -->
+    <circle cx="54" cy="54" r="31.5" fill="url(#k-glass)"/>
+    <!-- 负形声波：五条等宽槽，留出更多内边距（不顶到盘边） -->
+    <g fill="#0A1122">
+      <rect x="36" y="47.5" width="4.8" height="13" rx="2.4"/>
+      <rect x="43.8" y="41.5" width="4.8" height="25" rx="2.4"/>
+      <rect x="51.6" y="35.5" width="4.8" height="37" rx="2.4"/>
+      <rect x="59.4" y="41.5" width="4.8" height="25" rx="2.4"/>
+      <rect x="67.2" y="47.5" width="4.8" height="13" rx="2.4"/>
+    </g>
+    <!-- 左上边缘高光 / 右下内阴影：玻璃厚度（阴影收得很轻） -->
+    <path d="M33.5,39.5 A31.5,31.5 0 0 1 63,24.5" fill="none" stroke="#FFFFFF"
+          stroke-opacity="0.5" stroke-width="2.5" stroke-linecap="round"/>
+    <path d="M72.5,71.5 A31.5,31.5 0 0 1 54,85.5" fill="none" stroke="#7A3F06"
+          stroke-opacity="0.26" stroke-width="2.4" stroke-linecap="round"/>
+  </g>
+</svg>

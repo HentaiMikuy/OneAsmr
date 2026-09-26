@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  OneAsmr 风格探索 R ——「环形频谱」  v3
+
+  v2 的两侧短柱只有 4.6 长，和上下 15.2 的主瓣反差过大、看着像生了刺。
+  v3 把包络收匀（最短 9.8 / 最长 15.0），颜色仍按垂直位置走 暖金 → 青 → 青绿，
+  整体读成一颗对称的"声波火花"。坐标由偶函数包络算出，左右严格对称。
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 108 108"
+     role="img" aria-label="OneAsmr 风格 R：环形频谱">
+  <title>OneAsmr — R「环形频谱」</title>
+
+  <defs>
+    <radialGradient id="r-bg" cx="50%" cy="48%" r="72%">
+      <stop offset="0%" stop-color="#16264C"/>
+      <stop offset="60%" stop-color="#0B1428"/>
+      <stop offset="100%" stop-color="#05080F"/>
+    </radialGradient>
+    <radialGradient id="r-core" cx="38%" cy="32%" r="76%">
+      <stop offset="0%" stop-color="#FFF3D6"/>
+      <stop offset="55%" stop-color="#F6C377"/>
+      <stop offset="100%" stop-color="#D57F26"/>
+    </radialGradient>
+    <radialGradient id="r-halo" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FFC978" stop-opacity="0.28"/>
+      <stop offset="100%" stop-color="#FFC978" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <g id="background-layer">
+    <rect width="108" height="108" fill="url(#r-bg)"/>
+    <circle cx="54" cy="54" r="42" fill="url(#r-halo)"/>
+  </g>
+
+  <g id="glyph-layer">
+    <g fill="none" stroke-linecap="round" stroke-width="2.8">
+      <g stroke="#FFC46B">
+        <path d="M54.0,40.5 L54.0,25.5"/>
+        <path d="M58.17,41.16 L62.56,27.64"/>
+        <path d="M61.94,43.08 L69.25,33.0"/>
+        <path d="M64.92,46.06 L74.93,38.79"/>
+        <path d="M66.84,49.83 L76.93,46.55"/>
+        <path d="M41.16,49.83 L31.07,46.55"/>
+        <path d="M43.08,46.06 L33.07,38.79"/>
+        <path d="M46.06,43.08 L38.75,33.0"/>
+        <path d="M49.83,41.16 L45.44,27.64"/>
+      </g>
+      <g stroke="#74EBFF">
+        <path d="M67.5,54.0 L76.39,54.0"/>
+        <path d="M40.5,54.0 L31.61,54.0"/>
+      </g>
+      <g stroke="#3FD9CE">
+        <path d="M66.84,58.17 L76.93,61.45"/>
+        <path d="M64.92,61.94 L74.93,69.21"/>
+        <path d="M61.94,64.92 L69.25,75.0"/>
+        <path d="M58.17,66.84 L62.56,80.36"/>
+        <path d="M54.0,67.5 L54.0,82.5"/>
+        <path d="M49.83,66.84 L45.44,80.36"/>
+        <path d="M46.06,64.92 L38.75,75.0"/>
+        <path d="M43.08,61.94 L33.07,69.21"/>
+        <path d="M41.16,58.17 L31.07,61.45"/>
+      </g>
+    </g>
+    <circle cx="54" cy="54" r="5.2" fill="url(#r-core)"/>
+  </g>
+</svg>

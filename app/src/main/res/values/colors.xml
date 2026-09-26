@@ -1,11 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!--
-        Window/splash background (icon vol.3): the midnight navy from the
-        middle of the launcher-background gradient (ic_launcher_background
-        drawable), so the splash disc and the cold-start window frame sit on
-        a matching flat tone. The launcher icon itself no longer uses this
-        color; its background layer is the gradient drawable.
+        Window/splash background（「暗夜声线」版）：取自新图标四层底的中间调
+        （#141F3E → #0A1124 → #05070F），让平台启动图、冷启动窗口和图标本身
+        落在同一个色域里。图标背景层是渐变 drawable，这里是它的平色代表值。
     -->
-    <color name="ic_launcher_background">#1A2C55</color>
+    <color name="ic_launcher_background">#0A1020</color>
 </resources>

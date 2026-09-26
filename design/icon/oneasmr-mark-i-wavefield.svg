@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  OneAsmr 标志稿 I ——「渐变声波场」（趋势：强色场 + 极简白色符号）
+
+  这条路线直接对标当下主流音乐 App 的做法（Apple Music / Spotify 一路）：
+  用整块高饱和渐变当背景层，前景只放一个极简白色符号，对比度拉满。
+  区别在于符号不画音符，而是五根声波柱；中间一根留暖色，作为品牌琥珀色的
+  唯一落点，避免整体太"科技蓝"。
+  玻璃质感体现在左上到右下的柔光层 + 四周轻微压暗（vignette）。
+  自适应图标：背景层 = 渐变色场 + 柔光，图形层 = 声波柱。
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 108 108"
+     role="img" aria-label="OneAsmr 标志 I：渐变声波场">
+  <title>OneAsmr — I「渐变声波场」</title>
+
+  <defs>
+    <linearGradient id="i-field" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#3ABAFF"/>
+      <stop offset="52%" stop-color="#1E63E0"/>
+      <stop offset="100%" stop-color="#12A79C"/>
+    </linearGradient>
+    <linearGradient id="i-sheen" x1="0" y1="0" x2="0.55" y2="1">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.28"/>
+      <stop offset="45%" stop-color="#FFFFFF" stop-opacity="0.04"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="i-vignette" cx="50%" cy="50%" r="74%">
+      <stop offset="58%" stop-color="#00123A" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#00123A" stop-opacity="0.38"/>
+    </radialGradient>
+  </defs>
+
+  <g id="background-layer">
+    <rect width="108" height="108" fill="url(#i-field)"/>
+    <rect width="108" height="108" fill="url(#i-sheen)"/>
+    <rect width="108" height="108" fill="url(#i-vignette)"/>
+  </g>
+
+  <g id="glyph-layer">
+    <g fill="none" stroke-linecap="round" stroke-width="5.2">
+      <path d="M36,50.5 V57.5" stroke="#FFFFFF" stroke-opacity="0.72"/>
+      <path d="M45,43 V65" stroke="#FFFFFF" stroke-opacity="0.9"/>
+      <path d="M54,36.5 V71.5" stroke="#FFE0A8"/>
+      <path d="M63,43 V65" stroke="#FFFFFF" stroke-opacity="0.9"/>
+      <path d="M72,50.5 V57.5" stroke="#FFFFFF" stroke-opacity="0.72"/>
+    </g>
+  </g>
+</svg>

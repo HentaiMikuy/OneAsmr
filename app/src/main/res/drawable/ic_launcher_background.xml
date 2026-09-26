@@ -1,9 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    OneAsmr launcher background (vol.3): a midnight indigo-to-teal gradient
-    with a soft glow behind the character and faint concentric "sound rings"
-    that radiate from the centre. Kept as its own layer so launchers can
-    parallax it behind the foreground glyph.
+    OneAsmr launcher background ——「暗夜声线」四层底（C3 完成度）
+
+    四层叠出纵深，全部是渐变，没有位图：
+      1) 主渐变：深靛蓝 → 深空蓝 → 近黑（斜向 135°）
+      2) 冷光晕：中心偏左一圈青绿柔光，把前景托起来
+      3) 暖光晕：右侧一抹琥珀光，避免左右亮度一样平
+      4) 顶部柔光 + 四角暗角：玻璃感与收边
+    保持独立图层，以便启动器做视差。
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:aapt="http://schemas.android.com/aapt"
@@ -11,52 +15,69 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Midnight gradient -->
-    <path
-        android:pathData="M0,0 H108 V108 H0 Z">
+
+    <!-- 1) 主渐变 -->
+    <path android:pathData="M0,0 H108 V108 H0 Z">
         <aapt:attr name="android:fillColor">
-            <gradient android:type="linear" android:startX="20" android:startY="0" android:endX="88" android:endY="108">
-                <item android:offset="0" android:color="#2C2F63" />
-                <item android:offset="0.55" android:color="#1B2E5A" />
-                <item android:offset="1" android:color="#10334A" />
+            <gradient
+                android:type="linear"
+                android:startX="0" android:startY="0"
+                android:endX="37.8" android:endY="108">
+                <item android:offset="0" android:color="#141F3E" />
+                <item android:offset="0.55" android:color="#0A1124" />
+                <item android:offset="1" android:color="#05070F" />
             </gradient>
         </aapt:attr>
     </path>
-    <!-- Soft glow behind the head -->
-    <path
-        android:pathData="M0,0 H108 V108 H0 Z"
-        android:fillAlpha="0.42">
+
+    <!-- 2) 冷光晕 -->
+    <path android:pathData="M0,0 H108 V108 H0 Z">
         <aapt:attr name="android:fillColor">
-            <gradient android:type="radial" android:centerX="54" android:centerY="50" android:gradientRadius="40">
-                <item android:offset="0" android:color="#5A78C8" />
-                <item android:offset="0.6" android:color="#00000000" />
-                <item android:offset="1" android:color="#00000000" />
+            <gradient
+                android:type="radial"
+                android:centerX="50" android:centerY="54" android:gradientRadius="44">
+                <item android:offset="0" android:color="#332FE3D2" />
+                <item android:offset="1" android:color="#002FE3D2" />
             </gradient>
         </aapt:attr>
     </path>
-    <!-- Sound ring r=24 -->
-    <path
-        android:pathData="M30,54 A24,24 0 1 0 78,54 A24,24 0 1 0 30,54 Z"
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="1.1"
-        android:strokeLineCap="round"
-        android:strokeAlpha="0.1" />
-    <path
-        android:pathData="M21,54 A33,33 0 1 0 87,54 A33,33 0 1 0 21,54 Z"
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="1.1"
-        android:strokeLineCap="round"
-        android:strokeAlpha="0.07" />
-    <path
-        android:pathData="M11,54 A43,43 0 1 0 97,54 A43,43 0 1 0 11,54 Z"
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="1.1"
-        android:strokeLineCap="round"
-        android:strokeAlpha="0.06" />
-    <path
-        android:pathData="M0,54 A54,54 0 1 0 108,54 A54,54 0 1 0 0,54 Z"
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="1.1"
-        android:strokeLineCap="round"
-        android:strokeAlpha="0.04" />
+
+    <!-- 3) 暖光晕 -->
+    <path android:pathData="M0,0 H108 V108 H0 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="radial"
+                android:centerX="78" android:centerY="52" android:gradientRadius="26">
+                <item android:offset="0" android:color="#38FFC46B" />
+                <item android:offset="1" android:color="#00FFC46B" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- 4a) 顶部斜向柔光 -->
+    <path android:pathData="M0,0 H108 V108 H0 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="0" android:startY="0"
+                android:endX="54" android:endY="108">
+                <item android:offset="0" android:color="#12FFFFFF" />
+                <item android:offset="0.55" android:color="#03FFFFFF" />
+                <item android:offset="1" android:color="#00FFFFFF" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- 4b) 四角暗角 -->
+    <path android:pathData="M0,0 H108 V108 H0 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="radial"
+                android:centerX="54" android:centerY="54" android:gradientRadius="80">
+                <item android:offset="0" android:color="#0002040A" />
+                <item android:offset="0.52" android:color="#0002040A" />
+                <item android:offset="1" android:color="#8C02040A" />
+            </gradient>
+        </aapt:attr>
+    </path>
 </vector>

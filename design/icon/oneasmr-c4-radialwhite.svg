@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  OneAsmr 商业级完成度 C4 ——「白光频谱」
+
+  同一套商业级底（主渐变 + 光源 + 柔光 + 暗角 + 顶部高光），换成放射形符号：
+  20 根白色放射柱（长度上下对称、左右对称）+ 白色实心核。
+  纯白符号压在饱和紫蓝场上，是小尺寸最不容易糊的组合；
+  这也是"商业 App 图标"里最常见的做法之一：一个干净白色符号 + 一块有光源的色场。
+  放射几何复用 R 稿（偶函数包络算出的对称坐标）。
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 108 108"
+     role="img" aria-label="OneAsmr C4：白光频谱">
+  <title>OneAsmr — C4「白光频谱」</title>
+
+  <defs>
+    <linearGradient id="c4-field" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#9A6BFF"/>
+      <stop offset="50%" stop-color="#5B3BE8"/>
+      <stop offset="100%" stop-color="#2F7BE8"/>
+    </linearGradient>
+    <radialGradient id="c4-light" cx="28%" cy="14%" r="72%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.32"/>
+      <stop offset="58%" stop-color="#FFFFFF" stop-opacity="0.07"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="c4-vignette" cx="50%" cy="52%" r="74%">
+      <stop offset="55%" stop-color="#160A3A" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#160A3A" stop-opacity="0.42"/>
+    </radialGradient>
+    <linearGradient id="c4-sheen" x1="0" y1="0" x2="0.6" y2="1">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.12"/>
+      <stop offset="60%" stop-color="#FFFFFF" stop-opacity="0.02"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="c4-glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <g id="background-layer">
+    <rect width="108" height="108" fill="url(#c4-field)"/>
+    <rect width="108" height="108" fill="url(#c4-light)"/>
+    <rect width="108" height="108" fill="url(#c4-sheen)"/>
+    <rect width="108" height="108" fill="url(#c4-vignette)"/>
+  </g>
+
+  <g id="glyph-layer">
+    <circle cx="54" cy="54" r="38" fill="url(#c4-glow)"/>
+    <g fill="none" stroke="#FFFFFF" stroke-opacity="0.94" stroke-linecap="round" stroke-width="2.9">
+      <path d="M54.0,40.5 L54.0,25.5"/>
+      <path d="M58.17,41.16 L62.56,27.64"/>
+      <path d="M61.94,43.08 L69.25,33.0"/>
+      <path d="M64.92,46.06 L74.93,38.79"/>
+      <path d="M66.84,49.83 L76.93,46.55"/>
+      <path d="M41.16,49.83 L31.07,46.55"/>
+      <path d="M43.08,46.06 L33.07,38.79"/>
+      <path d="M46.06,43.08 L38.75,33.0"/>
+      <path d="M49.83,41.16 L45.44,27.64"/>
+      <path d="M67.5,54.0 L76.39,54.0"/>
+      <path d="M40.5,54.0 L31.61,54.0"/>
+      <path d="M66.84,58.17 L76.93,61.45"/>
+      <path d="M64.92,61.94 L74.93,69.21"/>
+      <path d="M61.94,64.92 L69.25,75.0"/>
+      <path d="M58.17,66.84 L62.56,80.36"/>
+      <path d="M54.0,67.5 L54.0,82.5"/>
+      <path d="M49.83,66.84 L45.44,80.36"/>
+      <path d="M46.06,64.92 L38.75,75.0"/>
+      <path d="M43.08,61.94 L33.07,69.21"/>
+      <path d="M41.16,58.17 L31.07,61.45"/>
+    </g>
+    <circle cx="54" cy="54" r="5.4" fill="#FFFFFF"/>
+  </g>
+</svg>

@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  OneAsmr 标志稿 J ——「玻璃播放键」（趋势：黑胶 / 声波 / 播放键 三大音频母题）
+
+  音频类图标的三个老母题里，G 走声环、H 走黑胶、I 走声波，这一稿补上"播放键"。
+  做法不是画一个实心三角，而是按当下语言给它一个玻璃底盘：
+    * 底盘几乎透明（白 22% → 3% 的径向渐变），靠一圈 1.6px 的玻璃边和左上角
+      一道镜面弧把它"托"出来 —— Liquid Glass 的层次与边缘光
+    * 三角用白→冷的线性渐变 + round join，避免廉价感
+  自适应图标：背景层 = 底色 + 环境光，图形层 = 玻璃盘 + 播放键。
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 108 108"
+     role="img" aria-label="OneAsmr 标志 J：玻璃播放键">
+  <title>OneAsmr — J「玻璃播放键」</title>
+
+  <defs>
+    <radialGradient id="j-bg" cx="50%" cy="44%" r="72%">
+      <stop offset="0%" stop-color="#1E3064"/>
+      <stop offset="58%" stop-color="#101C3D"/>
+      <stop offset="100%" stop-color="#070E20"/>
+    </radialGradient>
+    <radialGradient id="j-ambient" cx="50%" cy="52%" r="50%">
+      <stop offset="0%" stop-color="#FFC978" stop-opacity="0.16"/>
+      <stop offset="100%" stop-color="#FFC978" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="j-plate" cx="36%" cy="28%" r="82%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.24"/>
+      <stop offset="60%" stop-color="#FFFFFF" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0.03"/>
+    </radialGradient>
+    <linearGradient id="j-play" x1="0" y1="0" x2="0.45" y2="1">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#D5E0F7"/>
+    </linearGradient>
+  </defs>
+
+  <g id="background-layer">
+    <rect width="108" height="108" fill="url(#j-bg)"/>
+    <circle cx="54" cy="54" r="42" fill="url(#j-ambient)"/>
+  </g>
+
+  <g id="glyph-layer">
+    <!-- 玻璃底盘 -->
+    <circle cx="54" cy="54" r="30" fill="url(#j-plate)"/>
+    <circle cx="54" cy="54" r="30" fill="none" stroke="#FFFFFF" stroke-opacity="0.26" stroke-width="1.6"/>
+    <path d="M32.5,39.5 A30,30 0 0 1 62.5,25.2" fill="none" stroke="#FFFFFF"
+          stroke-opacity="0.55" stroke-width="2.2" stroke-linecap="round"/>
+    <!-- 播放键：round join 让三角三个角自然变圆 -->
+    <path d="M45,40 L69,54 L45,68 Z" fill="url(#j-play)" stroke="url(#j-play)"
+          stroke-width="5" stroke-linejoin="round"/>
+  </g>
+</svg>
