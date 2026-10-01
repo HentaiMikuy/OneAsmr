@@ -3,18 +3,24 @@ package com.oneasmr.app.ui.player
 import android.app.Activity
 import android.content.BroadcastReceiver
 import android.content.ComponentName
+import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ActivityInfo
+import android.media.AudioManager
 import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import android.util.Log
 import android.view.LayoutInflater
+import android.view.Window
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -62,6 +68,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.contentDescription
@@ -115,6 +122,7 @@ import com.oneasmr.app.ui.player.SpeedPickerSheet
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
+import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -201,6 +209,11 @@ fun VideoPlayerScreen(
     var showPlaylistPanel by rememberSaveable { mutableStateOf(false) }
     // Set by the gesture layer (Todo 6); suppresses auto-hide while dragging.
     var gestureActive by remember { mutableStateOf(false) }
+    var gestureOverlay by remember { mutableStateOf<GestureFeedback?>(null) }
+    var gestureOverlayTick by remember { mutableIntStateOf(0) }
+    val audioManager = remember(context) {
+        context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    }
 
     // Fullscreen: hide system bars (immersive) + landscape orientation.
     LaunchedEffect(fullscreen) {
@@ -224,6 +237,9 @@ fun VideoPlayerScreen(
             activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
             window?.let {
                 WindowInsetsControllerCompat(it, view).show(WindowInsetsCompat.Type.systemBars())
+                // The brightness gesture owns a window-level override only for
+                // as long as the page lives (plan Todo 6c).
+                applyBrightnessFraction(it, WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
             }
         }
     }
@@ -256,6 +272,14 @@ fun VideoPlayerScreen(
         if (lockHint != null) {
             delay(HINT_MS)
             lockHint = null
+        }
+    }
+    // Feedback linger is 1500ms (uiautomator dumps land ~1-2s after the
+    // gesture); a drag keeps its overlay up and only drag end starts the timer.
+    LaunchedEffect(gestureOverlayTick, gestureActive) {
+        if (gestureOverlay != null && !gestureActive) {
+            delay(GESTURE_FEEDBACK_MS)
+            gestureOverlay = null
         }
     }
     // 3s auto-hide while playing; shouldAutoHide keeps the controls up while
@@ -301,14 +325,81 @@ fun VideoPlayerScreen(
             },
             modifier = Modifier
                 .fillMaxSize()
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                ) {
-                    if (!locked) {
-                        controlsVisible = !controlsVisible
-                        if (controlsVisible) lastInteractionTick++
-                    }
+                // Tap layer (Todo 6): single tap toggles the controls (after the
+                // double-tap timeout), double tap seeks ±10s by screen half.
+                .pointerInput(locked) {
+                    if (locked) return@pointerInput
+                    detectTapGestures(
+                        onTap = {
+                            controlsVisible = !controlsVisible
+                            if (controlsVisible) lastInteractionTick++
+                        },
+                        onDoubleTap = { offset ->
+                            val forward = offset.x >= size.width / 2f
+                            viewModel.skipBy(
+                                if (forward) {
+                                    VideoGestureOps.SKIP_STEP_MS
+                                } else {
+                                    -VideoGestureOps.SKIP_STEP_MS
+                                },
+                            )
+                            gestureOverlay = GestureFeedback(
+                                text = if (forward) "+10s" else "-10s",
+                                description = "video seek feedback=" +
+                                    if (forward) "+10s" else "-10s",
+                            )
+                            gestureOverlayTick++
+                            lastInteractionTick++
+                            controlsVisible = true
+                        },
+                    )
+                }
+                // Vertical drag layer (Todo 6): left half = window brightness,
+                // right half = STREAM_MUSIC volume. A passed slop cancels the
+                // tap detector above (no toggle from drags).
+                .pointerInput(locked) {
+                    if (locked) return@pointerInput
+                    var brightnessGesture = false
+                    var value = 0f
+                    detectVerticalDragGestures(
+                        onDragStart = { offset ->
+                            brightnessGesture = offset.x < size.width / 2f
+                            value = if (brightnessGesture) {
+                                seedBrightnessFraction(window, context.contentResolver)
+                            } else {
+                                seedVolumeFraction(audioManager)
+                            }
+                            gestureActive = true
+                            controlsVisible = true
+                            lastInteractionTick++
+                            gestureOverlay = gestureFeedback(brightnessGesture, value)
+                            gestureOverlayTick++
+                        },
+                        onVerticalDrag = { _, dragAmount ->
+                            val delta = VideoGestureOps.dragDeltaToFraction(
+                                dragAmount,
+                                size.height.toFloat(),
+                            )
+                            value = VideoGestureOps.applyFraction(value, delta)
+                            if (brightnessGesture) {
+                                applyBrightnessFraction(window, value)
+                            } else {
+                                applyVolumeFraction(audioManager, value)
+                            }
+                            gestureOverlay = gestureFeedback(brightnessGesture, value)
+                            lastInteractionTick++
+                        },
+                        onDragEnd = {
+                            gestureActive = false
+                            gestureOverlayTick++
+                            lastInteractionTick++
+                        },
+                        onDragCancel = {
+                            gestureActive = false
+                            gestureOverlayTick++
+                            lastInteractionTick++
+                        },
+                    )
                 },
             update = { it.player = sessionPlayer },
         )
@@ -432,6 +523,23 @@ fun VideoPlayerScreen(
             ) {
                 Text(
                     hint,
+                    color = Color.White,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+            }
+        }
+
+        gestureOverlay?.let { overlay ->
+            Surface(
+                color = Color.Black.copy(alpha = 0.75f),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .padding(16.dp)
+                    .semantics { contentDescription = overlay.description },
+            ) {
+                Text(
+                    overlay.text,
                     color = Color.White,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                 )
@@ -717,6 +825,61 @@ private const val HINT_MS = 1600L
 
 /** Idle window before the controls auto-hide while playing. */
 private const val AUTO_HIDE_MS = 3000L
+
+/** Linger of the gesture feedback surface after a double-tap / drag. */
+private const val GESTURE_FEEDBACK_MS = 1500L
+
+/** Centered feedback of the gesture layer; [description] is the dump semantics. */
+private data class GestureFeedback(val text: String, val description: String)
+
+private fun seedBrightnessFraction(window: Window?, resolver: ContentResolver): Float {
+    val attr = window?.attributes?.screenBrightness
+        ?: WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+    if (attr >= 0f) return attr.coerceIn(0f, 1f)
+    val system = runCatching {
+        Settings.System.getInt(resolver, Settings.System.SCREEN_BRIGHTNESS)
+    }.getOrNull()
+    return if (system == null) 0.5f else (system / 255f).coerceIn(0f, 1f)
+}
+
+/**
+ * Window-level brightness: a 0f..1f value from the gesture, or
+ * [WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE] to restore the system
+ * default (dispose). No WRITE_SETTINGS — the override is per window.
+ */
+private fun applyBrightnessFraction(window: Window?, fraction: Float) {
+    val w = window ?: return
+    val lp = w.attributes
+    lp.screenBrightness = fraction
+    w.attributes = lp
+}
+
+private fun seedVolumeFraction(audioManager: AudioManager): Float {
+    val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+    return VideoGestureOps.volumePercentFor(
+        audioManager.getStreamVolume(AudioManager.STREAM_MUSIC),
+        max,
+    )
+}
+
+/** STREAM_MUSIC only (never player.volume — the sleep fade owns that), flag 0 = no system UI. */
+private fun applyVolumeFraction(audioManager: AudioManager, fraction: Float) {
+    val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+    audioManager.setStreamVolume(
+        AudioManager.STREAM_MUSIC,
+        VideoGestureOps.volumeIndexFor(fraction, max),
+        0,
+    )
+}
+
+private fun gestureFeedback(brightness: Boolean, fraction: Float): GestureFeedback {
+    val percent = (fraction * 100f).roundToInt().coerceIn(0, 100)
+    return if (brightness) {
+        GestureFeedback("亮度 $percent%", "video brightness value=$percent")
+    } else {
+        GestureFeedback("音量 $percent%", "video volume value=$percent")
+    }
+}
 
 /**
  * Display row of the in-page playlist (plan video-player-controls Todo 3d):

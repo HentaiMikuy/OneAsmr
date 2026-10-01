@@ -130,6 +130,58 @@ class VideoGestureOpsTest {
     }
 
     // ------------------------------------------------------------------
+    // volumeIndexFor / volumePercentFor (plan Todo 6)
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `volume index maps the percent bounds to the stream bounds`() {
+        assertEquals(0, VideoGestureOps.volumeIndexFor(0f, 15))
+        assertEquals(15, VideoGestureOps.volumeIndexFor(1f, 15))
+        assertEquals(8, VideoGestureOps.volumeIndexFor(0.5f, 15))
+    }
+
+    @Test
+    fun `volume index clamps out-of-range percents`() {
+        assertEquals(0, VideoGestureOps.volumeIndexFor(-0.4f, 15))
+        assertEquals(15, VideoGestureOps.volumeIndexFor(1.6f, 15))
+    }
+
+    @Test
+    fun `volume index guards a zero or negative max`() {
+        assertEquals(0, VideoGestureOps.volumeIndexFor(0.5f, 0))
+        assertEquals(0, VideoGestureOps.volumeIndexFor(1f, -3))
+    }
+
+    @Test
+    fun `volume percent maps the stream bounds to 0 and 1`() {
+        assertEquals(0f, VideoGestureOps.volumePercentFor(0, 15), delta)
+        assertEquals(1f, VideoGestureOps.volumePercentFor(15, 15), delta)
+        assertEquals(0.6f, VideoGestureOps.volumePercentFor(9, 15), delta)
+    }
+
+    @Test
+    fun `volume percent clamps out-of-range indexes and guards a zero max`() {
+        assertEquals(0f, VideoGestureOps.volumePercentFor(-2, 15), delta)
+        assertEquals(1f, VideoGestureOps.volumePercentFor(20, 15), delta)
+        assertEquals(0f, VideoGestureOps.volumePercentFor(5, 0), delta)
+    }
+
+    @Test
+    fun `volume index round-trips every stream step`() {
+        for (max in listOf(1, 7, 15, 25)) {
+            for (i in 0..max) {
+                assertEquals(
+                    i,
+                    VideoGestureOps.volumeIndexFor(
+                        VideoGestureOps.volumePercentFor(i, max),
+                        max,
+                    ),
+                )
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
     // shouldAutoHide (plan Todo 5)
     // ------------------------------------------------------------------
 

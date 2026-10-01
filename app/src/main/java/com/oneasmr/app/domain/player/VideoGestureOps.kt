@@ -1,5 +1,7 @@
 package com.oneasmr.app.domain.player
 
+import kotlin.math.round
+
 /**
  * Pure JVM ops for the enriched video player page (plan Task 1 of
  * video-player-controls): vertical-drag fraction mapping (brightness/volume),
@@ -48,6 +50,26 @@ object VideoGestureOps {
      */
     fun isSibling(entryPath: String, referencePath: String): Boolean =
         siblingFolderOf(entryPath) == siblingFolderOf(referencePath)
+
+    /**
+     * Stream-volume index for a 0f..1f [percent] (plan video-player-controls
+     * Todo 6): rounds to the nearest step and clamps to [0, maxIndex]. A
+     * degenerate [maxIndex] <= 0 yields 0 — never a negative index, never a
+     * division by zero.
+     */
+    fun volumeIndexFor(percent: Float, maxIndex: Int): Int {
+        if (maxIndex <= 0) return 0
+        return round(percent.coerceIn(0f, 1f) * maxIndex).toInt().coerceIn(0, maxIndex)
+    }
+
+    /**
+     * Fraction (0f..1f) of stream-volume [index] within [0, maxIndex] —
+     * the seed of a volume drag. A degenerate [maxIndex] <= 0 yields 0f.
+     */
+    fun volumePercentFor(index: Int, maxIndex: Int): Float {
+        if (maxIndex <= 0) return 0f
+        return (index.toFloat() / maxIndex).coerceIn(0f, 1f)
+    }
 
     /**
      * Auto-hide decision for the controls overlay (plan video-player-controls
