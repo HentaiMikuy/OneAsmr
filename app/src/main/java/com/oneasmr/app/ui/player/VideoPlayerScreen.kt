@@ -556,6 +556,14 @@ fun VideoPlayerScreen(
             onDismiss = { showSpeedDialog = false },
         )
     }
+
+    if (showPlaylistPanel) {
+        VideoPlaylistSheet(
+            entries = uiState.playlist,
+            onSelect = viewModel::switchToPlaylistItem,
+            onDismiss = { showPlaylistPanel = false },
+        )
+    }
 }
 
 @Composable
