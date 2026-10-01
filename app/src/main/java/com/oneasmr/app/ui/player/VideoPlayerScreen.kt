@@ -31,11 +31,13 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -58,6 +60,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.contentDescription
@@ -318,6 +321,8 @@ fun VideoPlayerScreen(
                     }
                 },
                 onTogglePlay = viewModel::togglePlayPause,
+                onSkipBackward = { viewModel.skipBy(-VideoGestureOps.SKIP_STEP_MS) },
+                onSkipForward = { viewModel.skipBy(VideoGestureOps.SKIP_STEP_MS) },
                 onSpeedClick = { showSpeedDialog = true },
                 onToggleFullscreen = { fullscreen = !fullscreen },
                 onLock = { locked = true },
@@ -422,6 +427,8 @@ private fun VideoControls(
     onDragPositionChange: (Float) -> Unit,
     onSeek: () -> Unit,
     onTogglePlay: () -> Unit,
+    onSkipBackward: () -> Unit,
+    onSkipForward: () -> Unit,
     onSpeedClick: () -> Unit,
     onToggleFullscreen: () -> Unit,
     onLock: () -> Unit,
@@ -468,21 +475,38 @@ private fun VideoControls(
                 Icon(Icons.Filled.Lock, contentDescription = "锁定", tint = Color.White)
             }
         }
-        IconButton(
-            onClick = onTogglePlay,
-            modifier = Modifier
-                .align(Alignment.Center)
-                .size(64.dp)
-                .background(Color.Black.copy(alpha = 0.4f), CircleShape)
-                .semantics {
-                    contentDescription = if (state.isPlaying) "video pause" else "video play"
-                },
+        Row(
+            modifier = Modifier.align(Alignment.Center),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(24.dp),
         ) {
-            Icon(
-                if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                contentDescription = null,
-                tint = Color.White,
-                modifier = Modifier.size(40.dp),
+            VideoSkipButton(
+                semanticsDescription = "video seek backward",
+                iconLabel = "快退 10 秒",
+                icon = Icons.Filled.Replay10,
+                onClick = onSkipBackward,
+            )
+            IconButton(
+                onClick = onTogglePlay,
+                modifier = Modifier
+                    .size(64.dp)
+                    .background(Color.Black.copy(alpha = 0.4f), CircleShape)
+                    .semantics {
+                        contentDescription = if (state.isPlaying) "video pause" else "video play"
+                    },
+            ) {
+                Icon(
+                    if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(40.dp),
+                )
+            }
+            VideoSkipButton(
+                semanticsDescription = "video seek forward",
+                iconLabel = "快进 10 秒",
+                icon = Icons.Filled.Forward10,
+                onClick = onSkipForward,
             )
         }
         Column(
@@ -526,6 +550,33 @@ private fun VideoControls(
                 }
             }
         }
+    }
+}
+
+/**
+ * ±10s 快进/快退按钮:复用中心播放键的 scrim 样式(48dp/28dp 一档更小),
+ * 属于控制层成员 —— 锁定或隐藏时随整层一起消失。
+ */
+@Composable
+private fun VideoSkipButton(
+    semanticsDescription: String,
+    iconLabel: String,
+    icon: ImageVector,
+    onClick: () -> Unit,
+) {
+    IconButton(
+        onClick = onClick,
+        modifier = Modifier
+            .size(48.dp)
+            .background(Color.Black.copy(alpha = 0.4f), CircleShape)
+            .semantics { contentDescription = semanticsDescription },
+    ) {
+        Icon(
+            icon,
+            contentDescription = iconLabel,
+            tint = Color.White,
+            modifier = Modifier.size(28.dp),
+        )
     }
 }
 
@@ -1117,6 +1168,18 @@ class VideoPlayerViewModel @Inject constructor(
     fun seekTo(positionMs: Long) {
         controller?.seekTo(positionMs.coerceAtLeast(0L))
         Log.i(TAG, "video seek -> ${positionMs.coerceAtLeast(0L)}ms")
+    }
+
+    /**
+     * ±10s 单步跳转(快进/快退按钮;Todo 6 的双击手势共用):目标位置由
+     * 纯函数 [VideoGestureOps.skipTarget] 钳制在 [0, duration] 内,再走
+     * [seekTo](其自身也会 coerceAtLeast(0))。
+     */
+    fun skipBy(deltaMs: Long) {
+        val c = controller ?: return
+        val target = VideoGestureOps.skipTarget(c.currentPosition, deltaMs, c.duration)
+        Log.i(TAG, "video skip ${if (deltaMs >= 0) "+" else ""}${deltaMs}ms -> ${target}ms")
+        seekTo(target)
     }
 
     fun setSpeed(speed: Float) {
