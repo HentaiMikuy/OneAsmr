@@ -31,6 +31,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
@@ -196,6 +197,10 @@ fun VideoPlayerScreen(
     var lockHint by remember { mutableStateOf<String?>(null) }
     var dragPosition by remember { mutableFloatStateOf(-1f) }
     var playerView by remember { mutableStateOf<PlayerView?>(null) }
+    var lastInteractionTick by remember { mutableIntStateOf(0) }
+    var showPlaylistPanel by rememberSaveable { mutableStateOf(false) }
+    // Set by the gesture layer (Todo 6); suppresses auto-hide while dragging.
+    var gestureActive by remember { mutableStateOf(false) }
 
     // Fullscreen: hide system bars (immersive) + landscape orientation.
     LaunchedEffect(fullscreen) {
@@ -253,6 +258,32 @@ fun VideoPlayerScreen(
             lockHint = null
         }
     }
+    // 3s auto-hide while playing; shouldAutoHide keeps the controls up while
+    // paused, dragging, gesture-active, sheet/panel open, locked or hinting.
+    LaunchedEffect(
+        uiState.isPlaying,
+        lastInteractionTick,
+        dragPosition >= 0f,
+        gestureActive,
+        showSpeedDialog,
+        showPlaylistPanel,
+        locked,
+        lockHint != null,
+    ) {
+        val hide = VideoGestureOps.shouldAutoHide(
+            isPlaying = uiState.isPlaying,
+            dragging = dragPosition >= 0f,
+            gestureActive = gestureActive,
+            sheetOpen = showSpeedDialog,
+            panelOpen = showPlaylistPanel,
+            locked = locked,
+            hintVisible = lockHint != null,
+        )
+        if (hide) {
+            delay(AUTO_HIDE_MS)
+            controlsVisible = false
+        }
+    }
 
     Box(
         Modifier
@@ -274,7 +305,10 @@ fun VideoPlayerScreen(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
                 ) {
-                    if (!locked) controlsVisible = !controlsVisible
+                    if (!locked) {
+                        controlsVisible = !controlsVisible
+                        if (controlsVisible) lastInteractionTick++
+                    }
                 },
             update = { it.player = sessionPlayer },
         )
@@ -313,20 +347,56 @@ fun VideoPlayerScreen(
                 durationMs = viewModel.durationMs,
                 fullscreen = fullscreen,
                 dragPosition = dragPosition,
-                onDragPositionChange = { dragPosition = it },
+                onDragPositionChange = { value ->
+                    if (dragPosition < 0f) lastInteractionTick++
+                    dragPosition = value
+                    controlsVisible = true
+                },
                 onSeek = {
                     if (dragPosition >= 0f) {
                         viewModel.seekTo(dragPosition.toLong())
                         dragPosition = -1f
+                        lastInteractionTick++
+                        controlsVisible = true
                     }
                 },
                 onTogglePlay = viewModel::togglePlayPause,
-                onSkipBackward = { viewModel.skipBy(-VideoGestureOps.SKIP_STEP_MS) },
-                onSkipForward = { viewModel.skipBy(VideoGestureOps.SKIP_STEP_MS) },
-                onSpeedClick = { showSpeedDialog = true },
-                onToggleFullscreen = { fullscreen = !fullscreen },
-                onLock = { locked = true },
-                onBack = { viewModel.exitVideo(); onBack() },
+                onSkipBackward = {
+                    viewModel.skipBy(-VideoGestureOps.SKIP_STEP_MS)
+                    lastInteractionTick++
+                    controlsVisible = true
+                },
+                onSkipForward = {
+                    viewModel.skipBy(VideoGestureOps.SKIP_STEP_MS)
+                    lastInteractionTick++
+                    controlsVisible = true
+                },
+                onSpeedClick = {
+                    showSpeedDialog = true
+                    lastInteractionTick++
+                    controlsVisible = true
+                },
+                onPlaylistClick = {
+                    showPlaylistPanel = true
+                    lastInteractionTick++
+                    controlsVisible = true
+                },
+                onToggleFullscreen = {
+                    fullscreen = !fullscreen
+                    lastInteractionTick++
+                    controlsVisible = true
+                },
+                onLock = {
+                    locked = true
+                    lastInteractionTick++
+                    controlsVisible = true
+                },
+                onBack = {
+                    lastInteractionTick++
+                    controlsVisible = true
+                    viewModel.exitVideo()
+                    onBack()
+                },
             )
         }
 
@@ -339,8 +409,10 @@ fun VideoPlayerScreen(
                         indication = null,
                     ) {
                         locked = false
+                        controlsVisible = true
                         lockHint = "已解锁"
                         lockHintTick++
+                        lastInteractionTick++
                     },
             ) {
                 Icon(
@@ -430,6 +502,7 @@ private fun VideoControls(
     onSkipBackward: () -> Unit,
     onSkipForward: () -> Unit,
     onSpeedClick: () -> Unit,
+    onPlaylistClick: () -> Unit,
     onToggleFullscreen: () -> Unit,
     onLock: () -> Unit,
     onBack: () -> Unit,
@@ -536,6 +609,18 @@ private fun VideoControls(
                         style = MaterialTheme.typography.labelMedium,
                     )
                 }
+                if (state.playlist.size > 1) {
+                    IconButton(
+                        onClick = onPlaylistClick,
+                        modifier = Modifier.semantics { contentDescription = "video playlist" },
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.QueueMusic,
+                            contentDescription = "播放列表",
+                            tint = Color.White,
+                        )
+                    }
+                }
                 IconButton(
                     onClick = onToggleFullscreen,
                     modifier = Modifier.semantics {
@@ -629,6 +714,9 @@ private fun formatTime(ms: Long): String {
 
 /** Duration the lock-guard hint surface stays visible. */
 private const val HINT_MS = 1600L
+
+/** Idle window before the controls auto-hide while playing. */
+private const val AUTO_HIDE_MS = 3000L
 
 /**
  * Display row of the in-page playlist (plan video-player-controls Todo 3d):

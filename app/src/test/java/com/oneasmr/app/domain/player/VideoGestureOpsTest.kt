@@ -128,4 +128,80 @@ class VideoGestureOpsTest {
         assertTrue(VideoGestureOps.isSibling("a/b/c.mp4", "a/b/c.mp4"))
         assertTrue(VideoGestureOps.isSibling("a.mp4", "a.mp4"))
     }
+
+    // ------------------------------------------------------------------
+    // shouldAutoHide (plan Todo 5)
+    // ------------------------------------------------------------------
+
+    /** All-clear call with per-test overrides; mirrors the 7-arg signature. */
+    private fun shouldAutoHide(
+        isPlaying: Boolean = true,
+        dragging: Boolean = false,
+        gestureActive: Boolean = false,
+        sheetOpen: Boolean = false,
+        panelOpen: Boolean = false,
+        locked: Boolean = false,
+        hintVisible: Boolean = false,
+    ): Boolean = VideoGestureOps.shouldAutoHide(
+        isPlaying = isPlaying,
+        dragging = dragging,
+        gestureActive = gestureActive,
+        sheetOpen = sheetOpen,
+        panelOpen = panelOpen,
+        locked = locked,
+        hintVisible = hintVisible,
+    )
+
+    @Test
+    fun `all clear while playing hides the controls`() {
+        assertTrue(shouldAutoHide())
+    }
+
+    @Test
+    fun `all clear while paused never hides the controls`() {
+        assertFalse(shouldAutoHide(isPlaying = false))
+    }
+
+    @Test
+    fun `seek drag in flight blocks the auto-hide`() {
+        assertFalse(shouldAutoHide(dragging = true))
+    }
+
+    @Test
+    fun `active brightness or volume gesture blocks the auto-hide`() {
+        assertFalse(shouldAutoHide(gestureActive = true))
+    }
+
+    @Test
+    fun `open speed sheet blocks the auto-hide`() {
+        assertFalse(shouldAutoHide(sheetOpen = true))
+    }
+
+    @Test
+    fun `open playlist panel blocks the auto-hide`() {
+        assertFalse(shouldAutoHide(panelOpen = true))
+    }
+
+    @Test
+    fun `locked page blocks the auto-hide`() {
+        assertFalse(shouldAutoHide(locked = true))
+    }
+
+    @Test
+    fun `visible lock hint blocks the auto-hide`() {
+        assertFalse(shouldAutoHide(hintVisible = true))
+    }
+
+    @Test
+    fun `every suppression flag blocks even with the others clear`() {
+        val suppressors = listOf(
+            shouldAutoHide(dragging = true),
+            shouldAutoHide(gestureActive = true),
+            shouldAutoHide(sheetOpen = true),
+            shouldAutoHide(panelOpen = true),
+            shouldAutoHide(locked = true),
+            shouldAutoHide(hintVisible = true),
+        )
+        assertTrue(suppressors.none { it })
+    }
 }

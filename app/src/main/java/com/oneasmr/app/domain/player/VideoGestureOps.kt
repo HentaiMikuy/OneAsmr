@@ -48,4 +48,26 @@ object VideoGestureOps {
      */
     fun isSibling(entryPath: String, referencePath: String): Boolean =
         siblingFolderOf(entryPath) == siblingFolderOf(referencePath)
+
+    /**
+     * Auto-hide decision for the controls overlay (plan video-player-controls
+     * Todo 5): hide ONLY while playing and NOTHING suppresses the timer.
+     * Suppression flags: seek drag in flight ([dragging]), brightness/volume
+     * gesture active ([gestureActive]), speed sheet open ([sheetOpen]),
+     * playlist panel open ([panelOpen]), page locked ([locked]) or the
+     * lock-guard hint is up ([hintVisible]). Every flag individually blocks;
+     * paused playback always stays visible. Pure JVM — the LaunchedEffect in
+     * VideoPlayerScreen only delays then applies this result.
+     */
+    fun shouldAutoHide(
+        isPlaying: Boolean,
+        dragging: Boolean,
+        gestureActive: Boolean,
+        sheetOpen: Boolean,
+        panelOpen: Boolean,
+        locked: Boolean,
+        hintVisible: Boolean,
+    ): Boolean =
+        isPlaying && !dragging && !gestureActive && !sheetOpen &&
+            !panelOpen && !locked && !hintVisible
 }
