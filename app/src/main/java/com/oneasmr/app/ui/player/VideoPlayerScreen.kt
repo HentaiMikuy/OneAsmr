@@ -983,9 +983,6 @@ class VideoPlayerViewModel @Inject constructor(
     /** 当前条目 key(随 onMediaItemTransition 更新);初始为入口条目。 */
     private var currentVideoKey: String = videoKey
 
-    /** 会话当前条目下标(随 onMediaItemTransition 更新)。 */
-    private var currentMediaItemIndex = 0
-
     /**
      * 进入视频前的 repeat/shuffle 自快照:单档「退出续播」路径由 VM 还原
      * (服务的快照已被 ACTION_VIDEO_LEAVE_PLAYING 丢弃)。
@@ -1163,7 +1160,8 @@ class VideoPlayerViewModel @Inject constructor(
                 return@launch
             }
             // 页面在解析期间就被退出(慢速 SAF 解析 + 用户立刻返回):不要
-            // 背着他启动播放 —— 主线程上此检查与退出/入口互斥,不存在窗口。
+            // 背着他启动播放。此检查只覆盖解析阶段 —— sendCustomCommand 到
+            // 快照回调之间还有一次异步 binder 往返,回调里须再查一次(见下)。
             if (exitRequested) {
                 Log.i(TAG, "video entry aborted: page already left")
                 return@launch
@@ -1187,6 +1185,13 @@ class VideoPlayerViewModel @Inject constructor(
                 Bundle.EMPTY,
             )
             snapshotFuture.addListener({
+                // 快照往返期间页面可能已退出(exitVideo 已让服务恢复音频
+                // 上下文/收拢并还原模式)—— 此时再中和模式 + 换时间线会把
+                // 视频播放列表压在已恢复的音频队列上且永远不会被还原。
+                if (exitRequested) {
+                    Log.i(TAG, "video enter: snapshot resolved after page exit — skipping timeline swap")
+                    return@addListener
+                }
                 val result = runCatching { snapshotFuture.get() }.getOrNull()
                 if (result?.resultCode != SessionResult.RESULT_SUCCESS) {
                     Log.w(TAG, "video enter: audio-context snapshot failed (code=${result?.resultCode})")
@@ -1387,7 +1392,6 @@ class VideoPlayerViewModel @Inject constructor(
             val modelIndex = playlistModel.indexOfFirst { it.trackKey == key }
             if (modelIndex < 0) return
             currentVideoKey = key
-            currentMediaItemIndex = controller?.currentMediaItemIndex ?: modelIndex
             _uiState.update {
                 it.copy(
                     title = mediaItem.mediaMetadata.title?.toString().orEmpty(),
