@@ -879,6 +879,10 @@ interface SingleFileDao {
     @Query("SELECT * FROM single_file")
     fun getAllFlow(): Flow<List<SingleFile>>
 
+    /** Sibling-scope read for the video-page playlist: all non-missing files of one scan root (folder filtering happens in Kotlin via VideoGestureOps.isSibling). */
+    @Query("SELECT * FROM single_file WHERE rootFolderUri = :rootUri AND missing = 0 ORDER BY titleSortKey")
+    suspend fun listByRoot(rootUri: String): List<SingleFile>
+
     @Query("SELECT COUNT(*) FROM single_file")
     fun countFlow(): Flow<Int>
 

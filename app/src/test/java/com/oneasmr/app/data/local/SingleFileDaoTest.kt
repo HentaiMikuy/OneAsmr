@@ -144,6 +144,25 @@ class SingleFileDaoTest {
     }
 
     @Test
+    fun `listByRoot scopes to one root, skips missing, orders by titleSortKey`() = runBlocking {
+        val dao = db.singleFileDao()
+        val rootA = "content://tree/singles"
+        val rootB = "content://tree/other"
+        // 插入顺序刻意非排序顺序:验证结果按 titleSortKey,而非 rowId/插入序。
+        dao.insert(file("b.mp4", title = "Beta"))
+        dao.insert(file("c.mp4", title = "Gamma").copy(rootFolderUri = rootB))
+        dao.insert(file("a.mp4", title = "Alpha"))
+        val missingId = dao.insert(file("z.mp4", title = "Zero"))
+        dao.markMissing(listOf(missingId), now = 2_000L)
+
+        val aRows = dao.listByRoot(rootA).map { it.displayTitle }
+        val bRows = dao.listByRoot(rootB).map { it.displayTitle }
+
+        assertEquals(listOf("Alpha", "Beta"), aRows)
+        assertEquals(listOf("Gamma"), bRows)
+    }
+
+    @Test
     fun `markMissing flags rows and empty list is a no-op`() = runBlocking {
         val dao = db.singleFileDao()
         val id = dao.insert(file("a.mp4"))
