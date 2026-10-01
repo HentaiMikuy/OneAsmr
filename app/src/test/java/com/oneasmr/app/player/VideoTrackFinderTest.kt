@@ -91,6 +91,78 @@ class VideoTrackFinderTest {
     }
 
     // ------------------------------------------------------------------
+    // listVideos (plan Task 1 of video-player-controls)
+    // ------------------------------------------------------------------
+
+    @Test
+    fun listVideosReturnsEveryVideoNodeInPreOrder() {
+        val nested = folder(
+            "RJ180002",
+            "",
+            listOf(
+                file(TrackNodeType.VIDEO, "op.mp4", 1),
+                folder(
+                    "disc1",
+                    "disc1",
+                    listOf(
+                        file(TrackNodeType.AUDIO, "t1.mp3", 2),
+                        folder(
+                            "movie",
+                            "disc1/movie",
+                            listOf(
+                                file(TrackNodeType.VIDEO, "pv.mp4", 3),
+                            ),
+                        ),
+                        file(TrackNodeType.VIDEO, "making.mkv", 4),
+                    ),
+                ),
+                file(TrackNodeType.TEXT, "readme.txt", 5),
+                file(TrackNodeType.VIDEO, "cm.mp4", 6),
+            ),
+        )
+        assertEquals(
+            listOf("op.mp4", "pv.mp4", "making.mkv", "cm.mp4"),
+            VideoTrackFinder.listVideos(nested).map { it.name },
+        )
+    }
+
+    @Test
+    fun listVideosOrderMatchesTheFindWalk() {
+        // Order-equivalence: every returned node resolves via find at its own
+        // trackIndex, and the returned ORDER is the pre-order find walks.
+        // (Playlist positions are NOT trackIndex values — trackIndex spans
+        // all file types — so only node identity + order are asserted.)
+        val videos = VideoTrackFinder.listVideos(root)
+        assertEquals(listOf("pv.mp4", "pv2.mkv"), videos.map { it.name })
+        videos.forEach { node ->
+            assertEquals(node, VideoTrackFinder.find(root, node.trackIndex!!))
+        }
+    }
+
+    @Test
+    fun listVideosSkipsNonVideoFilesAndFolders() {
+        val videos = VideoTrackFinder.listVideos(root)
+        assertEquals(2, videos.size)
+        videos.forEach { node ->
+            assertEquals(TrackNodeType.VIDEO, node.type)
+            assertEquals(false, node.isFolder)
+        }
+    }
+
+    @Test
+    fun listVideosReturnsEmptyWhenNoVideoExists() {
+        val noVideo = folder(
+            "RJ000001",
+            "",
+            listOf(
+                file(TrackNodeType.AUDIO, "a.mp3", 1),
+                folder("sub", "sub", listOf(file(TrackNodeType.TEXT, "b.txt", 2))),
+            ),
+        )
+        assertEquals(emptyList<TrackNode>(), VideoTrackFinder.listVideos(noVideo))
+    }
+
+    // ------------------------------------------------------------------
     // Entry decision
     // ------------------------------------------------------------------
 

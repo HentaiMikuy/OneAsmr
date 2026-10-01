@@ -39,6 +39,25 @@ object VideoTrackFinder {
     }
 
     /**
+     * All VIDEO file nodes of the work's track tree, in the SAME depth-first
+     * pre-order [find] walks (the order track indices were assigned in), so
+     * playlist positions follow the tree the detail page shows. List positions
+     * are NOT [TrackNode.trackIndex] values — trackIndex spans all file types.
+     */
+    fun listVideos(root: TrackNode): List<TrackNode> {
+        val videos = mutableListOf<TrackNode>()
+        fun walk(node: TrackNode) {
+            if (node.isFolder) {
+                node.children.forEach { walk(it) }
+                return
+            }
+            if (node.type == TrackNodeType.VIDEO) videos += node
+        }
+        walk(root)
+        return videos
+    }
+
+    /**
      * Entry decision of the video page against the current session item:
      * ATTACH when the session already plays this exact video track (re-entry
      * / deep-link re-delivery — resume in place, never re-snapshot the audio
