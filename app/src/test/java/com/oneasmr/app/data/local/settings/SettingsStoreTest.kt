@@ -230,4 +230,22 @@ class SettingsStoreTest {
         assertEquals(false, restarted.nsfwEnabled.first())
         assertEquals(true, restarted.nsfwChoiceAsked.first())
     }
+
+    // ---------- 冷启动启动动画 ----------
+
+    @Test
+    fun `launch animation defaults to enabled for existing installs`() = runTest {
+        val store = storeIn(file("launch-default").open())
+        assertTrue(store.launchAnimationEnabled.first())
+    }
+
+    @Test
+    fun `launch animation toggle round trips across store instances`() = runTest {
+        val tf = file("launch")
+        storeIn(tf.open()).setLaunchAnimationEnabled(false)
+        assertFalse(storeIn(tf.restart()).launchAnimationEnabled.first())
+
+        storeIn(tf.restart()).setLaunchAnimationEnabled(true)
+        assertTrue(storeIn(tf.restart()).launchAnimationEnabled.first())
+    }
 }

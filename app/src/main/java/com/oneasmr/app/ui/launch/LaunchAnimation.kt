@@ -257,6 +257,25 @@ internal class LaunchAnimationGate(private val debugBuild: Boolean) {
     }
 }
 
+/**
+ * 冷启动动画层是否应该留在合成树里。三个信号都不是同时到达的,所以这条
+ * 规则单独成纯函数:
+ *
+ * - [armed]:进程闸门([LaunchAnimationGate])放行 —— "本次冷启动要有动画",
+ *   在 `onCreate` 同步决定;
+ * - [settingEnabled]:设置页的「启动动画」开关 —— 冷启动时 DataStore 还没
+ *   读过盘,要等第一帧值到达;读到「关」就必须把已经武装好的动画层收掉;
+ * - [finished]:帧时钟跑到时间轴终点,由 `LaunchAnimatedStart` 回报。
+ *
+ * 收掉是无声的:动画层的第 0 帧与启动窗口(API 31+ 的平台启动图、更低版本
+ * 的主题窗口底色)逐像素相同,所以撤掉前后屏幕上的画面不变,只是不再有动画。
+ */
+internal fun shouldShowLaunchSplash(
+    armed: Boolean,
+    settingEnabled: Boolean,
+    finished: Boolean,
+): Boolean = armed && settingEnabled && !finished
+
 /** Eased fraction of [value] inside `[from, to]`, clamped to 0..1. */
 private fun fraction(value: Int, from: Int, to: Int): Float {
     if (to <= from) return if (value >= to) 1f else 0f

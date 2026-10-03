@@ -465,4 +465,18 @@ class SettingsViewModelTest {
         harness.viewModel.setNsfwEnabled(true)
         assertEquals(true, harness.viewModel.nsfwEnabled.first { it })
     }
+
+    // ---- 冷启动启动动画开关 --------------------------------------------------
+
+    @Test
+    fun `launch animation toggle emits default true and persists through the store`() = runTest(scheduler) {
+        assertEquals(true, harness.viewModel.launchAnimationEnabled.first())
+
+        harness.viewModel.setLaunchAnimationEnabled(false)
+        assertEquals(false, harness.viewModel.launchAnimationEnabled.first { !it })
+        assertEquals(false, settings.launchAnimationEnabled.first())
+
+        harness.viewModel.setLaunchAnimationEnabled(true)
+        assertEquals(true, harness.viewModel.launchAnimationEnabled.first { it })
+    }
 }

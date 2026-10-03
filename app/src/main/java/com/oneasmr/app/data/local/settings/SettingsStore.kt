@@ -196,6 +196,17 @@ class SettingsStore @Inject constructor(
     val nsfwChoiceAsked: Flow<Boolean> =
         dataStore.data.map { it[KEY_NSFW_CHOICE_ASKED] ?: false }
 
+    /**
+     * 冷启动启动动画开关(默认开)。关 = 不播放品牌启动动画:系统启动窗口
+     * 退场后直接进入主界面。
+     *
+     * 冷启动时这个值还没读过盘,而动画的武装必须在 onCreate 同步完成,所以
+     * MainActivity 先按「开」武装、读到「关」再立刻把动画层收掉——它的第 0
+     * 帧与启动窗口逐像素相同,收掉前后画面不变(见 shouldShowLaunchSplash)。
+     */
+    val launchAnimationEnabled: Flow<Boolean> =
+        dataStore.data.map { it[KEY_LAUNCH_ANIMATION_ENABLED] ?: true }
+
     suspend fun setThemeMode(mode: ThemeMode) {
         dataStore.edit { it[KEY_THEME_MODE] = mode.name }
     }
@@ -228,6 +239,11 @@ class SettingsStore @Inject constructor(
     /** Records that the first-launch NSFW dialog was answered (idempotent). */
     suspend fun setNsfwChoiceAsked() {
         dataStore.edit { it[KEY_NSFW_CHOICE_ASKED] = true }
+    }
+
+    /** 「启动动画」开关(设置页);改动从下一次冷启动开始生效。 */
+    suspend fun setLaunchAnimationEnabled(enabled: Boolean) {
+        dataStore.edit { it[KEY_LAUNCH_ANIMATION_ENABLED] = enabled }
     }
 
     /** Sets the asmr.one mirror base-url; blank restores [DEFAULT_ASMR_ONE_BASE_URL]. */
@@ -297,6 +313,7 @@ class SettingsStore @Inject constructor(
         private val KEY_ASMR_ONE_BASE_URL = stringPreferencesKey("asmr_one_base_url")
         private val KEY_NSFW_ENABLED = booleanPreferencesKey("nsfw_enabled")
         private val KEY_NSFW_CHOICE_ASKED = booleanPreferencesKey("nsfw_choice_asked")
+        private val KEY_LAUNCH_ANIMATION_ENABLED = booleanPreferencesKey("launch_animation_enabled")
 
         /** Unit separator: the only forbidden character in a search term. */
         private const val SEPARATOR = "\u001F"

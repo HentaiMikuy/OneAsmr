@@ -59,11 +59,12 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 /**
- * Full settings page (plan Task 27): theme + dynamic color, root-folder
- * management (Task 5), scraping language + batch-scrape entry status,
- * cover cache (usage / one-tap confirmed clear / cap), resume policy
- * (Task 19), optional playback-progress clear, and About (version +
- * open-source licenses). NO server entry (kikoeru integration cancelled).
+ * Full settings page (plan Task 27): theme + dynamic color, cold-start
+ * animation toggle, root-folder management (Task 5), scraping language +
+ * batch-scrape entry status, cover cache (usage / one-tap confirmed clear /
+ * cap), resume policy (Task 19), optional playback-progress clear, and About
+ * (version + open-source licenses). NO server entry (kikoeru integration
+ * cancelled).
  */
 @Composable
 fun SettingsScreen(
@@ -72,6 +73,7 @@ fun SettingsScreen(
 ) {
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
     val dynamicColor by viewModel.dynamicColor.collectAsStateWithLifecycle()
+    val launchAnimationEnabled by viewModel.launchAnimationEnabled.collectAsStateWithLifecycle()
     val videoBackgroundPlayback by viewModel.videoBackgroundPlayback.collectAsStateWithLifecycle()
     val rootEntries by viewModel.rootEntries.collectAsStateWithLifecycle()
     val resumeMode by viewModel.resumeMode.collectAsStateWithLifecycle()
@@ -137,6 +139,32 @@ fun SettingsScreen(
             Switch(
                 checked = dynamicColor,
                 onCheckedChange = { viewModel.setDynamicColor(it) },
+            )
+        }
+        HorizontalDivider()
+        Spacer(Modifier.height(24.dp))
+
+        // ---- launch ----
+        SettingsSectionHeader("启动")
+        Spacer(Modifier.height(8.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { viewModel.setLaunchAnimationEnabled(!launchAnimationEnabled) }
+                .padding(vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("启动动画", style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    "冷启动时播放品牌启动动画；关闭后系统启动窗口结束即直接进入主界面（下次启动生效）",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(
+                checked = launchAnimationEnabled,
+                onCheckedChange = { viewModel.setLaunchAnimationEnabled(it) },
             )
         }
         HorizontalDivider()
@@ -572,6 +600,8 @@ class SettingsViewModel @Inject constructor(
         .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, ThemeMode.SYSTEM)
     val dynamicColor: StateFlow<Boolean> = settingsStore.dynamicColor
         .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, true)
+    val launchAnimationEnabled: StateFlow<Boolean> = settingsStore.launchAnimationEnabled
+        .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, true)
     val videoBackgroundPlayback: StateFlow<Boolean> = settingsStore.videoBackgroundPlayback
         .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, true)
     val rootEntries: StateFlow<List<ScanRootEntry>> = scanRootRepository.entries
@@ -630,6 +660,11 @@ class SettingsViewModel @Inject constructor(
 
     fun setDynamicColor(enabled: Boolean) {
         viewModelScope.launch { settingsStore.setDynamicColor(enabled) }
+    }
+
+    /** 「启动动画」开关；下一次冷启动生效（见 MainActivity 的动画武装）。 */
+    fun setLaunchAnimationEnabled(enabled: Boolean) {
+        viewModelScope.launch { settingsStore.setLaunchAnimationEnabled(enabled) }
     }
 
     fun setVideoBackgroundPlayback(enabled: Boolean) {

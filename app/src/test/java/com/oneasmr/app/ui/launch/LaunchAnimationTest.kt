@@ -336,3 +336,40 @@ class LaunchSplashHandoffPolicyTest {
         assertTrue(SPLASH_HANDOFF_GRACE_MS > 600)
     }
 }
+
+/**
+ * 设置页的「启动动画」开关是冷启动动画的第二道闸。闸门在 `onCreate` 同步
+ * 决定"本次冷启动要不要动画",设置值却要等 DataStore 读完才到 —— 所以规则
+ * 写成纯函数,把三个到达时刻不同的信号钉在一起。
+ */
+class LaunchAnimationSettingTest {
+
+    @Test
+    fun `setting off vetoes an animation the process gate armed`() {
+        assertFalse(shouldShowLaunchSplash(armed = true, settingEnabled = false, finished = false))
+    }
+
+    @Test
+    fun `enabled animation stays until the timeline reports finished`() {
+        assertTrue(shouldShowLaunchSplash(armed = true, settingEnabled = true, finished = false))
+        assertFalse(shouldShowLaunchSplash(armed = true, settingEnabled = true, finished = true))
+    }
+
+    @Test
+    fun `a warm start never shows the layer whatever the setting says`() {
+        assertFalse(shouldShowLaunchSplash(armed = false, settingEnabled = true, finished = false))
+        assertFalse(shouldShowLaunchSplash(armed = false, settingEnabled = false, finished = true))
+    }
+
+    /**
+     * 关闭路径必须经过"已武装"这一态:MainActivity 把"设置还没读出来"当开启
+     * 处理(动画层从第 0 帧起就在合成树里),所以读到「关」之前那一层已经在屏幕
+     * 上——它的第 0 帧与启动窗口逐像素相同,收掉才不可见。收掉与"系统启动窗口
+     * 消失"的先后顺序由 MainActivity 挂住启动窗口来保证,与本函数无关。
+     */
+    @Test
+    fun `the layer is armed before the persisted setting arrives`() {
+        assertTrue(shouldShowLaunchSplash(armed = true, settingEnabled = true, finished = false))
+        assertFalse(shouldShowLaunchSplash(armed = true, settingEnabled = false, finished = false))
+    }
+}

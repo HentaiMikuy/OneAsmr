@@ -4,7 +4,10 @@ import android.content.Intent
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.util.Log
+import android.view.Choreographer
+import android.window.SplashScreenView
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
@@ -33,9 +36,11 @@ import com.oneasmr.app.ui.launch.LaunchAnimatedStart
 import com.oneasmr.app.ui.launch.LaunchAnimationSession
 import com.oneasmr.app.ui.launch.SPLASH_HANDOFF_GRACE_MS
 import com.oneasmr.app.ui.launch.requiresPlatformSplashHandoff
+import com.oneasmr.app.ui.launch.shouldShowLaunchSplash
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 /**
@@ -71,6 +76,13 @@ class MainActivity : ComponentActivity() {
      */
     private val launchHandoffReady = mutableStateOf(false)
 
+    /**
+     * 设置页「启动动画」开关的三态：`null` = 冷启动时还没从 DataStore 读出来，
+     * `true`/`false` = 用户的选择。读出来之前动画层按「开」武装 —— 它的第 0 帧
+     * 与系统启动窗口逐像素相同，武装着也看不见 —— 读到「关」再收掉。
+     */
+    private val launchAnimationSetting = mutableStateOf<Boolean?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         deepLinkIntent = intent
@@ -88,6 +100,10 @@ class MainActivity : ComponentActivity() {
         // （实测盖掉了动画的前 ~580ms）。这里接管退出：它的像素与我们的身份帧
         // 完全一致，所以立即 remove() 是一次看不见的切换，随后整段动画都在
         // 前台播放。未播放动画时无需等待。
+        // 此处只按进程闸门决定：设置页的「启动动画」开关要等 DataStore 读出
+        // 来才知道，读到「关」时动画层会被 showLaunchSplash 直接收掉（它的
+        // 第 0 帧与启动窗口同像素，收掉看不见），交棒回调随后结束启动窗口 ——
+        // 用户看到的就是静止的品牌图直接换成主界面，没有任何动画。
         if (playLaunchAnimation && requiresPlatformSplashHandoff(Build.VERSION.SDK_INT)) {
             handOffPlatformSplash()
         } else {
@@ -115,7 +131,29 @@ class MainActivity : ComponentActivity() {
                 ) {
                     // 只有冷启动（本进程第一次创建 Activity）播放启动动画；
                     // 转屏/回前台/热深链都走 active=false 的零开销分支。
-                    var showLaunchAnimation by remember { mutableStateOf(playLaunchAnimation) }
+                    var launchAnimationFinished by remember { mutableStateOf(false) }
+                    // 设置页的「启动动画」开关。冷启动时 DataStore 还没读过盘，
+                    // 所以这里保留"未读出"这一态：动画层先按「开」武装（第 0 帧
+                    // 就是启动窗口那一帧），读到「关」再由 shouldShowLaunchSplash
+                    // 收掉它。收掉必须发生在系统启动窗口消失之前，否则静止的第一
+                    // 帧会停在屏幕上 —— 那一步由 handOffPlatformSplash 在放行启动
+                    // 窗口之前等设置到达来保证，而不是靠"读盘恰好比它快"。
+                    val settingFlow = remember {
+                        settingsStore.launchAnimationEnabled.map<Boolean, Boolean?> { it }
+                    }
+                    val settingOrUnknown by settingFlow.collectAsStateWithLifecycle(initialValue = null)
+                    LaunchedEffect(settingOrUnknown) {
+                        val enabled = settingOrUnknown ?: return@LaunchedEffect
+                        // 记到字段上：系统启动窗口的退场回调不在合成里，只能同步读它。
+                        launchAnimationSetting.value = enabled
+                        Log.i(TAG, "onCreate: launchAnimationEnabled=$enabled")
+                    }
+                    val launchAnimationEnabled = settingOrUnknown != false
+                    val showLaunchAnimation = shouldShowLaunchSplash(
+                        armed = playLaunchAnimation,
+                        settingEnabled = launchAnimationEnabled,
+                        finished = launchAnimationFinished,
+                    )
                     // 兜底：平台若始终不回报启动窗口退出（例如根本没有启动
                     // 窗口），到点也必须开播——绝不能让用户停在启动画面上。
                     LaunchedEffect(showLaunchAnimation) {
@@ -126,14 +164,21 @@ class MainActivity : ComponentActivity() {
                             Log.w(TAG, "onCreate: splash handoff grace expired")
                         }
                     }
+                    // 动画层离开屏幕后（播完，或被设置关闭）回到
+                    // enableEdgeToEdge() 的默认样式（浅色模式 = 深色图标，
+                    // 与各页面浅底一致）；动画期间是深色底 + 浅色图标。
+                    LaunchedEffect(showLaunchAnimation) {
+                        // 本次冷启动没有武装过动画（转屏/回前台/调试跳过）：
+                        // onCreate 已经设过默认样式，这里无事可做。
+                        if (!playLaunchAnimation || showLaunchAnimation) return@LaunchedEffect
+                        enableEdgeToEdge()
+                        Log.i(TAG, "onCreate: launch animation layer dismissed")
+                    }
                     LaunchAnimatedStart(
                         active = showLaunchAnimation,
                         started = launchHandoffReady.value,
                         onFinished = {
-                            showLaunchAnimation = false
-                            // 动画层消失后回到 enableEdgeToEdge() 的默认样式
-                            // （浅色模式 = 深色图标，与各页面浅底一致）。
-                            enableEdgeToEdge()
+                            launchAnimationFinished = true
                             Log.i(TAG, "onCreate: launch animation finished")
                         },
                     ) {
@@ -199,13 +244,71 @@ class MainActivity : ComponentActivity() {
      *
      * Isolated in its own `@RequiresApi` method so no pre-31 device ever loads
      * `android.window.SplashScreen`.
+     *
+     * 设置页关掉启动动画时这条路径照常走：没有动画需要保护，移除启动窗口
+     * 就只是结束它（`SplashScreenViewProvider` 必须由应用自己 remove，留着
+     * 不调用是"启动图卡住"的经典写法，所以不区分两种情形）。
+     *
+     * 唯一的分支是"设置还没读出来"：那就不放行，按帧等它到达（见
+     * [awaitSettingThenRelease]）。等它买到的是**顺序保证** —— 关闭动画时
+     * 我们的动画层一定先撤、启动窗口一定后走，用户不会看到静止的第一帧
+     * （早期版本靠"读盘比系统窗口退场快"撞运气，实测只剩 25ms 余量）。
      */
     @RequiresApi(Build.VERSION_CODES.S)
     private fun handOffPlatformSplash() {
         splashScreen.setOnExitAnimationListener { view ->
+            val known = launchAnimationSetting.value
+            if (known == null) awaitSettingThenRelease(view) else releasePlatformSplash(view, known)
+        }
+    }
+
+    /**
+     * 系统启动窗口已准备退场，但「启动动画」设置还没从 DataStore 读出来：
+     * 先不放行它，按帧轮询等设置到达，最坏 [SETTING_WAIT_MS] 后退回"按开启
+     * 处理"（= 老行为），**绝不**把启动窗口留在屏幕上。
+     *
+     * 不调用 `keepShowing()` 的原因：公开 SDK 的 [SplashScreenView] 只有
+     * `remove()`，那个方法是 @hide，反射也不可靠 —— 而"不 remove"本身就是
+     * 最天然的挂住方式，且我们一定会 remove。
+     */
+    @RequiresApi(Build.VERSION_CODES.S)
+    private fun awaitSettingThenRelease(view: SplashScreenView) {
+        Log.i(TAG, "onCreate: platform splash waits for the setting")
+        val deadline = SystemClock.uptimeMillis() + SETTING_WAIT_MS
+        val poll = object : Runnable {
+            override fun run() {
+                val known = launchAnimationSetting.value
+                if (known == null && SystemClock.uptimeMillis() < deadline) {
+                    view.postDelayed(this, FRAME_POLL_MS)
+                    return
+                }
+                releasePlatformSplash(view, animationEnabled = known != false)
+            }
+        }
+        view.post(poll)
+    }
+
+    /**
+     * 移除系统启动窗口。动画该播时立即移除：窗口像素与动画层第 0 帧相同，
+     * 这是一次看不见的切换，随后整段动画在前台播放。
+     *
+     * 关掉动画时反过来 —— 必须等两帧，让"动画层已经不在合成树里"的那一帧
+     * 先画出来（设置写进 state → 重组 → 绘制），否则窗口消失时露出的还是
+     * 静止的身份帧，也就是用户看到的那一帧。
+     */
+    @RequiresApi(Build.VERSION_CODES.S)
+    private fun releasePlatformSplash(view: SplashScreenView, animationEnabled: Boolean) {
+        if (animationEnabled) {
             view.remove()
             launchHandoffReady.value = true
-            Log.i(TAG, "onCreate: platform splash handoff")
+            Log.i(TAG, "onCreate: platform splash handoff (animation=true)")
+            return
+        }
+        Choreographer.getInstance().postFrameCallback {
+            Choreographer.getInstance().postFrameCallback {
+                view.remove()
+                Log.i(TAG, "onCreate: platform splash removed (animation=false, layer already gone)")
+            }
         }
     }
 
@@ -218,5 +321,11 @@ class MainActivity : ComponentActivity() {
 
     private companion object {
         const val TAG = "MainActivity"
+
+        /** 等「启动动画」设置读出来的上限（超过就按开启处理，绝不放任启动窗口留着）。 */
+        const val SETTING_WAIT_MS = 600L
+
+        /** 等待期间的轮询间隔：一帧。 */
+        const val FRAME_POLL_MS = 16L
     }
 }
