@@ -19,6 +19,13 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
+    <!-- In-app updater (自更新): network access for the GitHub latest-release
+         check + APK download; REQUEST_INSTALL_PACKAGES for the install intent.
+         The user still grants "install unknown apps" once per app in system
+         settings (the app routes them there). -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <application
         android:name=".OneAsmrApp"
         android:allowBackup="true"
@@ -73,6 +80,19 @@
                 <action android:name="android.intent.action.MEDIA_BUTTON" />
             </intent-filter>
         </receiver>
+
+        <!-- In-app updater: exposes the downloaded APK under a content:// URI
+             to the package installer (FileProvider; paths in
+             res/xml/file_paths.xml). -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 
 </manifest>

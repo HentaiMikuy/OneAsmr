@@ -13,6 +13,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -27,10 +28,17 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.core.content.FileProvider
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -45,6 +53,8 @@ import com.oneasmr.app.data.local.settings.ScrapingLanguage
 import com.oneasmr.app.data.local.settings.SettingsStore
 import com.oneasmr.app.data.local.settings.ThemeMode
 import com.oneasmr.app.data.local.PlaybackStateDao
+import com.oneasmr.app.data.update.UpdateInfo
+import java.io.File
 import com.oneasmr.app.data.repository.CoverStore
 import com.oneasmr.app.data.repository.RootGrantStatus
 import com.oneasmr.app.data.repository.ScanRootEntry
@@ -70,6 +80,7 @@ import kotlinx.coroutines.launch
 fun SettingsScreen(
     onOpenRootFolders: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
+    updateViewModel: UpdateViewModel = hiltViewModel(),
 ) {
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
     val dynamicColor by viewModel.dynamicColor.collectAsStateWithLifecycle()
@@ -91,6 +102,8 @@ fun SettingsScreen(
     val asmrOneBaseUrl by viewModel.asmrOneBaseUrl.collectAsStateWithLifecycle()
     val asmrOneMirrorDialogVisible by viewModel.asmrOneMirrorDialogVisible.collectAsStateWithLifecycle()
     val nsfwEnabled by viewModel.nsfwEnabled.collectAsStateWithLifecycle()
+    val updateState by updateViewModel.state.collectAsStateWithLifecycle()
+    var updateDialogVisible by remember { mutableStateOf(false) }
 
     var licensesVisible by remember { mutableStateOf(false) }
 
@@ -429,6 +442,42 @@ fun SettingsScreen(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .clickable(enabled = updateState !is UpdateUiState.Checking) {
+                    when (updateState) {
+                        UpdateUiState.Idle -> updateViewModel.checkForUpdate()
+                        is UpdateUiState.Failed -> updateViewModel.retryAfterError()
+                        is UpdateUiState.Available -> updateDialogVisible = true
+                        is UpdateUiState.Downloading,
+                        is UpdateUiState.Downloaded,
+                        UpdateUiState.Checking -> Unit
+                    }
+                }
+                .padding(vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("检查更新", style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    updateSubtitle(updateState),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Text(
+                updateTrailing(updateState),
+                style = MaterialTheme.typography.bodyMedium,
+                color = when (updateState) {
+                    is UpdateUiState.Available -> MaterialTheme.colorScheme.primary
+                    is UpdateUiState.Downloading -> MaterialTheme.colorScheme.primary
+                    is UpdateUiState.Failed -> MaterialTheme.colorScheme.error
+                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+        }
+        HorizontalDivider()
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
                 .clickable { licensesVisible = true }
                 .padding(vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -471,6 +520,118 @@ fun SettingsScreen(
                 TextButton(onClick = { viewModel.cancelClearPlaybackProgress() }) { Text("取消") }
             },
         )
+    }
+
+    if (updateDialogVisible) {
+        when (val update = updateState) {
+            is UpdateUiState.Available -> AlertDialog(
+                onDismissRequest = { updateDialogVisible = false },
+                title = { Text("发现新版本 v${update.info.versionName}") },
+                text = {
+                    Column {
+                        Text(
+                            "当前 v${BuildConfig.VERSION_NAME} → v${update.info.versionName}" +
+                                if (update.info.sizeBytes > 0) "（${formatCacheBytes(update.info.sizeBytes)}）" else "",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "更新日志：\n" + update.info.changelog.ifEmpty { "（无说明）" },
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier
+                                .verticalScroll(rememberScrollState())
+                                .heightIn(max = 260.dp),
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { updateViewModel.download() }) { Text("立即下载") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { updateDialogVisible = false }) { Text("以后再说") }
+                },
+            )
+
+            is UpdateUiState.Downloading -> AlertDialog(
+                onDismissRequest = { updateDialogVisible = false },
+                title = { Text("正在下载 v${update.info.versionName}") },
+                text = {
+                    Column {
+                        LinearProgressIndicator(
+                            progress = {
+                                if (update.total > 0) update.downloaded.toFloat() / update.total else 0f
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "${formatCacheBytes(update.downloaded)} / ${formatCacheBytes(update.total)}" +
+                                if (update.total > 0) "（${update.downloaded * 100 / update.total}%）" else "",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { updateDialogVisible = false }) { Text("后台继续") }
+                },
+            )
+
+            is UpdateUiState.Downloaded -> {
+                val context = LocalContext.current
+                AlertDialog(
+                onDismissRequest = {
+                    updateDialogVisible = false
+                    updateViewModel.dismissDownloaded()
+                },
+                title = { Text("下载完成") },
+                text = { Text("新版本 v${update.info.versionName} 已就绪，是否现在安装？") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        updateDialogVisible = false
+                        if (updateViewModel.canRequestInstallPermission()) {
+                            triggerApkInstall(context, update.file)
+                        } else {
+                            // First-time installs need a one-time grant in system
+                            // settings; the user returns and taps 安装 again.
+                            context.startActivity(
+                                Intent(
+                                    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                                    Uri.parse("package:${context.packageName}"),
+                                ),
+                            )
+                        }
+                        updateViewModel.dismissDownloaded()
+                    }) { Text("安装") }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        updateDialogVisible = false
+                        updateViewModel.dismissDownloaded()
+                    }) { Text("取消") }
+                },
+                )
+            }
+
+            is UpdateUiState.Failed -> AlertDialog(
+                onDismissRequest = {
+                    updateDialogVisible = false
+                    updateViewModel.dismissError()
+                },
+                title = { Text("更新失败") },
+                text = { Text(update.message) },
+                confirmButton = {
+                    TextButton(onClick = { updateViewModel.retryAfterError() }) { Text("重试") }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        updateDialogVisible = false
+                        updateViewModel.dismissError()
+                    }) { Text("关闭") }
+                },
+            )
+
+            else -> Unit
+        }
     }
 
     if (asmrOneMirrorDialogVisible) {
@@ -569,6 +730,45 @@ internal fun formatCacheBytes(bytes: Long): String {
     if (bytes < 1024L) return "$bytes B"
     if (bytes < 1024L * 1024L) return "${bytes / 1024L} KB"
     return String.format("%.1f MB", bytes / (1024.0 * 1024.0))
+}
+
+/** Subtitle under the 检查更新 row for each update UI state. */
+private fun updateSubtitle(state: UpdateUiState): String = when (state) {
+    UpdateUiState.Idle -> "通过 GitHub Releases 获取最新版本"
+    UpdateUiState.Checking -> "正在检查…"
+    is UpdateUiState.Available -> {
+        val size = if (state.info.sizeBytes > 0) "，${formatCacheBytes(state.info.sizeBytes)}" else ""
+        "发现新版本 v${state.info.versionName}$size"
+    }
+    is UpdateUiState.Downloading -> "正在下载 v${state.info.versionName}…"
+    is UpdateUiState.Downloaded -> "v${state.info.versionName} 安装包已就绪"
+    is UpdateUiState.Failed -> state.message
+}
+
+/** Trailing action label for the 检查更新 row. */
+private fun updateTrailing(state: UpdateUiState): String = when (state) {
+    UpdateUiState.Idle -> "检查"
+    UpdateUiState.Checking -> "…"
+    is UpdateUiState.Available -> "去下载"
+    is UpdateUiState.Downloading ->
+        if (state.total > 0) "${state.downloaded * 100 / state.total}%" else "下载中"
+    is UpdateUiState.Downloaded -> "安装"
+    is UpdateUiState.Failed -> "重试"
+}
+
+/**
+ * Hands the downloaded APK to the system package installer via FileProvider
+ * (authority `${packageName}.fileprovider`, cache-path `update/`). The caller
+ * must have pre-checked [UpdateViewModel.canRequestInstallPermission]; other
+ * wise route the user to the unknown-app-sources settings first.
+ */
+private fun triggerApkInstall(context: Context, file: File) {
+    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+    val intent = Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(uri, "application/vnd.android.package-archive")
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    context.startActivity(intent)
 }
 
 /** Static curated open-source attribution list (no third-party license plugin). */

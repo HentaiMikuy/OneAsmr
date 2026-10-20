@@ -63,6 +63,53 @@ adb install -r app/build/outputs/apk/release/app-release.apk
 - **DLsite 页面结构变动可能导致刮削失效**：解析失败会将该作品标记为可重试的失败并给出提示，应用本身不受影响。
 - 刮削所得元数据与封面仅用于本地管理，请勿再分发。
 
+## 自动更新与发布
+
+应用内置自更新（设置页「关于」→「检查更新」），更新源为 GitHub Releases。整体流程：
+
+1. 修改代码后，**同步递增** `app/build.gradle.kts` 中的 `versionCode` / `versionName`。
+2. 提交并推送一个版本标签（标签名即版本号，需与 `versionName` 对应）：
+
+   ```bash
+   git tag v0.2.0
+   git push origin v0.2.0
+   ```
+
+3. GitHub Actions（`.github/workflows/release.yml`）自动执行：校验签名密钥 → `assembleRelease` → 创建 Release 并附带 APK。Release 的说明（changelog）会作为更新日志展示。
+
+4. 旧版本 App 启动时静默检查一次；发现新版本 ∉设置页「检查更新」行显示「发现新版本」。点击「去下载」→ 下载完成 → 「安装」（首次安装需在系统设置中授权「安装未知应用」一次）。
+
+### 签名密钥（重要）
+
+App 的自动更新依赖**签名一致**：升级包必须与已安装版本使用同一密钥签名，否则系统拒绝覆盖安装（只能卸载重装）。发布用专用密钥：
+
+```bash
+# 生成（仅一次，妥善保管，勿提交仓库）
+keytool -genkeypair -v -keystore release.keystore \
+  -alias oneasmr -keyalg RSA -keysize 2048 -validity 10000
+
+# 转为 base64 以备存入 GitHub Secrets
+base64 -i release.keystore   # macOS/Linux
+```
+
+在 GitHub 仓库 Settings → Secrets and variables → Actions 中配置四个密钥：
+
+| Secret | 内容 |
+| --- | --- |
+| `RELEASE_KEYSTORE_B64` | `release.keystore` 的 base64 |
+| `RELEASE_KEYSTORE_PASSWORD` | keystore 密码 |
+| `RELEASE_KEY_ALIAS` | 别名（如 `oneasmr`） |
+| `RELEASE_KEY_PASSWORD` | 密钥密码 |
+
+本地开发不设置这些环境变量时，`assembleRelease` 自动回退用 debug 密钥签名（可直接安装，仅用于自测；覆盖安装仅在同一机器生成的包之间成立）。
+
+### 检查更新实现要点
+
+- 检查：`https://api.github.com/repos/HentaiMikuy/OneAsmr/releases/latest`（公开仓库无需鉴权；未登录限流 60 次/小时/IP，够用）。
+- 版本比较：语义化比较 `major.minor.patch`，标签如 `v0.2.0`。
+- 下载：OkHttp 流式写入 `cacheDir/update/<version>.apk`，下载进度实时显示。
+- 安装：FileProvider（`${applicationId}.fileprovider`）+ `ACTION_VIEW` 交给系统安装器；需要 `REQUEST_INSTALL_PACKAGES` 权限与一次「安装未知应用」授权。
+
 ## 许可证
 
 本项目采用 **MIT License**（见下）。

@@ -1,3 +1,6 @@
+import java.io.File
+import java.util.Base64
+
 plugins {
     alias(libs.plugins.android.application)
     // Kotlin support is built into AGP 9 (no kotlin-android plugin).
@@ -7,6 +10,19 @@ plugins {
     alias(libs.plugins.hilt)
 }
 
+// Release signing (自更新): CI (GitHub Actions) supplies a dedicated
+// keystore via secrets — RELEASE_KEYSTORE_B64 (base64 of the .keystore),
+// RELEASE_KEYSTORE_PASSWORD, RELEASE_KEY_ALIAS, RELEASE_KEY_PASSWORD — so the
+// built APK keeps the SAME signature across releases and can update existing
+// installs. Without those env vars (normal local dev) we fall back to the
+// debug key, keeping `assembleRelease` installable out of the box. Keep the
+// keystore + passwords OUT of git (see README「自动更新与发布」).
+val releaseKeystoreB64: String? = System.getenv("RELEASE_KEYSTORE_B64")
+val releaseKeystorePassword: String? = System.getenv("RELEASE_KEYSTORE_PASSWORD")
+val releaseKeyAlias: String? = System.getenv("RELEASE_KEY_ALIAS")
+val releaseKeyPassword: String? = System.getenv("RELEASE_KEY_PASSWORD")
+val useReleaseSigning = !releaseKeystoreB64.isNullOrBlank()
+
 android {
     namespace = "com.oneasmr.app"
     compileSdk = 37
@@ -15,8 +31,8 @@ android {
         applicationId = "com.oneasmr.app"
         minSdk = 26
         targetSdk = 37
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -24,13 +40,27 @@ android {
     buildTypes {
         release {
             // Plan Task 28: production-grade release — R8 minification +
-            // resource shrinking. The release variant is signed with the
-            // DEBUG key so `assembleRelease` yields an installable APK out of
-            // the box (documented in README.md); official distribution must
-            // swap in a dedicated signing config.
+            // resource shrinking. Signed with the dedicated CI keystore when
+            // the secrets are present (RELEASE_KEYSTORE_B64 etc.), otherwise
+            // with the debug key so `assembleRelease` stays installable out of
+            // the box during local development.
             isMinifyEnabled = true
             isShrinkResources = true
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (useReleaseSigning) {
+                signingConfigs.create("ciRelease").also { cfg ->
+                    val storeFile = File(project.layout.buildDirectory.get().asFile, "release.keystore")
+                    if (!storeFile.exists()) {
+                        storeFile.parentFile?.mkdirs()
+                        storeFile.writeBytes(Base64.getDecoder().decode(releaseKeystoreB64))
+                    }
+                    cfg.storeFile = storeFile
+                    cfg.storePassword = releaseKeystorePassword
+                    cfg.keyAlias = releaseKeyAlias
+                    cfg.keyPassword = releaseKeyPassword
+                }
+            } else {
+                signingConfigs.getByName("debug")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
