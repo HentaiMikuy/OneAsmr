@@ -99,8 +99,20 @@ jobs:
           } > /tmp/release_notes.md
           cat /tmp/release_notes.md
 
+      # Curated notes win over the generated commit-subject list: the file is
+      # .github/release-notes/<version>.md (no leading "v"). Keep the generated
+      # body as the fallback when no curated file exists.
+      - name: Prefer curated release notes
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -f ".github/release-notes/${VERSION}.md" ]; then
+            cp ".github/release-notes/${VERSION}.md" /tmp/release_notes.md
+            echo "Using curated release notes: .github/release-notes/${VERSION}.md"
+          fi
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          name: OneAsmr ${{ github.ref_name }}
           files: dist/*.apk
           body_path: /tmp/release_notes.md

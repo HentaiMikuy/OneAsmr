@@ -1,0 +1,64 @@
+name: Sync release notes
+
+# Curated release notes live in .github/release-notes/<version>.md (file name
+# without the leading "v"). The Release workflow prefers those files over its
+# auto-generated commit-subject notes; this workflow lets us refresh the body
+# of an ALREADY published release after editing/fixing that file, without
+# re-tagging or rebuilding.
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/release-notes/*.md'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release tag, e.g. v0.2.1'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  sync-notes:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version and notes file
+        id: resolve
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            TAG="${{ inputs.version }}"
+          else
+            BEFORE="${{ github.event.before }}"
+            case "$BEFORE" in
+              0000000000000000000000000000000000000000) BEFORE="HEAD~1" ;;
+            esac
+            CHANGED="$(git diff --name-only "$BEFORE" "${{ github.sha }}" -- '.github/release-notes/*.md')"
+            FILE="$(printf '%s\n' "$CHANGED" | tail -n 1)"
+            if [ -z "$FILE" ]; then
+              echo "::error::No release-notes file changed in this push"
+              exit 1
+            fi
+            TAG="v$(basename "$FILE" .md)"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "notes=.github/release-notes/${TAG#v}.md" >> "$GITHUB_OUTPUT"
+
+      - name: Update GitHub Release body
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -f "${{ steps.resolve.outputs.notes }}" || {
+            echo "::error::Missing notes file: ${{ steps.resolve.outputs.notes }}"
+            exit 1
+          }
+          gh release edit "${{ steps.resolve.outputs.tag }}" \
+            --title "OneAsmr ${{ steps.resolve.outputs.tag }}" \
+            --notes-file "${{ steps.resolve.outputs.notes }}"
