@@ -20,6 +20,14 @@ import kotlinx.coroutines.launch
 sealed interface UpdateUiState {
     data object Idle : UpdateUiState
     data object Checking : UpdateUiState
+
+    /**
+     * The check completed and the installed build is already the latest one.
+     * This used to map straight back to [Idle] with no feedback at all; it now
+     * exists so the screen can surface a one-shot "已是最新版本" toast (the
+     * caller then acknowledges it via [UpdateViewModel.dismissUpToDate]).
+     */
+    data object UpToDate : UpdateUiState
     data class Available(val info: UpdateInfo) : UpdateUiState
     data class Downloading(val info: UpdateInfo, val downloaded: Long, val total: Long) : UpdateUiState
     data class Downloaded(val info: UpdateInfo, val file: File) : UpdateUiState
@@ -56,7 +64,7 @@ class UpdateViewModel @Inject constructor(
             updateRepository.checkForUpdate().let { result ->
                 _state.value = when (result) {
                     is UpdateCheckResult.NewVersion -> UpdateUiState.Available(result.info)
-                    UpdateCheckResult.UpToDate -> UpdateUiState.Idle
+                    UpdateCheckResult.UpToDate -> UpdateUiState.UpToDate
                     is UpdateCheckResult.Error -> UpdateUiState.Failed(result.message)
                 }
             }
@@ -69,6 +77,11 @@ class UpdateViewModel @Inject constructor(
 
     fun dismissError() {
         if (_state.value is UpdateUiState.Failed) _state.value = UpdateUiState.Idle
+    }
+
+    /** Acknowledges the "已是最新版本" result once the toast has been shown. */
+    fun dismissUpToDate() {
+        if (_state.value is UpdateUiState.UpToDate) _state.value = UpdateUiState.Idle
     }
 
     fun dismissAvailable() {

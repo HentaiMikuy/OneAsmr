@@ -24,6 +24,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -32,6 +33,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
+import android.widget.Toast
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -106,6 +108,21 @@ fun SettingsScreen(
     var updateDialogVisible by remember { mutableStateOf(false) }
 
     var licensesVisible by remember { mutableStateOf(false) }
+
+    val appContext = LocalContext.current
+    // 「检查更新」结果反馈:UpToDate 以前直接回到 Idle,界面上什么都不会
+    // 发生。现在补一次 Short Toast,再把状态复位。单次结果提示,不涉及
+    // 玩家页那种快速连按的重复提示场景。
+    LaunchedEffect(updateState) {
+        if (updateState is UpdateUiState.UpToDate) {
+            Toast.makeText(
+                appContext,
+                "已是最新版本（v${BuildConfig.VERSION_NAME}）",
+                Toast.LENGTH_SHORT,
+            ).show()
+            updateViewModel.dismissUpToDate()
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -445,6 +462,7 @@ fun SettingsScreen(
                 .clickable(enabled = updateState !is UpdateUiState.Checking) {
                     when (updateState) {
                         UpdateUiState.Idle -> updateViewModel.checkForUpdate()
+                        UpdateUiState.UpToDate -> updateViewModel.checkForUpdate()
                         is UpdateUiState.Failed -> updateViewModel.retryAfterError()
                         is UpdateUiState.Available -> updateDialogVisible = true
                         is UpdateUiState.Downloading,
@@ -735,6 +753,7 @@ internal fun formatCacheBytes(bytes: Long): String {
 /** Subtitle under the 检查更新 row for each update UI state. */
 private fun updateSubtitle(state: UpdateUiState): String = when (state) {
     UpdateUiState.Idle -> "通过 GitHub Releases 获取最新版本"
+    UpdateUiState.UpToDate -> "已是最新版本（v${BuildConfig.VERSION_NAME}）"
     UpdateUiState.Checking -> "正在检查…"
     is UpdateUiState.Available -> {
         val size = if (state.info.sizeBytes > 0) "，${formatCacheBytes(state.info.sizeBytes)}" else ""
@@ -748,6 +767,7 @@ private fun updateSubtitle(state: UpdateUiState): String = when (state) {
 /** Trailing action label for the 检查更新 row. */
 private fun updateTrailing(state: UpdateUiState): String = when (state) {
     UpdateUiState.Idle -> "检查"
+    UpdateUiState.UpToDate -> "已是最新"
     UpdateUiState.Checking -> "…"
     is UpdateUiState.Available -> "去下载"
     is UpdateUiState.Downloading ->
