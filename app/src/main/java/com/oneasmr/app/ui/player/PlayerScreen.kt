@@ -62,11 +62,8 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -141,6 +138,7 @@ import com.oneasmr.app.player.SessionConnection
 import com.oneasmr.app.player.toMedia3
 import com.oneasmr.app.player.toRepeatMode
 import com.oneasmr.app.ui.common.CensoredCoverPlaceholder
+import com.oneasmr.app.ui.common.OneAsmrSeekBar
 import com.oneasmr.app.ui.common.rememberPressScale
 import com.oneasmr.app.ui.work.DocumentFsFactory
 import dagger.hilt.EntryPoint
@@ -1600,19 +1598,11 @@ private fun SeekRow(
     val bufferedPositionMs by bufferedPositionMs.collectAsStateWithLifecycle()
     val durationMs by durationMs.collectAsStateWithLifecycle()
     val bufferedFraction = if (durationMs > 0L) (bufferedPositionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
-
-    // Buffered + played positions (Media3 bufferedPosition drives the fill).
-    LinearProgressIndicator(
-        progress = { bufferedFraction },
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(2.dp)
-            .semantics { contentDescription = "buffered ${(bufferedFraction * 100).toInt()}%" },
-        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-        trackColor = Color.Transparent,
-    )
+    // Wave G: the buffered range is now painted inside the seek bar's own
+    // track (see OneAsmrSeekBar), so the separate 2dp buffered bar above the
+    // slider is gone — one crisp line instead of two stacked bars.
     var dragPosition by remember { mutableFloatStateOf(-1f) }
-    Slider(
+    OneAsmrSeekBar(
         value = if (dragPosition >= 0f) dragPosition else positionMs.toFloat(),
         onValueChange = { dragPosition = it },
         onValueChangeFinished = {
@@ -1622,14 +1612,14 @@ private fun SeekRow(
             }
         },
         valueRange = 0f..(durationMs.coerceAtLeast(1L).toFloat()),
-        colors = SliderDefaults.colors(
-            thumbColor = MaterialTheme.colorScheme.primary,
-            activeTrackColor = MaterialTheme.colorScheme.primary,
-            inactiveTrackColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
-        ),
-        modifier = Modifier.semantics {
-            contentDescription = "player position=$positionMs duration=$durationMs"
-        },
+        bufferedFraction = bufferedFraction,
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics {
+                contentDescription =
+                    "player position=$positionMs duration=$durationMs " +
+                        "buffered=${(bufferedFraction * 100).toInt()}%"
+            },
     )
     Row(Modifier.fillMaxWidth()) {
         Text(

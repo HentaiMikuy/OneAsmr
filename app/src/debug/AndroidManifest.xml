@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!--
+        Debug-only visual harness for the Wave G seek bar. Never part of the
+        release APK: it lives in src/debug so R8/`assembleRelease` never sees it.
+
+        Launch it on a device/emulator with:
+          adb shell am start -n com.oneasmr.app/.debug.SeekBarPreviewActivity
+    -->
+    <application>
+        <activity
+            android:name=".debug.SeekBarPreviewActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|uiMode"
+            android:theme="@style/Theme.OneAsmr" />
+    </application>
+</manifest>

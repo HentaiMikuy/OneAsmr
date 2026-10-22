@@ -50,7 +50,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -116,6 +115,8 @@ import com.oneasmr.app.player.ResumePositionResolver
 import com.oneasmr.app.player.SessionConnection
 import com.oneasmr.app.player.VideoEntryDecision
 import com.oneasmr.app.player.VideoTrackFinder
+import com.oneasmr.app.ui.common.OneAsmrSeekBar
+import com.oneasmr.app.ui.common.OneAsmrSeekBarColors
 import com.oneasmr.app.ui.common.singleThumbModel
 import com.oneasmr.app.ui.work.DocumentFsFactory
 import com.oneasmr.app.ui.player.SpeedPickerSheet
@@ -784,6 +785,9 @@ private fun VideoSkipButton(
 /**
  * 进度条子树:独立收集 500ms 的位置/时长流,滑块与时间标签的刷新
  * 不重组整页控制条(与 PlayerScreen 的 SeekRow 同一模式)。
+ *
+ * Wave G: 与音频播放页共用 [OneAsmrSeekBar],仅换成全屏视频的
+ * 白-on-黑配色;细轨道 + 拖动放大的滑块在黑色遮罩上更轻,不抢画面。
  */
 @Composable
 private fun VideoSeekRow(
@@ -802,11 +806,12 @@ private fun VideoSeekRow(
             color = Color.White,
             style = MaterialTheme.typography.labelSmall,
         )
-        Slider(
+        OneAsmrSeekBar(
             value = shownPosition.coerceIn(0f, maxOf(duration, 1L).toFloat()),
             onValueChange = onDragPositionChange,
             onValueChangeFinished = onSeek,
             valueRange = 0f..maxOf(duration, 1L).toFloat(),
+            colors = OneAsmrSeekBarColors.video(),
             modifier = Modifier
                 .weight(1f)
                 .padding(horizontal = 8.dp)
