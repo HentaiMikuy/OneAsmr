@@ -58,7 +58,8 @@ private const val TAG = "MiniPlayerBar"
  *   app-local session state exists anywhere.
  * - Tap -> full player page (route carries the session's CURRENT item, so the
  *   page attaches without rebuilding the queue — plan must-not).
- * - Swipe down/right -> dismiss = stop playback ([MiniPlayerViewModel.stopPlayback]).
+ * - 向左或向右滑 -> 划走 = 停止播放（[MiniPlayerViewModel.stopPlayback]）；
+ *   两个方向语义一致（M3 SwipeToDismissBox 只支持横向，故没有“下滑”）。
  * - Playback failure (work folder deleted mid-play) -> one toast, then the
  *   session goes idle (service clears + stops) and the bar disappears.
  */
@@ -110,7 +111,8 @@ fun MiniPlayerBarHost(
  * pill's bottom edge (clipped to the pill shape by the Surface). The dismiss
  * backdrop mirrors the pill silhouette so the errorContainer flash during the
  * swipe tracks the same footprint. Data sources and interactions are
- * unchanged: tap -> open player, swipe -> stop, button -> play/pause.
+ * unchanged: tap -> open player, horizontal swipe (either direction) -> stop,
+ * button -> play/pause.
  *
  * The thumb is the plain [CoverImage] path fed by [MiniCover]: identical
  * cover chain and identical safe-mode rule as a library card, so the pill can
@@ -127,13 +129,15 @@ private fun MiniPlayerBar(
     onTogglePlayPause: () -> Unit,
     onStop: () -> Unit,
 ) {
-    // Swipe-to-dismiss (horizontal, EndToStart — the documented equivalent of
-    // a vertical swipe on this Material3 version): stops playback, which
-    // clears the session queue so the bar leaves composition.
+    // Swipe-to-dismiss (horizontal; BOTH directions, since SwipeToDismissBox
+    // only supports horizontal here):a swipe past the threshold stops playback,
+    // which clears the session queue so the bar leaves composition. Handling
+    // both anchors matters: with only EndToStart wired, a start-to-end swipe
+    // pushed the pill off-screen while the music kept playing.
     val dismissState = rememberSwipeToDismissBoxState()
     val dismissed = dismissState.currentValue
     LaunchedEffect(dismissed) {
-        if (dismissed == SwipeToDismissBoxValue.EndToStart) {
+        if (dismissed != SwipeToDismissBoxValue.Settled) {
             onStop()
         }
     }
