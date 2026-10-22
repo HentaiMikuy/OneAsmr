@@ -54,11 +54,44 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -euo pipefail
-          test -f "${{ steps.resolve.outputs.notes }}" || {
-            echo "::error::Missing notes file: ${{ steps.resolve.outputs.notes }}"
-            exit 1
-          }
-          gh release edit "${{ steps.resolve.outputs.tag }}" \
-            --title "OneAsmr ${{ steps.resolve.outputs.tag }}" \
-            --notes-file "${{ steps.resolve.outputs.notes }}"
+          set -uo pipefail
+          TAG="${{ steps.resolve.outputs.tag }}"
+          NOTES="${{ steps.resolve.outputs.notes }}"
+          MISSING=0
+          if [ ! -f "$NOTES" ]; then
+            echo "::error::Missing notes file: $NOTES"
+            MISSING=1
+          fi
+          if [ "$MISSING" = "0" ] && gh release edit "$TAG" --title "OneAsmr $TAG" --notes-file "$NOTES" >/tmp/gh-out 2>/tmp/gh-err; then
+            echo "Release $TAG updated with $NOTES"
+            exit 0
+          fi
+          {
+            echo "## sync-release-notes diagnostics"
+            echo ""
+            echo "- TAG: \`$TAG\`"
+            echo "- NOTES: \`$NOTES\`"
+            echo "- gh version: $(gh --version | head -1)"
+            echo "- GH_TOKEN present: $([ -n "${GH_TOKEN:-}" ] && echo yes || echo no)"
+            echo ""
+            echo '### stdout'
+            echo '```'
+            cat /tmp/gh-out 2>/dev/null || true
+            echo '```'
+            echo '### stderr'
+            echo '```'
+            cat /tmp/gh-err 2>/dev/null || true
+            echo '```'
+          } > /tmp/diag.md
+          cat /tmp/diag.md
+          # Logs need admin rights to download; publish the diagnostics on a
+          # branch instead so the failure is inspectable from the repository.
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B ci/sync-notes-debug
+          mkdir -p .github/diagnostics
+          cp /tmp/diag.md .github/diagnostics/sync-notes.md
+          git add .github/diagnostics/sync-notes.md
+          git commit -m "chore(ci): sync-release-notes failure diagnostics"
+          git push origin HEAD
+          exit 1
