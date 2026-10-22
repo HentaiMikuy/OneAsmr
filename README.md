@@ -67,7 +67,7 @@ adb install -r app/build/outputs/apk/release/app-release.apk
 
 应用内置自更新（设置页「关于」→「检查更新」），更新源为 GitHub Releases。整体流程：
 
-1. 修改代码后，**同步递增** `app/build.gradle.kts` 中的 `versionCode` / `versionName`。
+1. 准备发布时才递增 `app/build.gradle.kts` 中的 `versionCode` / `versionName`（一个版本可以包含多笔改动；日常开发、本地自测的改动**不要**递增，避免一笔改动占掉一个版本号）。
 2. 提交并推送一个版本标签（标签名即版本号，需与 `versionName` 对应）：
 
    ```bash
