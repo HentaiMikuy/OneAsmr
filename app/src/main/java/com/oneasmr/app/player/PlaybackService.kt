@@ -139,10 +139,12 @@ class PlaybackService : MediaSessionService() {
      * means the audio timeline must be saved before the video item replaces
      * it and restored verbatim on exit — "返回音频队列时恢复音频上下文".
      *
-     * The video is a single-item replacement timeline (never merged into the
-     * audio queue), so it can never enter repeat/shuffle logic (plan must-not),
-     * and [captureSession] skips QueueStore persistence while [videoMode] is
-     * active so a force-stop mid-video still cold-restores the AUDIO queue.
+     * The video timeline replaces (never merges into) the audio queue. Its
+     * repeat mode is the video page's OWN persisted setting (顺序 / 列表循环 /
+     * 单集循环), not the audio queue preference: [captureSession] and the
+     * repeat/shuffle listeners all skip QueueStore persistence while
+     * [videoMode] is active, so a force-stop mid-video still cold-restores the
+     * AUDIO queue and the AUDIO modes.
      */
     private data class SavedAudioContext(
         val items: List<MediaItem>,
@@ -596,6 +598,14 @@ class PlaybackService : MediaSessionService() {
         }
 
         override fun onRepeatModeChanged(repeatMode: Int) {
+            // 视频模式借用同一会话:此时 repeat 属于视频页自己的设置(单独
+            // 持久化在 SettingsStore),绝不能写回音频的 QueueStore —— 与
+            // captureSession 的 videoMode 跳过对称。退出时 videoMode 已复位,
+            // 快照还原的音频模式会在那里正常落盘。
+            if (videoMode) {
+                Log.i(TAG, "repeat mode -> ${repeatMode.toRepeatMode()} (video mode: audio pref untouched)")
+                return
+            }
             serviceScope.launch { queueStore.setRepeatMode(repeatMode.toRepeatMode()) }
             Log.i(TAG, "repeat mode -> ${repeatMode.toRepeatMode()}")
         }
@@ -614,6 +624,11 @@ class PlaybackService : MediaSessionService() {
                     player.seekToDefaultPosition()
                     Log.i(TAG, "shuffle enabled at queue end: deck restarted")
                 }
+            }
+            // 同 repeat:视频模式强制 shuffle off,这不是音频偏好,不落盘。
+            if (videoMode) {
+                Log.i(TAG, "shuffle -> $shuffleModeEnabled (video mode: audio pref untouched)")
+                return
             }
             serviceScope.launch { queueStore.setShuffleEnabled(shuffleModeEnabled) }
             Log.i(TAG, "shuffle -> $shuffleModeEnabled")

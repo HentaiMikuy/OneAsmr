@@ -971,6 +971,13 @@ interface CollectionDao {
     )
     fun filesInCollectionFlow(collectionId: Long): Flow<List<SingleFile>>
 
+    /** 一次性读取夹内文件(视频页按收藏夹构建播放列表),顺序同上面的 Flow。 */
+    @Query(
+        "SELECT sf.* FROM single_file sf JOIN collection_item ci ON sf.id = ci.fileId " +
+            "WHERE ci.collectionId = :collectionId ORDER BY ci.sortIndex, ci.addedAt",
+    )
+    suspend fun filesInCollection(collectionId: Long): List<SingleFile>
+
     @Query("SELECT COALESCE(MAX(sortIndex), 0) FROM collection_item WHERE collectionId = :collectionId")
     suspend fun maxItemSortIndex(collectionId: Long): Int
 }

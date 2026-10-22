@@ -45,6 +45,8 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay10
+import androidx.compose.material.icons.filled.Repeat
+import androidx.compose.material.icons.filled.RepeatOne
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -97,15 +99,21 @@ import androidx.media3.session.SessionToken
 import androidx.media3.ui.PlayerView
 import com.google.common.util.concurrent.ListenableFuture
 import com.oneasmr.app.R
+import com.oneasmr.app.data.local.CollectionDao
 import com.oneasmr.app.data.local.KeySpec
+import com.oneasmr.app.data.local.SingleFile
 import com.oneasmr.app.data.local.SingleFileDao
 import com.oneasmr.app.data.local.SingleFileKind
 import com.oneasmr.app.data.local.WorkDao
 import com.oneasmr.app.data.local.isCensored
 import com.oneasmr.app.data.local.settings.SettingsStore
+import com.oneasmr.app.data.scanner.DocumentFs
+import com.oneasmr.app.data.scanner.FsEntry
+import com.oneasmr.app.data.scanner.FsPath
 import com.oneasmr.app.data.scanner.TrackTreeBuilder
 import com.oneasmr.app.data.scanner.WorkPathResolver
 import com.oneasmr.app.domain.player.PlaybackSpeed
+import com.oneasmr.app.domain.player.RepeatMode
 import com.oneasmr.app.domain.player.VideoGestureOps
 import com.oneasmr.app.navigation.Routes
 import com.oneasmr.app.player.PlaybackService
@@ -115,6 +123,7 @@ import com.oneasmr.app.player.ResumePositionResolver
 import com.oneasmr.app.player.SessionConnection
 import com.oneasmr.app.player.VideoEntryDecision
 import com.oneasmr.app.player.VideoTrackFinder
+import com.oneasmr.app.player.toMedia3
 import com.oneasmr.app.ui.common.OneAsmrSeekBar
 import com.oneasmr.app.ui.common.OneAsmrSeekBarColors
 import com.oneasmr.app.ui.common.singleThumbModel
@@ -127,6 +136,8 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -160,15 +171,21 @@ import kotlinx.coroutines.withContext
  *    "返回音频队列时恢复音频上下文" is deterministic, not dependent on
  *    process survival.
  * 4. The video session timeline is MULTI-item (plan video-player-controls
- *    Todo 3): same-folder siblings (single-file route) or all VIDEO tracks
- *    of the work replace the audio queue in one `setMediaItems`, with
- *    repeat/shuffle NEUTRALIZED (REPEAT_MODE_OFF + shuffle off) inside the
- *    enter-snapshot listener and restored on exit — from the service's saved
- *    audio context (ACTION_VIDEO_EXIT) or from the ViewModel's own pre-entry
- *    capture (single-file leave-playing, which first collapses the timeline
- *    back to the current item). The service still skips QueueStore
- *    persistence in video mode, so even a force-stop mid-video cold-restores
- *    the AUDIO queue.
+ *    Todo 3): collection members when opened from a collection, otherwise
+ *    same-folder siblings (single-file route), or all VIDEO tracks of the
+ *    work — replace the audio queue. Repeat comes from the video's OWN
+ *    persisted preference (顺序 / 列表循环 / 单集循环, default 顺序) and
+ *    shuffle stays off, applied inside the enter-snapshot listener; the audio
+ *    modes are restored on exit — from the service's saved audio context
+ *    (ACTION_VIDEO_EXIT) or from the ViewModel's own pre-entry capture
+ *    (single-file leave-playing, which first collapses the timeline back to
+ *    the current item). The service still skips QueueStore persistence in
+ *    video mode, so even a force-stop mid-video cold-restores the AUDIO
+ *    queue. The timeline is built in two steps so the playlist never blocks
+ *    the first frame: the entry item is set alone first, then the resolved
+ *    playlist is spliced in with `addMediaItems` (no setMediaItems, no
+ *    re-prepare, no hitch) — see [VideoPlayerViewModel.enterVideo] /
+ *    [VideoPlayerViewModel.adoptPlaylist].
  *
  * Single-file entries (单档, the Videos tab) share the page but not the
  * attached-video exit contract: this page IS their player page, so leaving it
@@ -468,6 +485,22 @@ fun VideoPlayerScreen(
                     lastInteractionTick++
                     controlsVisible = true
                 },
+                onRepeatClick = {
+                    val mode = viewModel.cycleRepeatMode()
+                    // 居中提示复用现有 gesture overlay(与 ±10s/亮度音量
+                    // 同一通道),三档切换对用户可见、可理解。
+                    gestureOverlay = GestureFeedback(
+                        text = when (mode) {
+                            RepeatMode.OFF -> "顺序播放"
+                            RepeatMode.ALL -> "列表循环"
+                            RepeatMode.ONE -> "单集循环"
+                        },
+                        description = "video repeat feedback=${mode.name.lowercase()}",
+                    )
+                    gestureOverlayTick++
+                    lastInteractionTick++
+                    controlsVisible = true
+                },
                 onPlaylistClick = {
                     showPlaylistPanel = true
                     lastInteractionTick++
@@ -619,6 +652,7 @@ private fun VideoControls(
     onSkipBackward: () -> Unit,
     onSkipForward: () -> Unit,
     onSpeedClick: () -> Unit,
+    onRepeatClick: () -> Unit,
     onPlaylistClick: () -> Unit,
     onToggleFullscreen: () -> Unit,
     onLock: () -> Unit,
@@ -716,6 +750,30 @@ private fun VideoControls(
                 onSeek = onSeek,
             )
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                IconButton(
+                    onClick = onRepeatClick,
+                    modifier = Modifier.semantics {
+                        contentDescription = "video repeat=${state.repeatMode.name.lowercase()}"
+                    },
+                ) {
+                    Icon(
+                        if (state.repeatMode == RepeatMode.ONE) {
+                            Icons.Filled.RepeatOne
+                        } else {
+                            Icons.Filled.Repeat
+                        },
+                        contentDescription = when (state.repeatMode) {
+                            RepeatMode.OFF -> "顺序播放"
+                            RepeatMode.ALL -> "列表循环"
+                            RepeatMode.ONE -> "单集循环"
+                        },
+                        // 顺序(未循环)半透明 = 未激活,与音频播放器的模式
+                        // 图标语言一致;列表/单集循环实心白。
+                        tint = Color.White.copy(
+                            alpha = if (state.repeatMode == RepeatMode.OFF) 0.45f else 1f,
+                        ),
+                    )
+                }
                 IconButton(
                     onClick = onSpeedClick,
                     modifier = Modifier.semantics { contentDescription = "video speed=${state.speed}" },
@@ -896,9 +954,9 @@ private fun gestureFeedback(brightness: Boolean, fraction: Float): GestureFeedba
 
 /**
  * Display row of the in-page playlist (plan video-player-controls Todo 3d):
- * same-folder siblings (single-file route) or all VIDEO tracks of the work.
- * Display-only — the keyed model (trackKey/kind/uri) stays a private
- * ViewModel field.
+ * collection members (opened from a 收藏夹), same-folder siblings (other
+ * single-file entries), or all VIDEO tracks of the work. Display-only — the
+ * keyed model (trackKey/kind/uri) stays a private ViewModel field.
  */
 data class VideoPlaylistEntry(
     val index: Int,
@@ -920,7 +978,17 @@ data class VideoUiState(
     val isPlaying: Boolean = false,
     val playbackState: Int = Player.STATE_IDLE,
     val speed: Float = 1f,
-    /** Playlist rows (empty until the entry load resolves; <= 1 row hides the entry). */
+    /**
+     * 视频循环模式(顺序/列表循环/单集循环)。进入页面时从独立持久化的
+     * 视频偏好恢复,与音频播放器的循环互不影响。
+     */
+    val repeatMode: RepeatMode = RepeatMode.OFF,
+    /**
+     * Playlist rows. Empty until the entry load resolves; for the single-file
+     * route the collection members / same-folder siblings are then filled in
+     * by the background playlist job (which no longer sits on the
+     * playback-start path). <= 1 row hides the playlist button.
+     */
     val playlist: List<VideoPlaylistEntry> = emptyList(),
 )
 
@@ -936,6 +1004,7 @@ class VideoPlayerViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val workDao: WorkDao,
     private val singleFileDao: SingleFileDao,
+    private val collectionDao: CollectionDao,
     private val fsFactory: DocumentFsFactory,
     private val resumePositionResolver: ResumePositionResolver,
     private val settingsStore: SettingsStore,
@@ -949,6 +1018,18 @@ class VideoPlayerViewModel @Inject constructor(
      */
     private val singleFileId: Long? =
         savedStateHandle.get<String>(Routes.SINGLE_FILE_ARG)?.toLongOrNull()
+
+    /**
+     * 可选收藏夹上下文:从收藏夹点开时带上,播放列表取夹内文件(按夹内
+     * 序);不带(或 -1)时退回同目录兄弟列表。
+     *
+     * 声明为可变量:ATTACH 重入(迷你播放器/深链)的 route 不带该参数,
+     * 会从会话条目的 mediaMetadata extras 里恢复同一收藏夹上下文,保证
+     * 重入后播放列表不会退回“全部视频”。
+     */
+    private var playlistCollectionId: Long? =
+        savedStateHandle.get<Long>(Routes.COLLECTION_ARG)?.takeIf { it >= 0L }
+
     private val workId: String? = savedStateHandle[Routes.WORK_DETAIL_ARG]
     private val trackIndex: Int = savedStateHandle.get<Int>(Routes.TRACK_INDEX_ARG) ?: 1
 
@@ -980,8 +1061,9 @@ class VideoPlayerViewModel @Inject constructor(
 
     /**
      * Keyed playlist model (plan Todo 3a): the session timeline handed to the
-     * controller at entry — same-folder siblings (single-file) or all VIDEO
-     * tracks of the work. mediaId of each item IS its trackKey.
+     * controller at entry — collection members (when opened from a collection),
+     * otherwise same-folder siblings (single-file), or all VIDEO tracks of the
+     * work. mediaId of each item IS its trackKey.
      */
     private var playlistModel: List<PlaylistItem> = emptyList()
 
@@ -998,6 +1080,12 @@ class VideoPlayerViewModel @Inject constructor(
     /** ATTACH 页把已收拢的会话时间线重新展开过(c2)——退出时须再收拢+还原(h)。 */
     private var attachReexpanded = false
 
+    /**
+     * ATTACH 页把会话的 repeat/shuffle 改成了视频循环偏好 —— 退出时即使
+     * 没有重展开时间线,也要把进入前的音频模式还原回来。
+     */
+    private var attachModesApplied = false
+
     /** 后台时视频轨被临时禁用(省电);回前台/退出时必须复位。 */
     private var videoTrackDisabledForBackground = false
 
@@ -1007,6 +1095,18 @@ class VideoPlayerViewModel @Inject constructor(
      * 就是最新值(设置页在别的路由,页面存活期间改不了)。
      */
     private var videoBackgroundPlaybackEnabled = true
+
+    /**
+     * 入口条目是否音频-only。播放列表模型就绪前的窗口期(两段式进入)由它
+     * 兜底 [currentIsAudioOnly],避免后台事件把纯音频单档误判成视频。
+     */
+    private var entryIsAudioOnly = false
+
+    /**
+     * 视频循环模式(顺序/列表循环/单集循环),独立于音频循环持久化。
+     * 进入/重入视频会话时应用到会话播放器;页面内的循环按钮改它并落盘。
+     */
+    private var videoRepeatMode: RepeatMode = RepeatMode.OFF
 
     /**
      * The session player for the PlayerView binding(连接完成后才非 null)。
@@ -1034,6 +1134,15 @@ class VideoPlayerViewModel @Inject constructor(
         // 退出决策用的开关快照(见 videoBackgroundPlaybackEnabled)。
         viewModelScope.launch {
             videoBackgroundPlaybackEnabled = settingsStore.videoBackgroundPlayback.first()
+        }
+        // 视频循环偏好(独立于音频循环;进入会话时应用,见 enterVideo)。
+        viewModelScope.launch {
+            videoRepeatMode = settingsStore.videoRepeatMode.first()
+            _uiState.update { it.copy(repeatMode = videoRepeatMode) }
+            // 读盘晚于会话进入时(极少数)补应用到播放器;音频会话中不动。
+            if (enteredVideoMode || attachModesApplied) {
+                controller?.repeatMode = videoRepeatMode.toMedia3()
+            }
         }
         // The service's error-restore can supersede the transient player
         // ERROR state before MediaController propagates it (device-verified
@@ -1096,6 +1205,19 @@ class VideoPlayerViewModel @Inject constructor(
     /** Re-entry on the same video (deep-link re-delivery): resume in place. */
     private fun attachExisting(controller: MediaController) {
         val item = controller.currentMediaItem
+        // ATTACH 的 route 可能不带收藏夹参数(迷你播放器/深链):从会话条目
+        // 的 extras 恢复播放列表范围,重入后列表不退回“全部视频”。
+        item?.mediaMetadata?.extras
+            ?.getLong(EXTRA_PLAYLIST_COLLECTION, -1L)
+            ?.takeIf { it >= 0L }
+            ?.let { playlistCollectionId = it }
+        // 先捕获进入前的音频模式,再应用视频循环偏好 —— 退出时(无论是否
+        // 重展开时间线)都要把音频模式还原回去。
+        vmSavedRepeatMode = controller.repeatMode
+        vmSavedShuffle = controller.shuffleModeEnabled
+        attachModesApplied = true
+        controller.repeatMode = videoRepeatMode.toMedia3()
+        controller.shuffleModeEnabled = false
         _uiState.update {
             it.copy(
                 loading = false,
@@ -1104,6 +1226,7 @@ class VideoPlayerViewModel @Inject constructor(
                 isPlaying = controller.isPlaying,
                 playbackState = controller.playbackState,
                 speed = controller.playbackParameters.speed,
+                repeatMode = videoRepeatMode,
             )
         }
         controller.play()
@@ -1124,15 +1247,11 @@ class VideoPlayerViewModel @Inject constructor(
             }
             if (model.size <= 1 || controller.mediaItemCount == model.size) return@launch
             // 先判匹配:当前会话条目不在模型里说明时间线已另属他人,整个
-            // 重展开块(含模式捕获/中和/setMediaItems)全部跳过。
+            // 重展开块(含 setMediaItems)全部跳过。
             if (idx < 0) {
                 Log.w(TAG, "video attach: re-expand skipped, current item not in playlist model")
                 return@launch
             }
-            vmSavedRepeatMode = controller.repeatMode
-            vmSavedShuffle = controller.shuffleModeEnabled
-            controller.repeatMode = Player.REPEAT_MODE_OFF
-            controller.shuffleModeEnabled = false
             controller.setMediaItems(model.map(::buildMediaItem), idx, controller.currentPosition)
             controller.prepare()
             attachReexpanded = true
@@ -1141,11 +1260,25 @@ class VideoPlayerViewModel @Inject constructor(
     }
 
     /**
-     * Video entry: resolve the video file + the full playlist + resume
-     * position, snapshot the audio context on the service, then swap the
-     * session timeline to the MULTI-item playlist (plan Todo 3a/b). The
-     * snapshot command is awaited BEFORE setMediaItems — the restore point
-     * must be the exact pre-video state.
+     * Video entry in two phases so the playlist never blocks the first frame.
+     *
+     * Phase 1 (start path): resolve ONLY the entry video (+ resume position),
+     * snapshot the audio context, then set the session timeline to the single
+     * entry item and play. For the single-file route that is one file's SAF
+     * path walk, instead of the N-sibling walk the old flow awaited before
+     * playback; the sibling walk is binder IPC and dominated the first frame
+     * on folders with several files.
+     *
+     * Phase 2 (background): the playlist job — started before the snapshot
+     * round-trip so it overlaps it — finishes and its model is spliced into
+     * the live session by [adoptPlaylist] (`addMediaItems`, never
+     * `setMediaItems`, so the playing item is never re-prepared). The work
+     * route already owns its playlist from the entry tree walk (that walk is
+     * how the entry track is located at all), so it is adopted right after
+     * start.
+     *
+     * The snapshot command is still awaited BEFORE setMediaItems — the restore
+     * point must be the exact pre-video state.
      */
     private fun enterVideo(controller: MediaController) {
         // (b) FIRST: capture the pre-video modes. The single-file continue
@@ -1154,11 +1287,15 @@ class VideoPlayerViewModel @Inject constructor(
         vmSavedRepeatMode = controller.repeatMode
         vmSavedShuffle = controller.shuffleModeEnabled
         viewModelScope.launch {
-            // (a) playlist build + resume resolve live ENTIRELY in the IO
-            // phase: the N× SAF listChildren walks are binder IPC and ANR on
-            // the main thread (Task-21 ANR note above).
+            // (a) entry resolve + resume resolve live in the IO phase: the SAF
+            // listChildren walks are binder IPC and ANR on the main thread
+            // (Task-21 ANR note above).
             val resolved = withContext(Dispatchers.IO) {
-                loadVideoWithPlaylist()?.let { it to resumePositionResolver.resolve(videoKey) }
+                val loaded = loadEntryForStart()
+                // 视频循环偏好与入口同一次 IO 读取:进入会话前就拿到,首帧
+                // 不再等第二次磁盘往返(DataStore 已缓存后开销可忽略)。
+                if (loaded != null) videoRepeatMode = settingsStore.videoRepeatMode.first()
+                loaded
             }
             if (resolved == null) {
                 _uiState.update { it.copy(loading = false, error = "未找到视频文件") }
@@ -1171,20 +1308,34 @@ class VideoPlayerViewModel @Inject constructor(
                 Log.i(TAG, "video entry aborted: page already left")
                 return@launch
             }
-            val (loaded, startPositionMs) = resolved
-            playlistModel = loaded.playlist
-            val currentIndex = loaded.playlist.indexOfFirst { it.trackKey == videoKey }.coerceAtLeast(0)
+            val entry = resolved.entry
+            entryIsAudioOnly = entry.isAudioOnly
             _uiState.update {
                 it.copy(
                     loading = false,
-                    title = loaded.entry.title,
-                    workTitle = loaded.entry.subTitle,
+                    title = entry.title,
+                    workTitle = entry.subTitle,
                     speed = controller.playbackParameters.speed,
-                    playlist = displayPlaylist(currentIndex),
+                    repeatMode = videoRepeatMode,
                 )
             }
+            // Phase 2 starts NOW so it overlaps the snapshot round-trip. The
+            // work route has no deferred load (its playlist came with the
+            // entry tree walk).
+            val playlistJob = if (resolved.playlist.isEmpty() && singleFileId != null) {
+                viewModelScope.async(Dispatchers.IO) { loadSinglePlaylist(singleFileId, entry) }
+            } else {
+                null
+            }
+            val startPositionMs = withContext(Dispatchers.IO) { resumePositionResolver.resolve(videoKey) }
+            if (exitRequested) {
+                Log.i(TAG, "video entry aborted: page already left")
+                return@launch
+            }
+            // 快照往返期间退出时,exitVideo 必须走 ENTER 的收尾契约(与旧流程
+            // 一致:标志在 sendCustomCommand 之前置位)。
             enteredVideoMode = true
-            Log.i(TAG, "video resolved: key=$videoKey start=${startPositionMs}ms items=${loaded.playlist.size}")
+            Log.i(TAG, "video entry: key=$videoKey start=${startPositionMs}ms entry=${entry.title}")
             val snapshotFuture = controller.sendCustomCommand(
                 SessionCommand(PlaybackService.ACTION_VIDEO_ENTER, Bundle.EMPTY),
                 Bundle.EMPTY,
@@ -1205,67 +1356,113 @@ class VideoPlayerViewModel @Inject constructor(
                 // check and immediately before setMediaItems — earlier would
                 // poison the snapshot (PlaybackService.saveAudioContext reads
                 // the modes; controller calls are delivered in order).
-                controller.repeatMode = Player.REPEAT_MODE_OFF
+                // 循环走视频自己的持久化偏好(顺序/列表循环/单集循环),不再
+                // 硬编码 OFF;shuffle 仍关闭(视频播放列表保持自然顺序)。
+                controller.repeatMode = videoRepeatMode.toMedia3()
                 controller.shuffleModeEnabled = false
-                controller.setMediaItems(
-                    loaded.playlist.map(::buildMediaItem),
-                    currentIndex,
-                    startPositionMs,
-                )
+                // Entry-only timeline: the first frame must not wait for the
+                // playlist. adoptPlaylist() splices the rest in afterwards.
+                controller.setMediaItems(listOf(buildMediaItem(entry)), 0, startPositionMs)
                 controller.prepare()
                 controller.play()
                 startTicker()
                 Log.i(
                     TAG,
-                    "video started: ${loaded.entry.title} key=$videoKey pos=$startPositionMs " +
-                        "(${loaded.playlist.size} items, modes neutralized)",
+                    "video started: ${entry.title} key=$videoKey pos=${startPositionMs}ms " +
+                        "(entry-only timeline, playlist deferred)",
                 )
+                if (resolved.playlist.isNotEmpty()) {
+                    adoptPlaylist(controller, resolved.playlist, entry)
+                } else {
+                    playlistJob?.let { job ->
+                        viewModelScope.launch {
+                            val model = try {
+                                job.await()
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                Log.w(TAG, "playlist job failed: ${e.message}")
+                                return@launch
+                            }
+                            adoptPlaylist(controller, model, entry)
+                        }
+                    }
+                }
             }, ContextCompat.getMainExecutor(context))
         }
     }
 
-    private suspend fun loadVideoWithPlaylist(): ResolvedVideo? =
-        if (singleFileId != null) loadSingleWithPlaylist(singleFileId) else loadWorkWithPlaylist()
+    /**
+     * Splice the resolved playlist into the live session WITHOUT re-preparing
+     * the playing item: entries before the current one are inserted at the
+     * head, entries after it are appended. Both calls leave the current media
+     * item (and its buffer) untouched, so the video keeps playing with no
+     * visible hitch — the reason this is not a `setMediaItems` swap.
+     *
+     * Safe without waiting for the controller's local timeline to catch up:
+     * all Player commands travel to the session in order, and the entry-only
+     * `setMediaItems` / `prepare` / `play` issued by [enterVideo] are queued
+     * before these inserts. The timeline these indices address is therefore
+     * [entry] alone (index 0), and `index + 1` is the append point after the
+     * head insert.
+     */
+    private fun adoptPlaylist(controller: MediaController, model: List<PlaylistItem>, entry: PlaylistItem) {
+        if (exitRequested || _uiState.value.playbackFailed) return
+        val index = model.indexOfFirst { it.trackKey == entry.trackKey }
+        if (index < 0) {
+            Log.w(TAG, "playlist adopt skipped: entry not in playlist model")
+            return
+        }
+        playlistModel = model
+        _uiState.update { it.copy(playlist = displayPlaylist(index)) }
+        if (model.size <= 1) return
+        runCatching {
+            if (index > 0) {
+                controller.addMediaItems(0, model.subList(0, index).map(::buildMediaItem))
+            }
+            val tail = model.subList(index + 1, model.size)
+            if (tail.isNotEmpty()) {
+                controller.addMediaItems(index + 1, tail.map(::buildMediaItem))
+            }
+        }.onFailure { e ->
+            Log.w(TAG, "playlist splice failed: ${e.message}")
+        }
+        Log.i(TAG, "playlist adopted: ${model.size} items, current=$index, no re-prepare")
+    }
 
     /**
-     * 单档解析:库行 -> 沿 display-name 相对路径现场解析 document uri
-     * (同 WorkPathResolver 的设计依据:SAF 文档 id 不入库,路径才是
-     * 稳定身份),并列出同根同目录的全部兄弟条目(listByRoot + isSibling
-     * 精确父目录匹配,子目录不算)。末段匹配文件而非目录。
+     * Entry-only load for the playback-start path: the single-file route
+     * resolves just its own URI (the playlist is deferred to a background
+     * job); the work route reuses its full-model load because the entry track
+     * can only be located by walking the work tree, and the playlist is a
+     * by-product of that same walk.
      */
-    private suspend fun loadSingleWithPlaylist(fileId: Long): ResolvedVideo? {
+    private suspend fun loadEntryForStart(): ResolvedVideo? =
+        if (singleFileId != null) {
+            loadSingleEntry(singleFileId)?.let { ResolvedVideo(entry = it, playlist = emptyList()) }
+        } else {
+            loadWorkWithPlaylist()
+        }
+
+    /** Full load (entry + playlist); used by the attach path, never by start. */
+    private suspend fun loadVideoWithPlaylist(): ResolvedVideo? {
+        if (singleFileId == null) return loadWorkWithPlaylist()
+        val entry = loadSingleEntry(singleFileId) ?: return null
+        return ResolvedVideo(entry = entry, playlist = loadSinglePlaylist(singleFileId, entry))
+    }
+
+    /**
+     * 单档入口解析:库行 -> 沿 display-name 相对路径现场解析 document uri
+     * (同 WorkPathResolver 的设计依据:SAF 文档 id 不入库,路径才是稳定
+     * 身份)。只解析入口文件本身;兄弟条目的 URI 由 [loadSinglePlaylist]
+     * 在后台任务里补齐。
+     */
+    private suspend fun loadSingleEntry(fileId: Long): PlaylistItem? {
         val file = singleFileDao.getById(fileId) ?: return null
         return runCatching {
             val fs = fsFactory.create(file.rootFolderUri)
-            val entryUri = resolveFileUri(fs, file.relativePath) ?: return@runCatching null
-            val entry = PlaylistItem(
-                trackKey = KeySpec.singleFileTrackKey(file.id),
-                title = file.displayTitle,
-                subTitle = file.channel ?: "单档库",
-                documentUri = entryUri,
-                // 单档缩略图(边车图/抽帧):thumbSource 经共享规则解析成
-                // 通知栏封面 model(与单档列表/胶囊缩略图同一条)。
-                artworkUri = file.thumbSource?.let(::singleThumbModel),
-                isAudioOnly = file.kind == SingleFileKind.AUDIO,
-            )
-            val siblings = singleFileDao.listByRoot(file.rootFolderUri)
-                .filter { VideoGestureOps.isSibling(it.relativePath, file.relativePath) }
-                .mapNotNull { sibling ->
-                    resolveFileUri(fs, sibling.relativePath)?.let { uri ->
-                        PlaylistItem(
-                            trackKey = KeySpec.singleFileTrackKey(sibling.id),
-                            title = sibling.displayTitle,
-                            subTitle = sibling.channel ?: "单档库",
-                            documentUri = uri,
-                            artworkUri = sibling.thumbSource?.let(::singleThumbModel),
-                            isAudioOnly = sibling.kind == SingleFileKind.AUDIO,
-                        )
-                    }
-                }
-            // 入口条目必须在模型里(自身的 SAF 解析失败已在上游排除,这里
-            // 只是防御):丢了就退化为单条,绝不交出不含入口的时间线。
-            val model = if (siblings.any { it.trackKey == entry.trackKey }) siblings else listOf(entry)
-            ResolvedVideo(entry = entry, playlist = model)
+            val uri = FileUriWalker(fs).resolve(file.relativePath) ?: return@runCatching null
+            playlistItemOf(file, uri)
         }.getOrElse { e ->
             if (e is CancellationException) throw e
             Log.w(TAG, "single file lookup failed: ${e.message}")
@@ -1273,19 +1470,100 @@ class VideoPlayerViewModel @Inject constructor(
         }
     }
 
-    private fun resolveFileUri(fs: com.oneasmr.app.data.scanner.DocumentFs, relativePath: String): String? {
-        val segments = relativePath.split('/').filter { it.isNotBlank() }
-        if (segments.isEmpty()) return null
-        var path = com.oneasmr.app.data.scanner.FsPath(emptyList())
-        for ((index, name) in segments.withIndex()) {
-            val entries = fs.listChildren(path)
-            if (index == segments.lastIndex) {
-                return entries.firstOrNull { it.name == name && !it.isDirectory }?.documentUri
-            }
-            val dir = entries.firstOrNull { it.name == name && it.isDirectory } ?: return null
-            path += dir.documentId
+    /**
+     * 单档播放列表。入口来自收藏夹时取夹内文件(按夹内序);否则取同根
+     * 同目录的全部兄弟条目(listByRoot + isSibling 精确父目录匹配,子目录
+     * 不算)。两条路径都走 [FileUriWalker]:目录列表按目录记忆化,兄弟/夹内
+     * 文件共享父目录链,N 个条目只需 O(深度) 次 listChildren。
+     */
+    private suspend fun loadSinglePlaylist(fileId: Long, entry: PlaylistItem): List<PlaylistItem> {
+        val file = singleFileDao.getById(fileId) ?: return listOf(entry)
+        // 收藏夹优先;入口不在夹内(刚被移出等)时回退兄弟列表 —— 绝不交出
+        // 不含入口的播放列表。
+        playlistCollectionId?.let { collectionId ->
+            loadCollectionPlaylist(collectionId, entry)?.let { return it }
         }
-        return null
+        return loadSiblingPlaylist(file, entry)
+    }
+
+    /**
+     * 收藏夹播放列表:夹内文件按夹内序(sortIndex, addedAt)。成员可能来自
+     * 不同扫描根,walkers 按 rootFolderUri 复用,避免跨 root 成员互相污染。
+     */
+    private suspend fun loadCollectionPlaylist(
+        collectionId: Long,
+        entry: PlaylistItem,
+    ): List<PlaylistItem>? = runCatching {
+        val members = collectionDao.filesInCollection(collectionId)
+        if (members.isEmpty()) return@runCatching null
+        val walkers = mutableMapOf<String, FileUriWalker>()
+        val items = members.mapNotNull { member ->
+            val walker = walkers.getOrPut(member.rootFolderUri) {
+                FileUriWalker(fsFactory.create(member.rootFolderUri))
+            }
+            walker.resolve(member.relativePath)?.let { uri -> playlistItemOf(member, uri) }
+        }
+        items.takeIf { list -> list.any { it.trackKey == entry.trackKey } }
+    }.getOrElse { e ->
+        if (e is CancellationException) throw e
+        Log.w(TAG, "collection playlist lookup failed: ${e.message}")
+        null
+    }
+
+    /** 同根同目录兄弟条目(非收藏夹入口的默认语义)。 */
+    private suspend fun loadSiblingPlaylist(file: SingleFile, entry: PlaylistItem): List<PlaylistItem> =
+        runCatching {
+            val fs = fsFactory.create(file.rootFolderUri)
+            val walker = FileUriWalker(fs)
+            val siblings = singleFileDao.listByRoot(file.rootFolderUri)
+                .filter { VideoGestureOps.isSibling(it.relativePath, file.relativePath) }
+                .mapNotNull { sibling ->
+                    walker.resolve(sibling.relativePath)?.let { uri -> playlistItemOf(sibling, uri) }
+                }
+            // 入口条目必须在模型里(自身的 SAF 解析失败已在上游排除,这里
+            // 只是防御):丢了就退化为单条。
+            if (siblings.any { it.trackKey == entry.trackKey }) siblings else listOf(entry)
+        }.getOrElse { e ->
+            if (e is CancellationException) throw e
+            Log.w(TAG, "single playlist lookup failed: ${e.message}")
+            listOf(entry)
+        }
+
+    private fun playlistItemOf(file: SingleFile, uri: String): PlaylistItem =
+        PlaylistItem(
+            trackKey = KeySpec.singleFileTrackKey(file.id),
+            title = file.displayTitle,
+            subTitle = file.channel ?: "单档库",
+            documentUri = uri,
+            // 单档缩略图(边车图/抽帧):thumbSource 经共享规则解析成
+            // 通知栏封面 model(与单档列表/胶囊缩略图同一条)。
+            artworkUri = file.thumbSource?.let(::singleThumbModel),
+            isAudioOnly = file.kind == SingleFileKind.AUDIO,
+        )
+
+    /**
+     * Display-name → document-uri walker with a per-directory listing memo.
+     * Sibling files share every directory on the way down, so one listing per
+     * directory replaces one root-to-leaf walk per file (SAF `listChildren` is
+     * binder IPC: O(depth + N) instead of O(N·depth)).
+     */
+    private class FileUriWalker(private val fs: DocumentFs) {
+        private val listings = mutableMapOf<FsPath, List<FsEntry>>()
+
+        fun resolve(relativePath: String): String? {
+            val segments = relativePath.split('/').filter { it.isNotBlank() }
+            if (segments.isEmpty()) return null
+            var path = FsPath(emptyList())
+            for ((index, name) in segments.withIndex()) {
+                val entries = listings.getOrPut(path) { fs.listChildren(path) }
+                if (index == segments.lastIndex) {
+                    return entries.firstOrNull { it.name == name && !it.isDirectory }?.documentUri
+                }
+                val dir = entries.firstOrNull { it.name == name && it.isDirectory } ?: return null
+                path += dir.documentId
+            }
+            return null
+        }
     }
 
     private suspend fun loadWorkWithPlaylist(): ResolvedVideo? {
@@ -1355,6 +1633,13 @@ class VideoPlayerViewModel @Inject constructor(
                     .setTitle(item.title)
                     .setArtist(item.subTitle)
                     .apply { item.artworkUri?.let(::setArtworkUri) }
+                    // 播放列表范围随会话条目走:ATTACH 重入的 route 没有
+                    // collectionId,靠这个 extras 恢复同一收藏夹的播放列表。
+                    .setExtras(
+                        Bundle().apply {
+                            playlistCollectionId?.let { putLong(EXTRA_PLAYLIST_COLLECTION, it) }
+                        },
+                    )
                     .build(),
             )
             .build()
@@ -1370,9 +1655,12 @@ class VideoPlayerViewModel @Inject constructor(
             )
         }
 
-    /** 当前条目的音频-only 类别,从播放列表模型按 currentVideoKey 现取(不冻结)。 */
+    /**
+     * 当前条目的音频-only 类别,从播放列表模型按 currentVideoKey 现取(不
+     * 冻结);模型尚未就绪(两段式进入的窗口期)时回落到入口条目的类别。
+     */
     private fun currentIsAudioOnly(): Boolean =
-        playlistModel.firstOrNull { it.trackKey == currentVideoKey }?.isAudioOnly ?: false
+        playlistModel.firstOrNull { it.trackKey == currentVideoKey }?.isAudioOnly ?: entryIsAudioOnly
 
     private val controllerListener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -1448,6 +1736,23 @@ class VideoPlayerViewModel @Inject constructor(
         val target = VideoGestureOps.skipTarget(c.currentPosition, deltaMs, c.duration)
         Log.i(TAG, "video skip ${if (deltaMs >= 0) "+" else ""}${deltaMs}ms -> ${target}ms")
         seekTo(target)
+    }
+
+    /**
+     * 视频循环按钮:顺序 → 列表循环 → 单集循环 → 顺序。会话内即时生效,
+     * 并立即写入独立的视频循环偏好;音频的循环偏好不受影响(服务端
+     * videoMode 守卫保证不互相覆盖)。返回新模式供 UI 弹提示。
+     */
+    fun cycleRepeatMode(): RepeatMode {
+        val next = videoRepeatMode.next()
+        videoRepeatMode = next
+        _uiState.update { it.copy(repeatMode = next) }
+        controller?.repeatMode = next.toMedia3()
+        // NonCancellable:点完循环立刻返回上一页时,viewModelScope 会被取消,
+        // 但这次偏好写入必须落盘(DataStore 编辑只是一次很小的 IO)。
+        viewModelScope.launch(NonCancellable) { settingsStore.setVideoRepeatMode(next) }
+        Log.i(TAG, "video repeat -> $next")
+        return next
     }
 
     fun setSpeed(speed: Float) {
@@ -1548,7 +1853,17 @@ class VideoPlayerViewModel @Inject constructor(
         // 离开视频页前复位视频轨参数:共享播放器把它带回音频队列虽无
         // 感知,但属状态泄漏,下个视频会莫名黑屏。
         if (videoTrackDisabledForBackground) setVideoTrackDisabled(false)
-        if (!enteredVideoMode) return
+        if (!enteredVideoMode) {
+            // ATTACH 页:进入时把 repeat/shuffle 改成了视频循环偏好,退出
+            // 还原音频模式(不动时间线、不发服务命令)。
+            if (attachModesApplied) {
+                runCatching {
+                    c.repeatMode = vmSavedRepeatMode
+                    c.shuffleModeEnabled = vmSavedShuffle
+                }
+            }
+            return
+        }
         if (_uiState.value.playbackFailed) {
             Log.i(TAG, "video exit after failure: audio context restored by service, popping only")
             return
@@ -1558,8 +1873,9 @@ class VideoPlayerViewModel @Inject constructor(
     }
 
     /**
-     * 单档页面退出。ATTACH 进入的页面(胶囊点回)不改变播放状态 —— 会话本就
-     * 没被这类页面打断过,退出只把画面让出去,不需要任何服务命令;ENTER 过的
+     * 单档页面退出。ATTACH 进入的页面(胶囊点回)不改播放状态 —— 会话本就
+     * 没被这类页面打断过,退出只把画面让出去,不需要任何服务命令(但它会把
+     * repeat/shuffle 换成视频循环偏好,退出时在本地还原);ENTER 过的
      * 页面才需要收尾:继续播放(先把会话收拢为当前条目、还原进入前的循环/随机,
      * 再禁用视频轨 + 让服务结束视频模式)或暂停回滚(旧行为,「视频后台续播」
      * 关时)。重展开过时间线的 ATTACH 页(attachReexpanded)同样先收拢+还原,
@@ -1569,8 +1885,10 @@ class VideoPlayerViewModel @Inject constructor(
         if (_uiState.value.playbackFailed) {
             // (g) 服务在「无存档音频上下文」时走通用清理路径,不会还原模式
             // —— 本页中和过(ENTER 或重展开的 ATTACH)就由 VM 自快照补还;
-            // 从未中和的纯 ATTACH 页不动(vmSaved* 只是默认值)。
-            if (enteredVideoMode || attachReexpanded) {
+            // 从未改过模式的纯 ATTACH 页不动(vmSaved* 只是默认值);
+            // attachModesApplied 的页(改了 repeat/shuffle 但没重展开时间线)
+            // 同样要把音频模式还原。
+            if (enteredVideoMode || attachReexpanded || attachModesApplied) {
                 runCatching {
                     c.repeatMode = vmSavedRepeatMode
                     c.shuffleModeEnabled = vmSavedShuffle
@@ -1588,6 +1906,14 @@ class VideoPlayerViewModel @Inject constructor(
             return
         }
         if (!enteredVideoMode) {
+            // 纯 ATTACH 页:时间线没重展开,但 repeat/shuffle 已被改成视频
+            // 循环偏好 —— 退出时还原进入前的音频模式(不碰时间线、不发命令)。
+            if (attachModesApplied) {
+                runCatching {
+                    c.repeatMode = vmSavedRepeatMode
+                    c.shuffleModeEnabled = vmSavedShuffle
+                }
+            }
             setVideoTrackDisabled(true)
             return
         }
@@ -1664,5 +1990,8 @@ class VideoPlayerViewModel @Inject constructor(
     private companion object {
         const val TAG = "VideoPlayer"
         const val POSITION_TICK_MS = 500L
+
+        /** MediaMetadata extras:单档视频条目的播放列表范围(收藏夹 id)。 */
+        const val EXTRA_PLAYLIST_COLLECTION = "oneasmr.playlist.collection"
     }
 }

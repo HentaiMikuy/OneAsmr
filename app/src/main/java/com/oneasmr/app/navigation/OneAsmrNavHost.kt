@@ -89,7 +89,9 @@ object Routes {
     const val WORK_DETAIL = "work/{workId}"
     const val PLAYER = "player/{workId}/{trackIndex}"
     const val VIDEO_PLAYER = "video_player/{workId}/{trackIndex}"
-    const val VIDEO_PLAYER_SINGLE = "video_player_single/{fileId}"
+    // 可选 collectionId:从收藏夹点开的单档视频,播放列表取夹内文件(按夹内
+    // 序);不带该参数时退回同目录兄弟列表。缺省 -1 = 无收藏夹上下文。
+    const val VIDEO_PLAYER_SINGLE = "video_player_single/{fileId}?collectionId={collectionId}"
     const val TEXT_VIEWER = "text/{workId}/{documentUri}"
     const val IMAGE_VIEWER = "image/{workId}/{documentUri}"
     const val BROWSE_DIMENSION = "browse/{dimension}"
@@ -114,8 +116,9 @@ object Routes {
     /** Video player stub route (Task 22 wires the real player). */
     fun videoPlayer(workId: String, trackIndex: Int): String = "video_player/$workId/$trackIndex"
 
-    /** 单文件(音/视频皆走视频播放器页)播放路由。 */
-    fun videoPlayerSingle(fileId: Long): String = "video_player_single/$fileId"
+    /** 单文件(音/视频皆走视频播放器页)播放路由;从收藏夹进入时带夹 id。 */
+    fun videoPlayerSingle(fileId: Long, collectionId: Long? = null): String =
+        "video_player_single/$fileId" + (collectionId?.let { "?collectionId=$it" } ?: "")
 
     /** 收藏夹详情。 */
     fun collection(collectionId: Long): String = "collection/$collectionId"
@@ -364,9 +367,16 @@ fun OneAsmrNavHost(
                     navArgument(Routes.COLLECTION_ARG) { type = NavType.StringType },
                 ),
                 deepLinks = listOf(navDeepLink { uriPattern = "oneasmr://collection/{collectionId}" }),
-            ) {
+            ) { entry ->
+                // 从收藏夹进视频页要带上夹上下文:播放列表 = 夹内文件,而不是
+                // 同目录的全部兄弟文件。
+                val collectionId = entry.arguments
+                    ?.getString(Routes.COLLECTION_ARG)
+                    ?.toLongOrNull()
                 CollectionScreen(
-                    onOpenFile = { fileId -> navController.navigate(Routes.videoPlayerSingle(fileId)) },
+                    onOpenFile = { fileId ->
+                        navController.navigate(Routes.videoPlayerSingle(fileId, collectionId))
+                    },
                     onBack = { navController.popBackStack() },
                 )
             }
@@ -430,6 +440,11 @@ fun OneAsmrNavHost(
                 route = Routes.VIDEO_PLAYER_SINGLE,
                 arguments = listOf(
                     navArgument(Routes.SINGLE_FILE_ARG) { type = NavType.StringType },
+                    // 可选:收藏夹上下文(-1 = 非收藏夹入口)。
+                    navArgument(Routes.COLLECTION_ARG) {
+                        type = NavType.LongType
+                        defaultValue = -1L
+                    },
                 ),
                 deepLinks = listOf(
                     navDeepLink { uriPattern = "oneasmr://video_player_single/{fileId}" },

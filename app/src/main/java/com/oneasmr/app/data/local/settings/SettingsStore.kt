@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.oneasmr.app.data.local.WorkOrder
+import com.oneasmr.app.domain.player.RepeatMode
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
@@ -185,6 +186,14 @@ class SettingsStore @Inject constructor(
         dataStore.data.map { it[KEY_VIDEO_BACKGROUND_PLAYBACK] ?: true }
 
     /**
+     * 视频播放页的循环模式(顺序/列表循环/单集循环),默认顺序
+     * ([RepeatMode.OFF])。与音频播放器的循环(QueueStore)彼此独立:视频
+     * 会话进入时应用这个偏好,退出时音频上下文按快照还原,互不覆盖。
+     */
+    val videoRepeatMode: Flow<RepeatMode> =
+        dataStore.data.map { RepeatMode.fromStored(it[KEY_VIDEO_REPEAT_MODE]) }
+
+    /**
      * NSFW 模式开关(安全模式)。默认开 = 完整显示所有封面与曲名;关 =
      * 安全模式,未分级(null)/R15/R18 作品的封面与曲名被隐藏,适合公共场合。
      * 首次启动的对话框选定一次,之后由设置页开关随时修改。
@@ -230,6 +239,10 @@ class SettingsStore @Inject constructor(
 
     suspend fun setVideoBackgroundPlayback(enabled: Boolean) {
         dataStore.edit { it[KEY_VIDEO_BACKGROUND_PLAYBACK] = enabled }
+    }
+
+    suspend fun setVideoRepeatMode(mode: RepeatMode) {
+        dataStore.edit { it[KEY_VIDEO_REPEAT_MODE] = RepeatMode.toStored(mode) }
     }
 
     suspend fun setNsfwEnabled(enabled: Boolean) {
@@ -310,6 +323,7 @@ class SettingsStore @Inject constructor(
         private val KEY_RESUME_MODE = stringPreferencesKey("resume_mode")
         private val KEY_ASMR_ONE_FALLBACK_ENABLED = booleanPreferencesKey("asmr_one_fallback_enabled")
         private val KEY_VIDEO_BACKGROUND_PLAYBACK = booleanPreferencesKey("video_background_playback")
+        private val KEY_VIDEO_REPEAT_MODE = intPreferencesKey("video_repeat_mode")
         private val KEY_ASMR_ONE_BASE_URL = stringPreferencesKey("asmr_one_base_url")
         private val KEY_NSFW_ENABLED = booleanPreferencesKey("nsfw_enabled")
         private val KEY_NSFW_CHOICE_ASKED = booleanPreferencesKey("nsfw_choice_asked")
