@@ -137,7 +137,7 @@ import com.oneasmr.app.player.ResumePositionResolver
 import com.oneasmr.app.player.SessionConnection
 import com.oneasmr.app.player.toMedia3
 import com.oneasmr.app.player.toRepeatMode
-import com.oneasmr.app.ui.common.CensoredCoverPlaceholder
+import com.oneasmr.app.ui.common.FrostedCensoredCover
 import com.oneasmr.app.ui.common.OneAsmrSeekBar
 import com.oneasmr.app.ui.common.rememberPressScale
 import com.oneasmr.app.ui.work.DocumentFsFactory
@@ -1188,7 +1188,7 @@ private fun PlayerBackdrop(coverModel: Any?, censored: Boolean) {
         Modifier.fillMaxSize()
     }
     if (censored) {
-        CensoredCoverPlaceholder(backdropModifier)
+        FrostedCensoredCover(model = coverModel, modifier = backdropModifier)
     } else {
         AsyncImage(
             model = coverModel,
@@ -1713,14 +1713,16 @@ private fun PlayerCover(
                     .background(MaterialTheme.colorScheme.surfaceVariant),
             )
         } else if (censored) {
-            // 安全模式:敏感作品的 hero 封面换占位(布局/尺寸与真封面一致)。
-            CensoredCoverPlaceholder(
+            // 安全模式:敏感作品的 hero 封面换毛玻璃(布局/尺寸/旋转与真封面一致)。
+            FrostedCensoredCover(
+                model = coverModel,
                 modifier = Modifier
                     .padding(top = 16.dp)
                     .fillMaxWidth(0.78f)
                     .aspectRatio(1f)
                     .shadow(32.dp, MaterialTheme.shapes.large)
-                    .clip(MaterialTheme.shapes.large),
+                    .clip(MaterialTheme.shapes.large)
+                    .graphicsLayer { rotationZ = if (rotate) rotation else 0f },
             )
         } else {
             AsyncImage(

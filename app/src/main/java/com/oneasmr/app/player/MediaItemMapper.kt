@@ -39,8 +39,9 @@ fun PlayQueue.toMediaItems(censored: Boolean): List<MediaItem> = items.map { it.
 
 /**
  * 通知栏封面 artworkUri:"oneasmr-cover://{sourceScope}/{rjCode}?censored=0|1"。
- * censored=1 时 [CoverArtBitmapLoader] 直接画默认封面(锁形占位),绝不解析
- * 真实封面 —— 这是安全模式对通知栏的强约束;其余情况解析本地刮削封面,
+ * censored=1 时 [CoverArtBitmapLoader] 画毛玻璃封面(真实封面仅以极小尺寸
+ * 解码并模糊),绝不以可辨认的分辨率读取真实封面 —— 这是安全模式对通知栏
+ * 的强约束;其余情况解析本地刮削封面,
  * 全缺失时同样落默认封面(与播放页占位行为一致)。
  */
 fun coverArtUri(sourceScope: String, rjCode: String, censored: Boolean): Uri = Uri.Builder()

@@ -121,7 +121,7 @@ import com.oneasmr.app.data.scanner.ScanProgressStore
 import com.oneasmr.app.data.scanner.removeWork
 import com.oneasmr.app.navigation.LocalBottomClusterHeight
 import coil3.compose.AsyncImage
-import com.oneasmr.app.ui.common.CensoredCoverPlaceholder
+import com.oneasmr.app.ui.common.FrostedCensoredCover
 import com.oneasmr.app.ui.common.LocalNsfwEnabled
 import com.oneasmr.app.ui.common.formatScanSummary
 import com.oneasmr.app.ui.common.progressLabel
@@ -1057,7 +1057,7 @@ private val GrayscaleColorFilter =
  * (missing works render grayscale). The model resolution mirrors CoverImage's
  * local-first contract (cached file → bundled-folder cover → placeholder) —
  * duplicated here rather than extending CoverImage because the redesign scope
- * is this file only. Safe mode reuses the same censored placeholder branch as
+ * is this file only. Safe mode renders the same frosted-glass cover as
  * [com.oneasmr.app.ui.common.CoverImage] via [ageRating]/[censored].
  */
 @Composable
@@ -1073,13 +1073,13 @@ private fun LibraryCoverImage(
     colorFilter: ColorFilter? = null,
 ) {
     val censored = censored || (!LocalNsfwEnabled.current && ageRating.isCensored())
-    if (censored) {
-        CensoredCoverPlaceholder(modifier)
-        return
-    }
     var model by remember(rjCode, type, rootFolderUri, relativeDir) { mutableStateOf<Any?>(null) }
     LaunchedEffect(rjCode, type, rootFolderUri, relativeDir) {
         model = coverStore.coverModelFor(rjCode, type, rootFolderUri, relativeDir)
+    }
+    if (censored) {
+        FrostedCensoredCover(model = model, modifier = modifier, colorFilter = colorFilter)
+        return
     }
     AsyncImage(
         model = model,

@@ -4,8 +4,9 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
+import android.graphics.LinearGradient
 import android.graphics.Paint
-import android.graphics.RectF
+import android.graphics.Shader
 import android.net.Uri
 import androidx.media3.common.util.BitmapLoader
 import androidx.media3.common.util.UnstableApi
@@ -13,6 +14,8 @@ import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.SettableFuture
 import com.oneasmr.app.data.repository.CoverStore
 import com.oneasmr.app.data.repository.CoverType
+import com.oneasmr.app.ui.common.FROSTED_DECODE_PX
+import com.oneasmr.app.ui.common.frostedBlur
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import java.io.IOException
@@ -30,9 +33,10 @@ import kotlinx.coroutines.launch
  * NSFW、服务冷恢复)自动获得一致结果,时间线本身永不被改写。
  *
  * 解析规则(单一权威):
- * - `oneasmr-cover:` URI(见 [coverArtUri]):censored=1 → 直接画默认封面
- *   (锁形占位,与播放页 CensoredCoverPlaceholder 同语义),绝不读取真实
- *   封面 —— 安全模式对通知栏的强约束。否则经 [CoverStore] 解析本地刮削
+ * - `oneasmr-cover:` URI(见 [coverArtUri]):censored=1 → 毛玻璃封面
+ *   (与播放页 FrostedCensoredCover 同语义):真实封面只以极小尺寸解码并
+ *   模糊,绝不以可辨认的分辨率读取 —— 安全模式对通知栏的强约束;无封面
+ *   时落默认封面。否则经 [CoverStore] 解析本地刮削
  *   封面(主图优先,跨尺寸回退;与播放页 hero 封面同一条链路),全缺失
  *   时同样落默认封面。
  * - 其他 URI(单文件 thumbSource 的 file:///content: 缩略图)走通用解码,
@@ -63,10 +67,47 @@ class CoverArtBitmapLoader @Inject constructor(
         if (ref == null) {
             decodeExternal(uri)
         } else if (ref.censored) {
-            placeholder()
+            resolveFrosted(ref.rjCode)
         } else {
             resolveUncensored(ref.rjCode)
         }
+    }
+
+    /**
+     * 和谐条目的封面:真实封面只以 [FROSTED_DECODE_PX] 级别的极小尺寸解码
+     * (内容不可辨认),套用与 UI 侧同一套 [frostedBlur],再平滑放大到
+     * [FROSTED_OUTPUT_SIZE] 并叠玻璃罩层;没有封面 → 默认封面。
+     */
+    private suspend fun resolveFrosted(rjCode: String): Bitmap {
+        val model = runCatching { coverStore.coverModelFor(rjCode, CoverType.MAIN, null, null) }
+            .getOrElse { return placeholder() }
+        val tiny = when (model) {
+            is File -> decodeScaled(model, FROSTED_DECODE_PX)
+            is String -> model.toUriOrNull()?.let { decodeExternalOrNull(it, FROSTED_DECODE_PX) }
+            else -> null
+        } ?: return placeholder()
+        return runCatching { renderFrosted(tiny) }.getOrElse { placeholder() }
+    }
+
+    private fun renderFrosted(decoded: Bitmap): Bitmap {
+        // 压成正方形极小图再模糊(通知封面为方形;糊化后比例失真不可见)。
+        val square = Bitmap.createScaledBitmap(decoded, FROSTED_DECODE_PX, FROSTED_DECODE_PX, true)
+        val blurred = frostedBlur(square)
+        val out = Bitmap.createScaledBitmap(blurred, FROSTED_OUTPUT_SIZE, FROSTED_OUTPUT_SIZE, true)
+            .let { if (it.isMutable) it else it.copy(Bitmap.Config.ARGB_8888, true) }
+        val canvas = Canvas(out)
+        val size = FROSTED_OUTPUT_SIZE.toFloat()
+        canvas.drawColor(FROSTED_SCRIM)
+        val highlight = Paint().apply {
+            shader = LinearGradient(
+                0f, 0f, 0f, size,
+                intArrayOf(0x38FFFFFF, 0x0FFFFFFF, 0x00FFFFFF),
+                floatArrayOf(0f, 0.5f, 1f),
+                Shader.TileMode.CLAMP,
+            )
+        }
+        canvas.drawRect(0f, 0f, size, size, highlight)
+        return out
     }
 
     /**
@@ -87,26 +128,26 @@ class CoverArtBitmapLoader @Inject constructor(
     private fun decodeExternal(uri: Uri): Bitmap = decodeExternalOrNull(uri)
         ?: throw IOException("artwork decode failed: $uri")
 
-    private fun decodeExternalOrNull(uri: Uri): Bitmap? = runCatching {
+    private fun decodeExternalOrNull(uri: Uri, maxSize: Int = MAX_DECODE_SIZE): Bitmap? = runCatching {
         context.contentResolver.openInputStream(uri)?.use { input ->
             val bytes = input.readBytes()
-            decodeBytesScaled(bytes)
+            decodeBytesScaled(bytes, maxSize)
         }
     }.getOrNull()
 
-    private fun decodeScaled(file: File): Bitmap? = runCatching {
+    private fun decodeScaled(file: File, maxSize: Int = MAX_DECODE_SIZE): Bitmap? = runCatching {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(file.path, bounds)
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
         BitmapFactory.decodeFile(
             file.path,
             BitmapFactory.Options().apply {
-                inSampleSize = sampleSizeFor(bounds.outWidth, bounds.outHeight)
+                inSampleSize = sampleSizeFor(bounds.outWidth, bounds.outHeight, maxSize)
             },
         )
     }.getOrNull()
 
-    private fun decodeBytesScaled(bytes: ByteArray): Bitmap? {
+    private fun decodeBytesScaled(bytes: ByteArray, maxSize: Int = MAX_DECODE_SIZE): Bitmap? {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
@@ -115,14 +156,14 @@ class CoverArtBitmapLoader @Inject constructor(
             0,
             bytes.size,
             BitmapFactory.Options().apply {
-                inSampleSize = sampleSizeFor(bounds.outWidth, bounds.outHeight)
+                inSampleSize = sampleSizeFor(bounds.outWidth, bounds.outHeight, maxSize)
             },
         )
     }
 
-    private fun sampleSizeFor(width: Int, height: Int): Int {
+    private fun sampleSizeFor(width: Int, height: Int, maxSize: Int): Int {
         var sample = 1
-        while (maxOf(width, height) / sample > MAX_DECODE_SIZE) sample *= 2
+        while (maxOf(width, height) / sample > maxSize) sample *= 2
         return sample
     }
 
@@ -138,7 +179,10 @@ class CoverArtBitmapLoader @Inject constructor(
         return future
     }
 
-    /** 默认封面:单进程一份,首次用到时绘制(锁形占位,CensoredCoverPlaceholder 同语义)。 */
+    /**
+     * 默认封面(无封面可用时):单进程一份,首次用到时绘制。中性深灰底 +
+     * 与毛玻璃封面同款的顶部柔光,不再画锁形图标。
+     */
     private val placeholderBitmap: Bitmap by lazy { renderPlaceholder() }
 
     private fun placeholder(): Bitmap = placeholderBitmap
@@ -147,41 +191,16 @@ class CoverArtBitmapLoader @Inject constructor(
         val bitmap = Bitmap.createBitmap(PLACEHOLDER_SIZE, PLACEHOLDER_SIZE, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         canvas.drawColor(PLACEHOLDER_BG)
-        val cx = PLACEHOLDER_SIZE / 2f
-        val bodyTop = PLACEHOLDER_SIZE * 0.46f
-        val bodyWidth = PLACEHOLDER_SIZE * 0.36f
-        val bodyHeight = PLACEHOLDER_SIZE * 0.26f
-        val shackleRadius = PLACEHOLDER_SIZE * 0.16f
-
-        val lock = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = PLACEHOLDER_FG }
-        lock.style = Paint.Style.STROKE
-        lock.strokeWidth = PLACEHOLDER_SIZE * 0.065f
-        canvas.drawArc(
-            RectF(cx - shackleRadius, bodyTop - shackleRadius, cx + shackleRadius, bodyTop + shackleRadius),
-            180f,
-            180f,
-            false,
-            lock,
-        )
-        lock.style = Paint.Style.FILL
-        canvas.drawRoundRect(
-            RectF(cx - bodyWidth / 2, bodyTop, cx + bodyWidth / 2, bodyTop + bodyHeight),
-            PLACEHOLDER_SIZE * 0.03f,
-            PLACEHOLDER_SIZE * 0.03f,
-            lock,
-        )
-        // Keyhole cut back in the background color: circle + short stem.
-        val hole = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = PLACEHOLDER_BG }
-        val holeRadius = PLACEHOLDER_SIZE * 0.035f
-        val holeCy = bodyTop + bodyHeight * 0.38f
-        canvas.drawCircle(cx, holeCy, holeRadius, hole)
-        canvas.drawRect(
-            cx - holeRadius * 0.4f,
-            holeCy,
-            cx + holeRadius * 0.4f,
-            holeCy + holeRadius * 1.6f,
-            hole,
-        )
+        val size = PLACEHOLDER_SIZE.toFloat()
+        val highlight = Paint().apply {
+            shader = LinearGradient(
+                0f, 0f, 0f, size,
+                intArrayOf(0x24FFFFFF, 0x00FFFFFF),
+                null,
+                Shader.TileMode.CLAMP,
+            )
+        }
+        canvas.drawRect(0f, 0f, size, size, highlight)
         return bitmap
     }
 
@@ -193,8 +212,13 @@ class CoverArtBitmapLoader @Inject constructor(
         const val MAX_DECODE_SIZE = 1024
         const val PLACEHOLDER_SIZE = 512
 
-        /** 中性深灰底 + 浅灰锁形:明暗通知栏上都不刺眼,不借鉴任何真实封面色调。 */
+        /** 毛玻璃通知封面的输出边长(由极小模糊图平滑放大而来)。 */
+        const val FROSTED_OUTPUT_SIZE = 256
+
+        /** 毛玻璃罩层:约 18% 深色,压低对比度,与 UI 侧罩层观感接近。 */
+        const val FROSTED_SCRIM = 0x2E1C1C22
+
+        /** 中性深灰底:明暗通知栏上都不刺眼,不借鉴任何真实封面色调。 */
         const val PLACEHOLDER_BG = 0xFF2E2E36.toInt()
-        const val PLACEHOLDER_FG = 0xFFC7C7D2.toInt()
     }
 }

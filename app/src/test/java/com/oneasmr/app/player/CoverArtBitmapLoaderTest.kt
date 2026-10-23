@@ -20,8 +20,8 @@ import org.robolectric.annotation.Config
 
 /**
  * Notification-cover resolution (CoverArtBitmapLoader):
- * - censored=1 → the default lock placeholder, and the real cover is never
- *   decoded (safe mode's hard constraint on the notification shelf)
+ * - censored=1 → a 256px frosted (tiny-decode + blur) cover, never the real
+ *   cover at a legible resolution; no cover → placeholder
  * - uncensored → the local scraped cover; missing/failed → placeholder
  * - foreign URIs (single-file thumbnails) go through the generic decode path
  *
@@ -59,13 +59,22 @@ class CoverArtBitmapLoaderTest {
         loader.loadBitmap(uri).get(5, TimeUnit.SECONDS)
 
     @Test
-    fun `censored ref renders the placeholder and never decodes the real cover`(): Unit = runBlocking {
+    fun `censored ref renders a frosted cover instead of the real one`(): Unit = runBlocking {
         val dir = tmp.newFolder("covers")
         writeCover(dir, "RJ100200")
         val loader = loaderWithCovers(dir)
         val bitmap = loadBitmap(loader, coverArtUri("local", "RJ100200", censored = true))
+        // 256px frosted output — neither the 1px real cover nor the 512px placeholder.
+        assertEquals(256, bitmap.width)
+        assertEquals(256, bitmap.height)
+    }
+
+    @Test
+    fun `censored ref without any local cover falls back to the placeholder`(): Unit = runBlocking {
+        val dir = tmp.newFolder("covers")
+        val loader = loaderWithCovers(dir)
+        val bitmap = loadBitmap(loader, coverArtUri("local", "RJ300300", censored = true))
         assertEquals(512, bitmap.width)
-        assertEquals(512, bitmap.height)
     }
 
     @Test
