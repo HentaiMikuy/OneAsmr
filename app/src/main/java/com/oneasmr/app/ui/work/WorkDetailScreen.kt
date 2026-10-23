@@ -30,6 +30,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.InsertDriveFile
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.AudioFile
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.CloudDownload
@@ -338,7 +339,7 @@ private fun DetailContent(
         }
         item(key = "chips") {
             CircleAndVaChips(work = work, state = state, onOpenBrowse = onOpenBrowse)
-            TagChips(tags = state.tags, onOpenBrowse = onOpenBrowse)
+            TagChips(workId = work.id, tags = state.tags, onOpenBrowse = onOpenBrowse)
         }
         item(key = "review_slot") {
             ReviewEditorSection(
@@ -815,22 +816,43 @@ private fun CircleAndVaChips(
     }
 }
 
+private const val COLLAPSED_TAG_COUNT = 3
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun TagChips(tags: List<Tag>, onOpenBrowse: (String, String) -> Unit) {
+private fun TagChips(workId: String, tags: List<Tag>, onOpenBrowse: (String, String) -> Unit) {
     if (tags.isEmpty()) return
+    var expanded by rememberSaveable(workId) { mutableStateOf(false) }
+    val visibleTags = if (expanded) tags else tags.take(COLLAPSED_TAG_COUNT)
     Column(
         Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 4.dp),
     ) {
-        ChipSectionLabel("标签")
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ChipSectionLabel("标签")
+            if (tags.size > COLLAPSED_TAG_COUNT) {
+                TextButton(onClick = { expanded = !expanded }) {
+                    Text(if (expanded) "收起" else "展开全部（${tags.size}）")
+                    Spacer(Modifier.width(4.dp))
+                    Icon(
+                        imageVector = if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+        }
         FlowRow(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            tags.forEach { tag ->
+            visibleTags.forEach { tag ->
                 DimensionChip(label = "#${tag.name}", onClick = { onOpenBrowse("tag", tag.id) })
             }
         }
