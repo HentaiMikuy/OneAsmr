@@ -959,9 +959,9 @@ private fun rememberPlayerCoverStore(): CoverStore {
  * playback behavior, session flows and semantics strings are unchanged.
  *
  * 布局为上下两段式：中区 weight(1f) 承载封面/标题（可滚动）或全屏歌词
- * （卡拉OK模式，封面/标题隐藏），未展开歌词时以单行实时歌词条作为入口；
- * 缓冲条/滑杆/时间/传输键/功能丸组成底部控制簇固定停靠屏幕底部——标准
- * 音乐播放器布局，消除了高屏下功能丸下方的大片空白。
+ * （卡拉OK模式，封面/标题隐藏），未展开歌词时以三行实时歌词条作为入口，
+ * 并停靠在中区底部；缓冲条/滑杆/时间/传输键/功能丸组成底部控制簇固定
+ * 停靠屏幕底部——标准音乐播放器布局，消除了高屏下功能丸下方的大片空白。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -1290,71 +1290,79 @@ private fun PlayerContent(
                     )
                 } else {
                     Column(
-                        Modifier
-                            .fillMaxSize()
-                            .verticalScroll(rememberScrollState()),
+                        Modifier.fillMaxSize(),
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
-        PlayerCover(
-            coverModel = coverModel,
-            hasCover = !state.currentRjCode.isNullOrBlank(),
-            rotate = rotateCover,
-            censored = censored,
-            onToggleRotate = onToggleRotate,
-        )
+                        // 封面与标题保留独立滚动区域；三行字幕固定在下方，
+                        // 高屏时不会再把大片空白留在字幕与进度条之间。
+                        Column(
+                            Modifier
+                                .weight(1f)
+                                .fillMaxWidth()
+                                .verticalScroll(rememberScrollState()),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            PlayerCover(
+                                coverModel = coverModel,
+                                hasCover = !state.currentRjCode.isNullOrBlank(),
+                                rotate = rotateCover,
+                                censored = censored,
+                                onToggleRotate = onToggleRotate,
+                            )
 
-        Spacer(Modifier.height(20.dp))
-        Text(
-            state.trackTitle,
-            style = MaterialTheme.typography.headlineSmall,
-            textAlign = TextAlign.Center,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Spacer(Modifier.height(6.dp))
-        // Mono work code + circle (Wave B/C card language) in one muted line.
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            if (!state.currentRjCode.isNullOrBlank()) {
-                Text(
-                    state.currentRjCode,
-                    style = MaterialTheme.typography.labelSmall,
-                    fontFamily = FontFamily.Monospace,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                if (state.workTitle.isNotEmpty()) {
-                    Text(
-                        "  ·  ",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-            if (state.workTitle.isNotEmpty()) {
-                Text(
-                    state.workTitle,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
+                            // 封面下的标题与作品信息整体稍向下移，留出更舒展的层级间距。
+                            Spacer(Modifier.height(28.dp))
+                            Text(
+                                state.trackTitle,
+                                style = MaterialTheme.typography.headlineSmall,
+                                textAlign = TextAlign.Center,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            // Mono work code + circle (Wave B/C card language) in one muted line.
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (!state.currentRjCode.isNullOrBlank()) {
+                                    Text(
+                                        state.currentRjCode,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    if (state.workTitle.isNotEmpty()) {
+                                        Text(
+                                            "  ·  ",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                                if (state.workTitle.isNotEmpty()) {
+                                    Text(
+                                        state.workTitle,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
+                        }
 
-        // 单行实时歌词条：有歌词且未展开面板时跟随播放位置显示当前行，
-        // 点击进入全屏歌词模式（比角落里的功能丸更显眼）。
-        if (lyricsState.lyrics != null && !showLyrics) {
-            Spacer(Modifier.height(8.dp))
-            LyricsStrip(lyricsState = lyricsState, onClick = onToggleLyrics)
-        }
-        // 面板已展开但歌词仍在加载（如 rememberSaveable 恢复后重载）的占位文案。
-        if (showLyrics && lyricsState.lyrics == null && lyricsState.loading) {
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "正在加载歌词…",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+                        // 三行实时歌词条：上一句 / 当前句 / 下一句，点击进入全屏歌词。
+                        if (lyricsState.lyrics != null && !showLyrics) {
+                            Spacer(Modifier.height(8.dp))
+                            LyricsStrip(lyricsState = lyricsState, onClick = onToggleLyrics)
+                        }
+                        // 面板已展开但歌词仍在加载（如 rememberSaveable 恢复后重载）的占位文案。
+                        if (showLyrics && lyricsState.lyrics == null && lyricsState.loading) {
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                "正在加载歌词…",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
             }
@@ -1637,9 +1645,10 @@ private fun SeekRow(
 }
 
 /**
- * 单行实时歌词：解析当前播放行（activeIndex 越界/为负时回落到第一行），
- * 行切换用 Crossfade 淡入淡出。整条可点击进入全屏歌词模式；clickable 会
- * 合并子节点语义，因此 "lyrics strip" 节点上同时带当前行文本。
+ * 三行实时歌词：上一句 / 当前句 / 下一句。当前播放行越界或为负时回落到
+ * 第一行；首尾缺少的句子以空行占位，确保当前句始终位于中间。行切换用
+ * Crossfade 淡入淡出。整条可点击进入全屏歌词模式；clickable 会合并子节点
+ * 语义，因此 "lyrics strip" 节点上同时带三行文本。
  */
 @Composable
 private fun LyricsStrip(
@@ -1662,18 +1671,45 @@ private fun LyricsStrip(
             .clickable(onClick = onClick)
             .semantics { contentDescription = "lyrics strip" },
     ) { index ->
-        Text(
-            lyrics.lines[index].text.ifEmpty { "♪" },
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.primary,
-            textAlign = TextAlign.Center,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 4.dp),
-        )
+        Column(Modifier.fillMaxWidth()) {
+            LyricsStripLine(
+                text = lyrics.lines.getOrNull(index - 1)?.text,
+                active = false,
+            )
+            LyricsStripLine(
+                text = lyrics.lines.getOrNull(index)?.text,
+                active = true,
+            )
+            LyricsStripLine(
+                text = lyrics.lines.getOrNull(index + 1)?.text,
+                active = false,
+            )
+        }
     }
+}
+
+@Composable
+private fun LyricsStripLine(text: String?, active: Boolean) {
+    Text(
+        text = text?.ifEmpty { "♪" } ?: "",
+        style = if (active) {
+            MaterialTheme.typography.titleMedium
+        } else {
+            MaterialTheme.typography.bodyMedium
+        },
+        color = if (active) {
+            MaterialTheme.colorScheme.primary
+        } else {
+            MaterialTheme.colorScheme.onSurfaceVariant
+        },
+        textAlign = TextAlign.Center,
+        minLines = 1,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
+    )
 }
 
 /**
