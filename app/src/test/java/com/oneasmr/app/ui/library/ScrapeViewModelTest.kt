@@ -22,6 +22,7 @@ import com.oneasmr.app.domain.rjcode.RjCode
 import java.io.File
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -78,12 +79,14 @@ class ScrapeViewModelTest {
 
     private class FakeScraper(private val clock: FakeClock) : DlsiteScraperApi {
         val calls = mutableListOf<String>()
+        val started = Channel<String>(Channel.UNLIMITED)
         val failKinds = mutableMapOf<String, DlsiteScrapeException.Kind>()
         var gate: CompletableDeferred<Unit>? = null
         var holdAfterCalls: Int? = null
 
         override suspend fun scrape(code: RjCode): ScrapedWork {
             calls += code.canonical
+            started.send(code.canonical)
             if (holdAfterCalls != null && calls.size > holdAfterCalls!!) gate?.await()
             failKinds[code.canonical]?.let { throw DlsiteScrapeException(it, "fake failure for ${code.canonical}") }
             return ScrapedWork(
@@ -193,7 +196,7 @@ class ScrapeViewModelTest {
         seed("RJ111111", ScrapeStatus.NOT_SCRAPED)
 
         viewModel.scrapeSingle("local:RJ111111")
-        val state = awaitState { it.scrapingWorkId == null && it.singleMessage != null }
+        val state = awaitState { it.scrapingWorkIds.isEmpty() && it.singleMessage != null }
 
         assertEquals("刮削成功：RJ111111", state.singleMessage)
         val work = db.workDao().getById("local:RJ111111")!!
@@ -205,12 +208,38 @@ class ScrapeViewModelTest {
     }
 
     @Test
+    fun `single scrape queues other works clicked during an active scrape`() = runTest(scheduler) {
+        seed("RJ111111", ScrapeStatus.NOT_SCRAPED)
+        seed("RJ222222", ScrapeStatus.NOT_SCRAPED)
+        scraper.gate = CompletableDeferred<Unit>()
+        scraper.holdAfterCalls = 0
+
+        viewModel.scrapeSingle("local:RJ111111")
+        assertEquals("RJ111111", scraper.started.receive())
+
+        viewModel.scrapeSingle("local:RJ222222")
+        viewModel.scrapeSingle("local:RJ222222") // Already queued: ignore duplicates.
+        assertEquals(
+            setOf("local:RJ111111", "local:RJ222222"),
+            viewModel.uiState.value.scrapingWorkIds,
+        )
+
+        scraper.gate!!.complete(Unit)
+        val state = awaitState { it.scrapingWorkIds.isEmpty() && it.completedVersion == 2 }
+
+        assertEquals(listOf("RJ111111", "RJ222222"), scraper.calls)
+        assertEquals("刮削成功：RJ222222", state.singleMessage)
+        assertEquals(ScrapeStatus.OK, db.workDao().getById("local:RJ111111")!!.scrapeStatus)
+        assertEquals(ScrapeStatus.OK, db.workDao().getById("local:RJ222222")!!.scrapeStatus)
+    }
+
+    @Test
     fun `single scrape failure marks FAILED and emits failure message`() = runTest(scheduler) {
         seed("RJ111111", ScrapeStatus.NOT_SCRAPED)
         scraper.failKinds["RJ111111"] = DlsiteScrapeException.Kind.NETWORK
 
         viewModel.scrapeSingle("local:RJ111111")
-        val state = awaitState { it.scrapingWorkId == null && it.singleMessage != null }
+        val state = awaitState { it.scrapingWorkIds.isEmpty() && it.singleMessage != null }
 
         assertEquals("刮削失败：网络错误", state.singleMessage)
         assertEquals(ScrapeStatus.FAILED, db.workDao().getById("local:RJ111111")!!.scrapeStatus)

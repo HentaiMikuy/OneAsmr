@@ -26,13 +26,13 @@ enum class BatchTarget { NOT_SCRAPED, FAILED }
 /**
  * Task 11 library scrape state, combined for the screen.
  *
- * [scrapingWorkId] drives the per-row in-progress indicator; [singleMessage]
- * is a one-shot success/error snackbar payload consumed via
- * [consumeSingleMessage]; [batch] carries the live queue state; [batchNotice]
- * is a one-shot "nothing to scrape" message.
+ * [scrapingWorkIds] contains both the active and queued works and drives the
+ * per-row in-progress indicator; [singleMessage] is a one-shot success/error
+ * snackbar payload consumed via [consumeSingleMessage]; [batch] carries the
+ * live queue state; [batchNotice] is a one-shot "nothing to scrape" message.
  */
 data class ScrapeUiState(
-    val scrapingWorkId: String? = null,
+    val scrapingWorkIds: Set<String> = emptySet(),
     val singleMessage: String? = null,
     val batch: BatchScrapeState = BatchScrapeState.IDLE,
     val batchNotice: String? = null,
@@ -71,6 +71,8 @@ class ScrapeViewModel @Inject constructor(
 
     private val batchFlow = MutableStateFlow(BatchScrapeState.IDLE)
     private var batchJob: Job? = null
+    private val singleScrapeQueue = ArrayDeque<String>()
+    private var singleScrapeJob: Job? = null
 
     init {
         viewModelScope.launch {
@@ -88,23 +90,31 @@ class ScrapeViewModel @Inject constructor(
     }
 
     fun scrapeSingle(workId: String) {
-        if (_uiState.value.scrapingWorkId != null) return
-        _uiState.update { it.copy(scrapingWorkId = workId) }
-        viewModelScope.launch {
-            val outcome = repo.scrapeOne(workId)
-            _uiState.update {
-                it.copy(
-                    scrapingWorkId = null,
-                    singleMessage = when (outcome) {
-                        is com.oneasmr.app.data.repository.ScrapeOutcome.Success ->
-                            "刮削成功：${outcome.rjCode}"
-                        is com.oneasmr.app.data.repository.ScrapeOutcome.Failed ->
-                            "刮削失败：${failureLabel(outcome.kind)}"
-                    },
-                    // 只有成功才改库,版本号也随之 +1(失败不触发列表刷新)。
-                    completedVersion = it.completedVersion +
-                        (if (outcome is com.oneasmr.app.data.repository.ScrapeOutcome.Success) 1 else 0),
-                )
+        // 已在进行或排队的作品不重复加入；其他作品即使在刮削中也接受点击。
+        if (workId in _uiState.value.scrapingWorkIds) return
+        singleScrapeQueue.addLast(workId)
+        _uiState.update { it.copy(scrapingWorkIds = it.scrapingWorkIds + workId) }
+        if (singleScrapeJob?.isActive == true) return
+
+        // 单个队列串行执行，既不丢弃连续点击，也不会同时发出多组刮削请求。
+        singleScrapeJob = viewModelScope.launch {
+            while (true) {
+                val nextWorkId = singleScrapeQueue.removeFirstOrNull() ?: break
+                val outcome = repo.scrapeOne(nextWorkId)
+                _uiState.update {
+                    it.copy(
+                        scrapingWorkIds = it.scrapingWorkIds - nextWorkId,
+                        singleMessage = when (outcome) {
+                            is com.oneasmr.app.data.repository.ScrapeOutcome.Success ->
+                                "刮削成功：${outcome.rjCode}"
+                            is com.oneasmr.app.data.repository.ScrapeOutcome.Failed ->
+                                "刮削失败：${failureLabel(outcome.kind)}"
+                        },
+                        // 只有成功才改库,版本号也随之 +1(失败不触发列表刷新)。
+                        completedVersion = it.completedVersion +
+                            (if (outcome is com.oneasmr.app.data.repository.ScrapeOutcome.Success) 1 else 0),
+                    )
+                }
             }
         }
     }

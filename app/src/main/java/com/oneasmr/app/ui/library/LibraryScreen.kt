@@ -365,7 +365,7 @@ fun LibraryScreen(
                         else scrapeViewModel.scrapeSingle(work.id)
                     },
                     onRefresh = viewModel::onPullRefresh,
-                    scrapingWorkId = scrapeState.scrapingWorkId,
+                    scrapingWorkIds = scrapeState.scrapingWorkIds,
                     sharedTransitionScope = sharedTransitionScope,
                     animatedContentScope = animatedContentScope,
                 )
@@ -602,7 +602,7 @@ private fun LibraryContent(
     onRemove: (WorkListItem) -> Unit,
     onScrape: (WorkListItem) -> Unit,
     onRefresh: () -> Unit,
-    scrapingWorkId: String?,
+    scrapingWorkIds: Set<String>,
     sharedTransitionScope: SharedTransitionScope?,
     animatedContentScope: AnimatedContentScope?,
 ) {
@@ -638,7 +638,7 @@ private fun LibraryContent(
                             onClick = { onOpenWork(item.id) },
                             onRemove = { onRemove(item) },
                             onScrape = { onScrape(item) },
-                            scraping = scrapingWorkId == item.id,
+                            scraping = item.id in scrapingWorkIds,
                             sharedTransitionScope = sharedTransitionScope,
                             animatedContentScope = animatedContentScope,
                         )
@@ -663,7 +663,7 @@ private fun LibraryContent(
                             onClick = { onOpenWork(item.id) },
                             onRemove = { onRemove(item) },
                             onScrape = onScrape,
-                            scrapingWorkId = scrapingWorkId,
+                            scrapingWorkIds = scrapingWorkIds,
                             sharedTransitionScope = sharedTransitionScope,
                             animatedContentScope = animatedContentScope,
                         )
@@ -934,7 +934,7 @@ private fun WorkListRow(
     onClick: () -> Unit,
     onRemove: () -> Unit,
     onScrape: (WorkListItem) -> Unit,
-    scrapingWorkId: String?,
+    scrapingWorkIds: Set<String>,
     sharedTransitionScope: SharedTransitionScope?,
     animatedContentScope: AnimatedContentScope?,
 ) {
@@ -944,7 +944,7 @@ private fun WorkListRow(
     } else {
         MaterialTheme.colorScheme.onSurface
     }
-    val busy = scrapingWorkId == item.id
+    val busy = item.id in scrapingWorkIds
     val (interactionSource, pressScale) = rememberPressScale(0.97f)
     Row(
         modifier = Modifier
