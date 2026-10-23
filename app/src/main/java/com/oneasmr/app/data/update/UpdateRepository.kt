@@ -1,10 +1,7 @@
 package com.oneasmr.app.data.update
 
-import android.content.Context
 import com.oneasmr.app.BuildConfig
-import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
-import java.io.File
 import java.io.IOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -14,10 +11,8 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 
 /**
- * Update transport: queries the GitHub "latest release" API for the newest
- * version and downloads the attached APK into the cache dir. Kept as a
- * thin interface so the ViewModel and the app-startup check are JVM-testable
- * against a fake.
+ * Queries the GitHub "latest release" API. APK transfers are managed
+ * independently by [UpdateDownloader], so they outlive the settings screen.
  */
 interface UpdateRepository {
     /**
@@ -28,9 +23,6 @@ interface UpdateRepository {
      * check itself failed (network / HTTP / payload).
      */
     suspend fun checkForUpdate(): UpdateCheckResult
-
-    /** Downloads [info]'s APK into the cache dir; returns the local file. */
-    suspend fun downloadApk(info: UpdateInfo, onProgress: (downloaded: Long, total: Long) -> Unit): File
 }
 
 /**
@@ -40,7 +32,6 @@ interface UpdateRepository {
  */
 class GithubUpdateRepository @Inject constructor(
     private val client: OkHttpClient,
-    @ApplicationContext private val context: Context,
 ) : UpdateRepository {
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -82,45 +73,14 @@ class GithubUpdateRepository @Inject constructor(
                     downloadUrl = asset.browserDownloadUrl,
                     sizeBytes = asset.size,
                     changelog = release.body.orEmpty().trim(),
+                    sha256 = asset.digest?.takeIf { it.startsWith("sha256:") }?.removePrefix("sha256:"),
                 ),
             )
         }
     }
 
-    override suspend fun downloadApk(info: UpdateInfo, onProgress: (Long, Long) -> Unit): File =
-        withContext(Dispatchers.IO) {
-            val target = File(context.cacheDir, "update/${info.versionName}.apk")
-            target.parentFile?.mkdirs()
-            val request = Request.Builder().url(info.downloadUrl).build()
-            val response = try {
-                client.newCall(request).execute()
-            } catch (e: IOException) {
-                throw IOException("下载失败：${e.message}", e)
-            }
-            response.use { resp ->
-                if (!resp.isSuccessful) throw IOException("下载失败：HTTP ${resp.code}")
-                val body = resp.body
-                val total = body.contentLength()
-                var downloaded = 0L
-                body.byteStream().use { input ->
-                    target.outputStream().use { output ->
-                        val buffer = ByteArray(BUFFER_SIZE)
-                        while (true) {
-                            val read = input.read(buffer)
-                            if (read == -1) break
-                            output.write(buffer, 0, read)
-                            downloaded += read
-                            onProgress(downloaded, total)
-                        }
-                    }
-                }
-            }
-            target
-        }
-
     private companion object {
         const val LATEST_RELEASE_URL =
             "https://api.github.com/repos/HentaiMikuy/OneAsmr/releases/latest"
-        const val BUFFER_SIZE = 64 * 1024
     }
 }

@@ -9,6 +9,7 @@ data class GithubAsset(
     val name: String,
     @SerialName("browser_download_url") val browserDownloadUrl: String,
     val size: Long = 0L,
+    val digest: String? = null,
 )
 
 /** Minimal slice of the GitHub "latest release" payload we consume. */
@@ -21,11 +22,13 @@ data class GithubRelease(
 )
 
 /** A concrete pending update offered to the user. */
+@Serializable
 data class UpdateInfo(
     val versionName: String,
     val downloadUrl: String,
     val sizeBytes: Long,
     val changelog: String,
+    val sha256: String? = null,
 )
 
 /** Outcome of one update check, distinct enough for the UI to explain itself. */

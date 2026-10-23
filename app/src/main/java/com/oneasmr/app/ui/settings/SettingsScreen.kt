@@ -1,5 +1,7 @@
 package com.oneasmr.app.ui.settings
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -28,6 +30,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import android.content.Context
 import android.content.Intent
@@ -45,6 +48,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.oneasmr.app.BuildConfig
@@ -105,16 +110,53 @@ fun SettingsScreen(
     val asmrOneMirrorDialogVisible by viewModel.asmrOneMirrorDialogVisible.collectAsStateWithLifecycle()
     val nsfwEnabled by viewModel.nsfwEnabled.collectAsStateWithLifecycle()
     val updateState by updateViewModel.state.collectAsStateWithLifecycle()
-    var updateDialogVisible by remember { mutableStateOf(false) }
+    var updateDialogVisible by rememberSaveable { mutableStateOf(false) }
+    var installAfterPermission by rememberSaveable { mutableStateOf(false) }
 
     var licensesVisible by remember { mutableStateOf(false) }
 
     val appContext = LocalContext.current
+    fun openUpdateInstaller(file: File) {
+        try {
+            if (!file.isFile) {
+                updateViewModel.refreshDownloadState()
+                updateDialogVisible = true
+                Toast.makeText(appContext, "安装包已被清理，请重新下载", Toast.LENGTH_LONG).show()
+                return
+            }
+            triggerApkInstall(appContext, file)
+            updateDialogVisible = false
+        } catch (e: Exception) {
+            Toast.makeText(appContext, "无法打开安装器：${e.message ?: "请稍后重试"}", Toast.LENGTH_LONG).show()
+            updateDialogVisible = true
+        }
+    }
+    val installPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) {
+        // The result can arrive before a restored download has been read from disk.
+        installAfterPermission = true
+    }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        updateViewModel.refreshDownloadState()
+    }
+    LaunchedEffect(installAfterPermission, updateState) {
+        if (installAfterPermission && updateState !is UpdateUiState.Restoring) {
+            installAfterPermission = false
+            val downloaded = updateState as? UpdateUiState.Downloaded
+            if (downloaded != null && updateViewModel.canRequestInstallPermission()) {
+                openUpdateInstaller(downloaded.file)
+            } else {
+                updateDialogVisible = true
+            }
+        }
+    }
     // 「检查更新」结果反馈:UpToDate 以前直接回到 Idle,界面上什么都不会
     // 发生。现在补一次 Short Toast,再把状态复位。单次结果提示,不涉及
     // 玩家页那种快速连按的重复提示场景。
     LaunchedEffect(updateState) {
         if (updateState is UpdateUiState.UpToDate) {
+            updateDialogVisible = false
             Toast.makeText(
                 appContext,
                 "已是最新版本（v${BuildConfig.VERSION_NAME}）",
@@ -459,14 +501,20 @@ fun SettingsScreen(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable(enabled = updateState !is UpdateUiState.Checking) {
+                .clickable(enabled = updateState !is UpdateUiState.Checking && updateState !is UpdateUiState.Restoring) {
                     when (updateState) {
-                        UpdateUiState.Idle -> updateViewModel.checkForUpdate()
-                        UpdateUiState.UpToDate -> updateViewModel.checkForUpdate()
-                        is UpdateUiState.Failed -> updateViewModel.retryAfterError()
-                        is UpdateUiState.Available -> updateDialogVisible = true
+                        UpdateUiState.Idle, UpdateUiState.UpToDate -> {
+                            updateDialogVisible = true
+                            updateViewModel.checkForUpdate()
+                        }
+                        is UpdateUiState.Failed -> {
+                            updateDialogVisible = true
+                            updateViewModel.retryAfterError()
+                        }
+                        is UpdateUiState.Available,
                         is UpdateUiState.Downloading,
-                        is UpdateUiState.Downloaded,
+                        is UpdateUiState.Downloaded -> updateDialogVisible = true
+                        UpdateUiState.Restoring,
                         UpdateUiState.Checking -> Unit
                     }
                 }
@@ -557,8 +605,9 @@ fun SettingsScreen(
                             "更新日志：\n" + update.info.changelog.ifEmpty { "（无说明）" },
                             style = MaterialTheme.typography.bodySmall,
                             modifier = Modifier
-                                .verticalScroll(rememberScrollState())
-                                .heightIn(max = 260.dp),
+                                // 高度限制作用于滚动视口，让内部文字按完整内容测量。
+                                .heightIn(max = 260.dp)
+                                .verticalScroll(rememberScrollState()),
                         )
                     }
                 },
@@ -575,18 +624,28 @@ fun SettingsScreen(
                 title = { Text("正在下载 v${update.info.versionName}") },
                 text = {
                     Column {
-                        LinearProgressIndicator(
-                            progress = {
-                                if (update.total > 0) update.downloaded.toFloat() / update.total else 0f
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
+                        if (update.total > 0) {
+                            LinearProgressIndicator(
+                                progress = { (update.downloaded.toFloat() / update.total).coerceIn(0f, 1f) },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        } else {
+                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        }
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            "${formatCacheBytes(update.downloaded)} / ${formatCacheBytes(update.total)}" +
-                                if (update.total > 0) "（${update.downloaded * 100 / update.total}%）" else "",
+                            if (update.total > 0) {
+                                "${formatCacheBytes(update.downloaded)} / ${formatCacheBytes(update.total)}" +
+                                    "（${(update.downloaded * 100 / update.total).coerceIn(0, 100)}%）"
+                            } else {
+                                "已下载 ${formatCacheBytes(update.downloaded)}"
+                            },
                             style = MaterialTheme.typography.bodySmall,
                         )
+                        update.message?.let {
+                            Spacer(Modifier.height(8.dp))
+                            Text(it, style = MaterialTheme.typography.bodySmall)
+                        }
                     }
                 },
                 confirmButton = {
@@ -594,41 +653,33 @@ fun SettingsScreen(
                 },
             )
 
-            is UpdateUiState.Downloaded -> {
-                val context = LocalContext.current
-                AlertDialog(
-                onDismissRequest = {
-                    updateDialogVisible = false
-                    updateViewModel.dismissDownloaded()
-                },
+            is UpdateUiState.Downloaded -> AlertDialog(
+                onDismissRequest = { updateDialogVisible = false },
                 title = { Text("下载完成") },
                 text = { Text("新版本 v${update.info.versionName} 已就绪，是否现在安装？") },
                 confirmButton = {
                     TextButton(onClick = {
-                        updateDialogVisible = false
                         if (updateViewModel.canRequestInstallPermission()) {
-                            triggerApkInstall(context, update.file)
+                            openUpdateInstaller(update.file)
                         } else {
-                            // First-time installs need a one-time grant in system
-                            // settings; the user returns and taps 安装 again.
-                            context.startActivity(
-                                Intent(
-                                    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                                    Uri.parse("package:${context.packageName}"),
-                                ),
-                            )
+                            try {
+                                installPermissionLauncher.launch(
+                                    Intent(
+                                        Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                                        Uri.parse("package:${appContext.packageName}"),
+                                    ),
+                                )
+                                updateDialogVisible = false
+                            } catch (e: Exception) {
+                                Toast.makeText(appContext, "无法打开安装权限设置，请在系统设置中授权", Toast.LENGTH_LONG).show()
+                            }
                         }
-                        updateViewModel.dismissDownloaded()
                     }) { Text("安装") }
                 },
                 dismissButton = {
-                    TextButton(onClick = {
-                        updateDialogVisible = false
-                        updateViewModel.dismissDownloaded()
-                    }) { Text("取消") }
+                    TextButton(onClick = { updateDialogVisible = false }) { Text("稍后安装") }
                 },
-                )
-            }
+            )
 
             is UpdateUiState.Failed -> AlertDialog(
                 onDismissRequest = {
@@ -753,13 +804,14 @@ internal fun formatCacheBytes(bytes: Long): String {
 /** Subtitle under the 检查更新 row for each update UI state. */
 private fun updateSubtitle(state: UpdateUiState): String = when (state) {
     UpdateUiState.Idle -> "通过 GitHub Releases 获取最新版本"
+    UpdateUiState.Restoring -> "正在恢复下载状态…"
     UpdateUiState.UpToDate -> "已是最新版本（v${BuildConfig.VERSION_NAME}）"
     UpdateUiState.Checking -> "正在检查…"
     is UpdateUiState.Available -> {
         val size = if (state.info.sizeBytes > 0) "，${formatCacheBytes(state.info.sizeBytes)}" else ""
         "发现新版本 v${state.info.versionName}$size"
     }
-    is UpdateUiState.Downloading -> "正在下载 v${state.info.versionName}…"
+    is UpdateUiState.Downloading -> state.message ?: "正在下载 v${state.info.versionName}…"
     is UpdateUiState.Downloaded -> "v${state.info.versionName} 安装包已就绪"
     is UpdateUiState.Failed -> state.message
 }
@@ -767,6 +819,7 @@ private fun updateSubtitle(state: UpdateUiState): String = when (state) {
 /** Trailing action label for the 检查更新 row. */
 private fun updateTrailing(state: UpdateUiState): String = when (state) {
     UpdateUiState.Idle -> "检查"
+    UpdateUiState.Restoring -> "…"
     UpdateUiState.UpToDate -> "已是最新"
     UpdateUiState.Checking -> "…"
     is UpdateUiState.Available -> "去下载"
@@ -778,7 +831,7 @@ private fun updateTrailing(state: UpdateUiState): String = when (state) {
 
 /**
  * Hands the downloaded APK to the system package installer via FileProvider
- * (authority `${packageName}.fileprovider`, cache-path `update/`). The caller
+ * (authority `${packageName}.fileprovider`, external-files-path `Download/update/`). The caller
  * must have pre-checked [UpdateViewModel.canRequestInstallPermission]; other
  * wise route the user to the unknown-app-sources settings first.
  */

@@ -107,8 +107,11 @@ base64 -i release.keystore   # macOS/Linux
 
 - 检查：`https://api.github.com/repos/HentaiMikuy/OneAsmr/releases/latest`（公开仓库无需鉴权；未登录限流 60 次/小时/IP，够用）。
 - 版本比较：语义化比较 `major.minor.patch`，标签如 `v0.2.0`。
-- 下载：OkHttp 流式写入 `cacheDir/update/<version>.apk`，下载进度实时显示。
+- 下载：交给 Android 系统 DownloadManager，写入应用专属的 `getExternalFilesDir(DIRECTORY_DOWNLOADS)/update/`，显示系统下载通知；网络中断时由系统等待网络或重试，不受应用请求的 30 秒总超时限制。
+- 恢复：保存下载任务编号和版本信息，重新进入设置页或重启应用后恢复进度及安装入口；“后台继续”后仍可点击检查更新一栏查看下载或安装。
+- 校验：仅接受系统标记为成功的任务，核对安装包大小；GitHub 返回 SHA-256 时同时核对摘要。失败任务及文件会清理，重试直接重新下载；覆盖安装成功后下次进入设置会清理旧任务和安装包。
 - 安装：FileProvider（`${applicationId}.fileprovider`）+ `ACTION_VIEW` 交给系统安装器；需要 `REQUEST_INSTALL_PACKAGES` 权限与一次「安装未知应用」授权。
+- 授权：使用 `canRequestPackageInstalls()` 检查权限，授权返回后继续安装；取消授权或选择稍后安装时保留安装包和入口。
 
 ## 许可证
 
