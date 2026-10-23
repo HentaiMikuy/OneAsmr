@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -76,6 +77,7 @@ import com.oneasmr.app.ui.settings.ScanRootsScreen
 import com.oneasmr.app.ui.settings.SettingsScreen
 import com.oneasmr.app.ui.singles.CollectionScreen
 import com.oneasmr.app.ui.singles.SinglesScreen
+import com.oneasmr.app.ui.stats.StatsScreen
 import com.oneasmr.app.ui.work.ImageFileScreen
 import com.oneasmr.app.ui.work.TextFileScreen
 import com.oneasmr.app.ui.work.WorkDetailScreen
@@ -83,6 +85,7 @@ import com.oneasmr.app.ui.work.WorkDetailScreen
 /** Route constants for the single-activity navigation graph. */
 object Routes {
     const val LIBRARY = "library"
+    const val STATS = "stats"
     const val SEARCH = "search"
     const val SINGLES = "singles"
     const val COLLECTION = "collection/{collectionId}"
@@ -148,8 +151,8 @@ private const val BOTTOM_BAR_SETTLE_MS = 250
 
 /**
  * 底部悬浮簇（mini player 胶囊 + 底部导航栏）的实测高度。覆盖层布局下
- * 内容不再从 Scaffold 获得底部 padding，三个根 Tab 的滚动容器改从这里
- * 读取高度作为底部留白，保证最后一项不被悬浮簇遮住。
+ * 内容不再从 Scaffold 获得底部 padding，根 Tab 的滚动容器改从这里读取
+ * 高度作为底部留白，保证最后一项不被悬浮簇遮住。
  */
 val LocalBottomClusterHeight = compositionLocalOf { 0.dp }
 
@@ -159,8 +162,9 @@ val LocalBottomClusterHeight = compositionLocalOf { 0.dp }
  * 底部导航（库/搜索/设置）+ 全局 mini player 以「覆盖层」形式浮在内容之上，
  * 而不是 Scaffold 的 bottomBar：bottomBar 即使被平移隐藏也依然通过
  * innerPadding 占位，底部会留下一条不可用的死区；覆盖层让内容真正全高，
- * 滚动时整簇下移隐藏即可把空间还给列表。导航栏只在三个根 Tab 路由渲染，
+ * 滚动时整簇下移隐藏即可把空间还给列表。导航栏只在根 Tab 路由渲染，
  * 且在根路由上随下滚隐藏、上滚回显，松手吸附到较近端点。
+ * 根 Tab 包含 Library / Videos / Stats / Search / Settings。
  *
  * Deep links: every route also registers a literal `oneasmr://<route>` deep
  * link, and `work/{workId}` the parameterized `oneasmr://work/{workId}`
@@ -187,6 +191,7 @@ fun OneAsmrNavHost(
 
     // 根 Tab 路由：只有它们渲染底部导航栏，也只有它们响应滚动隐藏。
     val isRootRoute = currentRoute == Routes.LIBRARY ||
+        currentRoute == Routes.STATS ||
         currentRoute == Routes.SEARCH ||
         currentRoute == Routes.SINGLES ||
         currentRoute == Routes.SETTINGS
@@ -332,6 +337,16 @@ fun OneAsmrNavHost(
                 ReviewListScreen(
                     onOpenWork = { workId -> navController.navigate(Routes.workDetail(workId)) },
                 )
+            }
+            composable(
+                route = Routes.STATS,
+                deepLinks = listOf(navDeepLink { uriPattern = "oneasmr://stats" }),
+                enterTransition = { fadeIn(animationSpec = tween(220)) },
+                exitTransition = { fadeOut(animationSpec = tween(220)) },
+                popEnterTransition = { fadeIn(animationSpec = tween(220)) },
+                popExitTransition = { fadeOut(animationSpec = tween(220)) },
+            ) {
+                StatsScreen()
             }
             composable(
                 route = Routes.SEARCH,
@@ -572,7 +587,7 @@ fun OneAsmrNavHost(
                     )
                 }
             }
-            // 导航栏只在三个根 Tab 路由渲染；非根路由彻底不显示（原仅视频页隐藏）。
+            // 导航栏只在根 Tab 路由渲染；非根路由彻底不显示（原仅视频页隐藏）。
             if (isRootRoute) {
                 OneAsmrBottomBar(
                     currentRoute = currentRoute,
@@ -617,6 +632,12 @@ private fun OneAsmrBottomBar(
             onClick = { onNavigate(Routes.SINGLES) },
             icon = { Icon(Icons.Filled.VideoLibrary, contentDescription = "Videos") },
             label = { Text("Videos") },
+        )
+        NavigationBarItem(
+            selected = currentRoute == Routes.STATS,
+            onClick = { onNavigate(Routes.STATS) },
+            icon = { Icon(Icons.Filled.BarChart, contentDescription = "Stats") },
+            label = { Text("Stats") },
         )
         NavigationBarItem(
             selected = currentRoute == Routes.SEARCH,

@@ -30,6 +30,7 @@ import com.google.common.util.concurrent.SettableFuture
 import com.oneasmr.app.MainActivity
 import com.oneasmr.app.R
 import com.oneasmr.app.data.local.KeySpec
+import com.oneasmr.app.data.local.ListeningSessionDao
 import com.oneasmr.app.data.local.PlaybackStateDao
 import com.oneasmr.app.data.local.ProgressState
 import com.oneasmr.app.data.local.Review
@@ -104,6 +105,9 @@ class PlaybackService : MediaSessionService() {
     lateinit var playbackStateDao: PlaybackStateDao
 
     @Inject
+    lateinit var listeningSessionDao: ListeningSessionDao
+
+    @Inject
     lateinit var resumePositionResolver: ResumePositionResolver
 
     @Inject
@@ -122,6 +126,9 @@ class PlaybackService : MediaSessionService() {
 
     /** Task 19: debounced per-trackKey position writer (5s cadence + pause flush). */
     private lateinit var progressWriter: PlaybackProgressWriter
+
+    /** Actual-playing intervals for the local statistics page (pause/seek safe). */
+    private lateinit var listeningStatsRecorder: ListeningStatsRecorder
 
     /** Debug-only sleep-timer hook (see [registerDebugSleepTimerHook]); null on release. */
     private var sleepTimerDebugReceiver: BroadcastReceiver? = null
@@ -171,6 +178,10 @@ class PlaybackService : MediaSessionService() {
             scope = serviceScope,
             positionProvider = ::positionSample,
         ).apply { start() }
+        listeningStatsRecorder = ListeningStatsRecorder(
+            dao = listeningSessionDao,
+            scope = serviceScope,
+        ).apply { start(::listeningStatsSnapshot) }
         registerDebugSleepTimerHook()
         notificationProvider = DefaultMediaNotificationProvider.Builder(this)
             .setChannelId(NOTIFICATION_CHANNEL_ID)
@@ -218,6 +229,7 @@ class PlaybackService : MediaSessionService() {
         player.removeListener(queueSnapshotListener)
         sleepTimer.cancel()
         progressWriter.stop()
+        listeningStatsRecorder.stop()
         unregisterDebugSleepTimerHook()
         serviceScope.cancel()
         mediaSession?.run { release() }
@@ -413,6 +425,17 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
+    /** Lightweight metadata + actual-playing snapshot for listening statistics. */
+    private fun listeningStatsSnapshot(): ListeningStatsRecorder.Snapshot {
+        val item = player.currentMediaItem
+        return ListeningStatsRecorder.Snapshot(
+            trackKey = item?.mediaId,
+            trackTitle = item?.mediaMetadata?.title?.toString().orEmpty(),
+            workTitle = item?.mediaMetadata?.artist?.toString().orEmpty(),
+            isPlaying = player.isPlaying,
+        )
+    }
+
     /**
      * Serializes the sleep-timer state (same extras for the ACTION_SLEEP_TIMER_STATE
      * query result AND the app-local broadcast), so the player screen's picker
@@ -516,6 +539,7 @@ class PlaybackService : MediaSessionService() {
         }
 
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            listeningStatsRecorder.onPlaybackChanged(listeningStatsSnapshot())
             captureSession()
             // The progress button label shows the CURRENT work's six-state
             // progress — refresh it whenever the item changes (a fresh
@@ -554,6 +578,7 @@ class PlaybackService : MediaSessionService() {
          */
         override fun onPlayerError(error: PlaybackException) {
             Log.e(TAG, "player error: ${error.errorCodeName}: ${error.message}")
+            listeningStatsRecorder.onPlaybackChanged(listeningStatsSnapshot().copy(isPlaying = false))
             lastQueue = emptyList()
             if (videoMode && savedAudioContext != null) {
                 Log.w(TAG, "video playback error — restoring saved audio context")
@@ -590,6 +615,7 @@ class PlaybackService : MediaSessionService() {
          * by then the timer already reset itself (see [SleepTimerController.expire]).
          */
         override fun onIsPlayingChanged(isPlaying: Boolean) {
+            listeningStatsRecorder.onPlaybackChanged(listeningStatsSnapshot())
             if (!isPlaying) {
                 serviceScope.launch { progressWriter.flush() }
                 sleepTimer.cancel()

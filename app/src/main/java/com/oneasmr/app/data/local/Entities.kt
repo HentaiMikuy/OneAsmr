@@ -241,6 +241,31 @@ data class PlaybackState(
 )
 
 /**
+ * One continuous actually-playing interval. Paused time and seeks never add
+ * duration. Rows are updated periodically while playing so process loss can
+ * only lose the most recent flush interval, and are deliberately not linked
+ * by foreign keys: history survives work/file removal.
+ *
+ * [startedAt] is wall-clock epoch time; [endedAt] = startedAt + durationMs,
+ * which lets statistics split continuous listening accurately across hour and
+ * day boundaries even when a session crosses midnight.
+ */
+@Entity(
+    tableName = "listening_session",
+    indices = [Index("startedAt"), Index("workId")],
+)
+data class ListeningSession(
+    @PrimaryKey val id: String,
+    val trackKey: String,
+    val workId: String,
+    val trackTitle: String,
+    val workTitle: String,
+    val startedAt: Long,
+    val endedAt: Long,
+    val durationMs: Long,
+)
+
+/**
  * 单文件库条目(流媒体下载的散音视频,如 YouTube ASMR mp4)。与 [Work]
  * 平行的独立体系:无 RJ 码、无社团/声优/进度状态,组织方式是收藏夹
  * ([Collection])。身份 = (rootFolderUri, relativePath) 唯一索引;重扫按

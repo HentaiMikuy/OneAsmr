@@ -816,6 +816,22 @@ interface PlaybackStateDao {
     suspend fun clearAll()
 }
 
+@Dao
+interface ListeningSessionDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(session: ListeningSession)
+
+    /** Live local listening history, newest session first. */
+    @Query("SELECT * FROM listening_session ORDER BY startedAt DESC")
+    fun observeAll(): Flow<List<ListeningSession>>
+
+    @Query("SELECT * FROM listening_session ORDER BY startedAt DESC")
+    suspend fun getAll(): List<ListeningSession>
+
+    @Query("DELETE FROM listening_session")
+    suspend fun clearAll()
+}
+
 /**
  * Task 13: wraps the FTS-backed paging source so a MATCH syntax error at load
  * time (user-typed punctuation/operators trip FTS5 syntax) retries the LIKE

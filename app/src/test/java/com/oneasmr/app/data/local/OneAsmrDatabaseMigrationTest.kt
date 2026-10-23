@@ -45,7 +45,7 @@ class OneAsmrDatabaseMigrationTest {
         val file = tempDbFile()
         createV1Database(file)
 
-        // 数据库类已是 v4:注册全链迁移(Room 需要 1→当前版本的完整路径),
+        // 数据库类已是 v5:注册全链迁移(Room 需要 1→当前版本的完整路径),
         // 本测试仍聚焦 1→2 加列后的数据保全断言。
         val db = Room.databaseBuilder(
             RuntimeEnvironment.getApplication(),
@@ -56,6 +56,7 @@ class OneAsmrDatabaseMigrationTest {
                 OneAsmrDatabase.MIGRATION_1_2,
                 OneAsmrDatabase.MIGRATION_2_3,
                 OneAsmrDatabase.MIGRATION_3_4,
+                OneAsmrDatabase.MIGRATION_4_5,
             )
             .build()
 
@@ -81,7 +82,7 @@ class OneAsmrDatabaseMigrationTest {
             assertEquals(123L, playback.positionMs)
             assertEquals(456L, playback.durationMs)
 
-            // The migrated database is fully writable at v2.
+            // The migrated database is fully writable at the current version.
             db.workDao().markMissing(listOf("local:RJ123456"), now = 2_000L)
             assertTrue(db.workDao().getById("local:RJ123456")!!.missing)
         }
@@ -89,13 +90,13 @@ class OneAsmrDatabaseMigrationTest {
     }
 
     /**
-     * v1 → v4 全链(1→2 加列,2→3 建单文件库三表,3→4 加 ageRating):
-     * 老数据原样,新表在迁移后立即可写,ageRating 老行自动 NULL。
-     * Room 迁移后按 4.json 校验全部表+索引 —— 迁移 DDL 与导出 schema
+     * v1 → v5 全链(1→2 加列,2→3 建单文件库三表,3→4 加 ageRating,
+     * 4→5 建收听历史):老数据原样,新表在迁移后立即可写,ageRating 老行自动 NULL。
+     * Room 迁移后按当前导出 schema 校验全部表+索引 —— 迁移 DDL 与导出 schema
      * 不符会在 build() 后首次访问时抛 IllegalStateException。
      */
     @Test
-    fun `migrating v1 through v4 keeps data and creates usable single-file tables`() {
+    fun `migrating v1 through v5 keeps data and creates usable single-file tables`() {
         val file = tempDbFile()
         createV1Database(file)
 
@@ -108,11 +109,12 @@ class OneAsmrDatabaseMigrationTest {
                 OneAsmrDatabase.MIGRATION_1_2,
                 OneAsmrDatabase.MIGRATION_2_3,
                 OneAsmrDatabase.MIGRATION_3_4,
+                OneAsmrDatabase.MIGRATION_4_5,
             )
             .build()
 
         runBlocking {
-            // 老数据穿过三级迁移原样可读。
+            // 老数据穿过四级迁移原样可读。
             assertEquals("RJ123456", db.workDao().getById("local:RJ123456")!!.title)
             assertEquals(123L, db.playbackStateDao().get("local:RJ123456:3")!!.positionMs)
             // 手动年龄分级列存在且老行未设置。
@@ -168,7 +170,7 @@ class OneAsmrDatabaseMigrationTest {
             OneAsmrDatabase::class.java,
             file.absolutePath,
         )
-            .addMigrations(OneAsmrDatabase.MIGRATION_3_4)
+            .addMigrations(OneAsmrDatabase.MIGRATION_3_4, OneAsmrDatabase.MIGRATION_4_5)
             .build()
 
         runBlocking {
@@ -214,6 +216,38 @@ class OneAsmrDatabaseMigrationTest {
         db.close()
     }
 
+    @Test
+    fun `migrating v4 to v5 preserves positions and creates listening history`() {
+        val file = tempDbFile()
+        createV4Database(file)
+
+        val db = Room.databaseBuilder(
+            RuntimeEnvironment.getApplication(),
+            OneAsmrDatabase::class.java,
+            file.absolutePath,
+        )
+            .addMigrations(OneAsmrDatabase.MIGRATION_4_5)
+            .build()
+
+        runBlocking {
+            assertEquals("RJ123456", db.workDao().getById("local:RJ123456")!!.title)
+            assertEquals(123L, db.playbackStateDao().get("local:RJ123456:3")!!.positionMs)
+            val session = ListeningSession(
+                id = "session-1",
+                trackKey = "local:RJ123456:3",
+                workId = "local:RJ123456",
+                trackTitle = "track 3",
+                workTitle = "RJ123456",
+                startedAt = 5_000L,
+                endedAt = 65_000L,
+                durationMs = 60_000L,
+            )
+            db.listeningSessionDao().upsert(session)
+            assertEquals(listOf(session), db.listeningSessionDao().getAll())
+        }
+        db.close()
+    }
+
     // ---------- v1 fixture ----------
 
     /** Transcribed from app/schemas/.../1.json (createSql of each entity, ${TABLE_NAME} resolved). */
@@ -243,7 +277,19 @@ class OneAsmrDatabaseMigrationTest {
         db.close()
     }
 
-    // ---------- v3 fixture ----------
+    // ---------- v3 / v4 fixtures ----------
+
+    private fun createV4Database(file: File) {
+        createV3Database(file)
+        val db = SQLiteDatabase.openOrCreateDatabase(file, null)
+        db.execSQL("ALTER TABLE work ADD COLUMN ageRating TEXT")
+        db.execSQL(
+            "INSERT INTO playback_state (trackKey, positionMs, durationMs, updatedAt) " +
+                "VALUES ('local:RJ123456:3', 123, 456, 1000)",
+        )
+        db.version = 4
+        db.close()
+    }
 
     /** Transcribed from app/schemas/.../3.json (v1 schema + work.missing + the single-file tables). */
     private fun createV3Database(file: File) {

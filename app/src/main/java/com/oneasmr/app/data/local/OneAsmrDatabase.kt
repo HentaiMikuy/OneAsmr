@@ -14,7 +14,8 @@ import androidx.sqlite.driver.bundled.BundledSQLiteDriver
  * app/schemas/.../1.json); version 2 adds `work.missing` (Task 7 incremental
  * rescan + missing-work detection); version 3 adds the single-file library
  * (single_file / collection / collection_item — 单文件库与收藏夹体系);
- * version 4 adds `work.ageRating` (手动年龄分级, 用户标记非刮削).
+ * version 4 adds `work.ageRating` (手动年龄分级, 用户标记非刮削);
+ * version 5 adds `listening_session` (本地实际播放时长与收听统计).
  *
  * Opened with [BundledSQLiteDriver] in production — the bundled SQLite
  * (>= 3.42) is the only reliable source of FTS5 + the trigram tokenizer; the
@@ -32,11 +33,12 @@ import androidx.sqlite.driver.bundled.BundledSQLiteDriver
         WorkVa::class,
         Review::class,
         PlaybackState::class,
+        ListeningSession::class,
         SingleFile::class,
         Collection::class,
         CollectionItem::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -50,6 +52,7 @@ abstract class OneAsmrDatabase : RoomDatabase() {
     abstract fun workVaDao(): WorkVaDao
     abstract fun reviewDao(): ReviewDao
     abstract fun playbackStateDao(): PlaybackStateDao
+    abstract fun listeningSessionDao(): ListeningSessionDao
     abstract fun singleFileDao(): SingleFileDao
     abstract fun collectionDao(): CollectionDao
 
@@ -136,6 +139,31 @@ abstract class OneAsmrDatabase : RoomDatabase() {
         }
 
         /**
+         * v4 → v5: append-only local listening history. Existing playback
+         * positions remain untouched; historical positions are NOT converted
+         * into fake listening durations, so statistics start with real plays.
+         */
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `listening_session` (" +
+                        "`id` TEXT NOT NULL, `trackKey` TEXT NOT NULL, `workId` TEXT NOT NULL, " +
+                        "`trackTitle` TEXT NOT NULL, `workTitle` TEXT NOT NULL, " +
+                        "`startedAt` INTEGER NOT NULL, `endedAt` INTEGER NOT NULL, " +
+                        "`durationMs` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_listening_session_startedAt` " +
+                        "ON `listening_session` (`startedAt`)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_listening_session_workId` " +
+                        "ON `listening_session` (`workId`)",
+                )
+            }
+        }
+
+        /**
          * Production builder: BundledSQLiteDriver (FTS5) + FTS index callback.
          * Tests build their own in-memory instances without the bundled driver
          * so the degraded fallback path is exercised on the JVM.
@@ -143,7 +171,7 @@ abstract class OneAsmrDatabase : RoomDatabase() {
         fun build(context: Context): OneAsmrDatabase =
             Room.databaseBuilder(context, OneAsmrDatabase::class.java, NAME)
                 .setDriver(BundledSQLiteDriver())
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                 .addCallback(FtsCallback())
                 .build()
     }
