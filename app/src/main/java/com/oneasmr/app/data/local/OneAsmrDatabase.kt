@@ -6,6 +6,7 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 import androidx.room.migration.Migration
+import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 
@@ -70,11 +71,11 @@ abstract class OneAsmrDatabase : RoomDatabase() {
          * Non-destructive: keeps every row; review / playback_state tables are
          * untouched by design (missing works are never auto-deleted).
          */
-        val MIGRATION_1_2 = object : Migration(1, 2) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE work ADD COLUMN missing INTEGER NOT NULL DEFAULT 0")
-            }
-        }
+        val MIGRATION_1_2 = sqlMigration(
+            1,
+            2,
+            "ALTER TABLE work ADD COLUMN missing INTEGER NOT NULL DEFAULT 0",
+        )
 
         /**
          * v2 → v3: 单文件库三张新表(single_file / collection /
@@ -85,81 +86,93 @@ abstract class OneAsmrDatabase : RoomDatabase() {
          * 层幂等播种,不在迁移里插行(新装依赖 onCreate 路径,两边逻辑会
          * 分叉)。
          */
-        val MIGRATION_2_3 = object : Migration(2, 3) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL(
-                    "CREATE TABLE IF NOT EXISTS `single_file` (" +
-                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
-                        "`rootFolderUri` TEXT NOT NULL, `relativePath` TEXT NOT NULL, " +
-                        "`fileName` TEXT NOT NULL, `displayTitle` TEXT NOT NULL, " +
-                        "`titleSortKey` TEXT NOT NULL, `kind` TEXT NOT NULL, " +
-                        "`youtubeId` TEXT, `channel` TEXT, `uploadDate` TEXT, " +
-                        "`durationMs` INTEGER, `sizeBytes` INTEGER NOT NULL, " +
-                        "`lastModified` INTEGER NOT NULL, `thumbSource` TEXT, " +
-                        "`sourceUrl` TEXT, `scrapeStatus` TEXT NOT NULL, " +
-                        "`missing` INTEGER NOT NULL DEFAULT 0, " +
-                        "`addedAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL)",
-                )
-                db.execSQL(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS `index_single_file_rootFolderUri_relativePath` " +
-                        "ON `single_file` (`rootFolderUri`, `relativePath`)",
-                )
-                db.execSQL("CREATE INDEX IF NOT EXISTS `index_single_file_youtubeId` ON `single_file` (`youtubeId`)")
-                db.execSQL("CREATE INDEX IF NOT EXISTS `index_single_file_titleSortKey` ON `single_file` (`titleSortKey`)")
-                db.execSQL("CREATE INDEX IF NOT EXISTS `index_single_file_addedAt` ON `single_file` (`addedAt`)")
-                db.execSQL(
-                    "CREATE TABLE IF NOT EXISTS `collection` (" +
-                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
-                        "`name` TEXT NOT NULL, `isSystem` INTEGER NOT NULL DEFAULT 0, " +
-                        "`sortIndex` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL)",
-                )
-                db.execSQL(
-                    "CREATE TABLE IF NOT EXISTS `collection_item` (" +
-                        "`collectionId` INTEGER NOT NULL, `fileId` INTEGER NOT NULL, " +
-                        "`sortIndex` INTEGER NOT NULL, `addedAt` INTEGER NOT NULL, " +
-                        "PRIMARY KEY(`collectionId`, `fileId`), " +
-                        "FOREIGN KEY(`collectionId`) REFERENCES `collection`(`id`) " +
-                        "ON UPDATE NO ACTION ON DELETE CASCADE, " +
-                        "FOREIGN KEY(`fileId`) REFERENCES `single_file`(`id`) " +
-                        "ON UPDATE NO ACTION ON DELETE CASCADE)",
-                )
-                db.execSQL("CREATE INDEX IF NOT EXISTS `index_collection_item_fileId` ON `collection_item` (`fileId`)")
-            }
-        }
+        val MIGRATION_2_3 = sqlMigration(
+            2,
+            3,
+            "CREATE TABLE IF NOT EXISTS `single_file` (" +
+                "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                "`rootFolderUri` TEXT NOT NULL, `relativePath` TEXT NOT NULL, " +
+                "`fileName` TEXT NOT NULL, `displayTitle` TEXT NOT NULL, " +
+                "`titleSortKey` TEXT NOT NULL, `kind` TEXT NOT NULL, " +
+                "`youtubeId` TEXT, `channel` TEXT, `uploadDate` TEXT, " +
+                "`durationMs` INTEGER, `sizeBytes` INTEGER NOT NULL, " +
+                "`lastModified` INTEGER NOT NULL, `thumbSource` TEXT, " +
+                "`sourceUrl` TEXT, `scrapeStatus` TEXT NOT NULL, " +
+                "`missing` INTEGER NOT NULL DEFAULT 0, " +
+                "`addedAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS `index_single_file_rootFolderUri_relativePath` " +
+                "ON `single_file` (`rootFolderUri`, `relativePath`)",
+            "CREATE INDEX IF NOT EXISTS `index_single_file_youtubeId` ON `single_file` (`youtubeId`)",
+            "CREATE INDEX IF NOT EXISTS `index_single_file_titleSortKey` ON `single_file` (`titleSortKey`)",
+            "CREATE INDEX IF NOT EXISTS `index_single_file_addedAt` ON `single_file` (`addedAt`)",
+            "CREATE TABLE IF NOT EXISTS `collection` (" +
+                "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                "`name` TEXT NOT NULL, `isSystem` INTEGER NOT NULL DEFAULT 0, " +
+                "`sortIndex` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL)",
+            "CREATE TABLE IF NOT EXISTS `collection_item` (" +
+                "`collectionId` INTEGER NOT NULL, `fileId` INTEGER NOT NULL, " +
+                "`sortIndex` INTEGER NOT NULL, `addedAt` INTEGER NOT NULL, " +
+                "PRIMARY KEY(`collectionId`, `fileId`), " +
+                "FOREIGN KEY(`collectionId`) REFERENCES `collection`(`id`) " +
+                "ON UPDATE NO ACTION ON DELETE CASCADE, " +
+                "FOREIGN KEY(`fileId`) REFERENCES `single_file`(`id`) " +
+                "ON UPDATE NO ACTION ON DELETE CASCADE)",
+            "CREATE INDEX IF NOT EXISTS `index_collection_item_fileId` ON `collection_item` (`fileId`)",
+        )
 
         /**
          * v3 → v4: `work.ageRating` column (手动年龄分级, nullable TEXT). 纯增量:
          * 不加 NOT NULL 就不需要 DEFAULT,老行自动为 NULL(未设置)。不触碰 FTS
          * 触发器和虚拟表。
          */
-        val MIGRATION_3_4 = object : Migration(3, 4) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE work ADD COLUMN ageRating TEXT")
-            }
-        }
+        val MIGRATION_3_4 = sqlMigration(
+            3,
+            4,
+            "ALTER TABLE work ADD COLUMN ageRating TEXT",
+        )
 
         /**
          * v4 → v5: append-only local listening history. Existing playback
          * positions remain untouched; historical positions are NOT converted
          * into fake listening durations, so statistics start with real plays.
          */
-        val MIGRATION_4_5 = object : Migration(4, 5) {
+        val MIGRATION_4_5 = sqlMigration(
+            4,
+            5,
+            "CREATE TABLE IF NOT EXISTS `listening_session` (" +
+                "`id` TEXT NOT NULL, `trackKey` TEXT NOT NULL, `workId` TEXT NOT NULL, " +
+                "`trackTitle` TEXT NOT NULL, `workTitle` TEXT NOT NULL, " +
+                "`startedAt` INTEGER NOT NULL, `endedAt` INTEGER NOT NULL, " +
+                "`durationMs` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+            "CREATE INDEX IF NOT EXISTS `index_listening_session_startedAt` " +
+                "ON `listening_session` (`startedAt`)",
+            "CREATE INDEX IF NOT EXISTS `index_listening_session_workId` " +
+                "ON `listening_session` (`workId`)",
+        )
+
+        /**
+         * Defines the same migration for Room's legacy and SQLiteDriver APIs.
+         *
+         * With a driver configured, Room 2.8 dispatches to
+         * [Migration.migrate(SQLiteConnection)]. Its default implementation only
+         * delegates to the legacy overload for a SupportSQLiteConnection; a real
+         * BundledSQLiteDriver connection otherwise throws NotImplementedError.
+         * Keeping both paths on the same SQL prevents upgrade-only crashes while
+         * the Robolectric tests continue to exercise the legacy API.
+         */
+        private fun sqlMigration(
+            startVersion: Int,
+            endVersion: Int,
+            vararg statements: String,
+        ): Migration = object : Migration(startVersion, endVersion) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL(
-                    "CREATE TABLE IF NOT EXISTS `listening_session` (" +
-                        "`id` TEXT NOT NULL, `trackKey` TEXT NOT NULL, `workId` TEXT NOT NULL, " +
-                        "`trackTitle` TEXT NOT NULL, `workTitle` TEXT NOT NULL, " +
-                        "`startedAt` INTEGER NOT NULL, `endedAt` INTEGER NOT NULL, " +
-                        "`durationMs` INTEGER NOT NULL, PRIMARY KEY(`id`))",
-                )
-                db.execSQL(
-                    "CREATE INDEX IF NOT EXISTS `index_listening_session_startedAt` " +
-                        "ON `listening_session` (`startedAt`)",
-                )
-                db.execSQL(
-                    "CREATE INDEX IF NOT EXISTS `index_listening_session_workId` " +
-                        "ON `listening_session` (`workId`)",
-                )
+                statements.forEach { sql -> db.execSQL(sql) }
+            }
+
+            override fun migrate(connection: SQLiteConnection) {
+                statements.forEach { sql ->
+                    connection.prepare(sql).use { statement -> statement.step() }
+                }
             }
         }
 
