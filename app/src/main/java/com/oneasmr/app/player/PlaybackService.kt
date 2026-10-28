@@ -148,7 +148,7 @@ class PlaybackService : MediaSessionService() {
      *
      * The video timeline replaces (never merges into) the audio queue. Its
      * repeat mode is the video page's OWN persisted setting (顺序 / 列表循环 /
-     * 单集循环), not the audio queue preference: [captureSession] and the
+     * 单集循环 / 播完暂停), not the audio queue preference: [captureSession] and the
      * repeat/shuffle listeners all skip QueueStore persistence while
      * [videoMode] is active, so a force-stop mid-video still cold-restores the
      * AUDIO queue and the AUDIO modes.
@@ -283,6 +283,7 @@ class PlaybackService : MediaSessionService() {
         val saved = savedAudioContext
         videoMode = false
         savedAudioContext = null
+        player.pauseAtEndOfMediaItems = false
         serviceScope.launch {
             progressWriter.flush()
             if (saved == null) {
@@ -326,6 +327,7 @@ class PlaybackService : MediaSessionService() {
         val dropped = savedAudioContext?.items?.size ?: 0
         videoMode = false
         savedAudioContext = null
+        player.pauseAtEndOfMediaItems = false
         serviceScope.launch { progressWriter.flush() }
         Log.i(TAG, "video leave-playing: video mode off, item keeps playing (audio context dropped: $dropped items)")
     }
@@ -848,6 +850,7 @@ class PlaybackService : MediaSessionService() {
                 .add(SessionCommand(ACTION_VIDEO_ENTER, Bundle.EMPTY))
                 .add(SessionCommand(ACTION_VIDEO_EXIT, Bundle.EMPTY))
                 .add(SessionCommand(ACTION_VIDEO_LEAVE_PLAYING, Bundle.EMPTY))
+                .add(SessionCommand(ACTION_VIDEO_SET_PAUSE_AT_END, Bundle.EMPTY))
                 .build()
             return ConnectionResult.accept(
                 sessionCommands,
@@ -892,6 +895,11 @@ class PlaybackService : MediaSessionService() {
                 }
                 ACTION_VIDEO_LEAVE_PLAYING -> {
                     leaveVideoModePlaying()
+                    return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+                }
+                ACTION_VIDEO_SET_PAUSE_AT_END -> {
+                    player.pauseAtEndOfMediaItems = args.getBoolean(EXTRA_VIDEO_PAUSE_AT_END, false)
+                    Log.i(TAG, "video pause-at-end -> ${player.pauseAtEndOfMediaItems}")
                     return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
                 }
             }
@@ -985,6 +993,8 @@ class PlaybackService : MediaSessionService() {
          * 音频上下文),当前条目留在会话里继续播。
          */
         const val ACTION_VIDEO_LEAVE_PLAYING = "oneasmr.command.video_leave_playing"
+        const val ACTION_VIDEO_SET_PAUSE_AT_END = "oneasmr.command.video_set_pause_at_end"
+        const val EXTRA_VIDEO_PAUSE_AT_END = "video_pause_at_end"
 
         /** Task 22: video playback failed (service restored the audio context). */
         const val ACTION_VIDEO_PLAYBACK_FAILED = "oneasmr.app.video_playback_failed"

@@ -3,6 +3,7 @@ package com.oneasmr.app.data.local.settings
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.oneasmr.app.data.local.TestDataStoreFile
+import com.oneasmr.app.domain.player.VideoRepeatMode
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -48,6 +49,13 @@ class SettingsStoreTest {
         val dataStore = tf.open()
         dataStore.edit { it[stringPreferencesKey("resume_mode")] = "NUCLEAR" }
         assertEquals(ResumeMode.AUTO, storeIn(dataStore).resumeMode.first())
+    }
+
+    @Test
+    fun `video pause at end persists across store instances`() = runTest {
+        val tf = file("video-repeat")
+        storeIn(tf.open()).setVideoRepeatMode(VideoRepeatMode.PAUSE_AT_END)
+        assertEquals(VideoRepeatMode.PAUSE_AT_END, storeIn(tf.restart()).videoRepeatMode.first())
     }
 
     @Test

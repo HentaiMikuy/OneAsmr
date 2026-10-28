@@ -113,8 +113,8 @@ import com.oneasmr.app.data.scanner.FsPath
 import com.oneasmr.app.data.scanner.TrackTreeBuilder
 import com.oneasmr.app.data.scanner.WorkPathResolver
 import com.oneasmr.app.domain.player.PlaybackSpeed
-import com.oneasmr.app.domain.player.RepeatMode
 import com.oneasmr.app.domain.player.VideoGestureOps
+import com.oneasmr.app.domain.player.VideoRepeatMode
 import com.oneasmr.app.navigation.Routes
 import com.oneasmr.app.player.PlaybackService
 import com.oneasmr.app.player.continuesAfterPageExit
@@ -174,7 +174,7 @@ import kotlinx.coroutines.withContext
  *    Todo 3): collection members when opened from a collection, otherwise
  *    same-folder siblings (single-file route), or all VIDEO tracks of the
  *    work — replace the audio queue. Repeat comes from the video's OWN
- *    persisted preference (顺序 / 列表循环 / 单集循环, default 顺序) and
+ *    persisted preference (顺序 / 列表循环 / 单集循环 / 播完暂停, default 顺序) and
  *    shuffle stays off, applied inside the enter-snapshot listener; the audio
  *    modes are restored on exit — from the service's saved audio context
  *    (ACTION_VIDEO_EXIT) or from the ViewModel's own pre-entry capture
@@ -488,12 +488,13 @@ fun VideoPlayerScreen(
                 onRepeatClick = {
                     val mode = viewModel.cycleRepeatMode()
                     // 居中提示复用现有 gesture overlay(与 ±10s/亮度音量
-                    // 同一通道),三档切换对用户可见、可理解。
+                    // 同一通道),四档切换对用户可见、可理解。
                     gestureOverlay = GestureFeedback(
                         text = when (mode) {
-                            RepeatMode.OFF -> "顺序播放"
-                            RepeatMode.ALL -> "列表循环"
-                            RepeatMode.ONE -> "单集循环"
+                            VideoRepeatMode.OFF -> "顺序播放"
+                            VideoRepeatMode.ALL -> "列表循环"
+                            VideoRepeatMode.ONE -> "单集循环"
+                            VideoRepeatMode.PAUSE_AT_END -> "播完暂停"
                         },
                         description = "video repeat feedback=${mode.name.lowercase()}",
                     )
@@ -757,20 +758,21 @@ private fun VideoControls(
                     },
                 ) {
                     Icon(
-                        if (state.repeatMode == RepeatMode.ONE) {
-                            Icons.Filled.RepeatOne
-                        } else {
-                            Icons.Filled.Repeat
+                        when (state.repeatMode) {
+                            VideoRepeatMode.ONE -> Icons.Filled.RepeatOne
+                            VideoRepeatMode.PAUSE_AT_END -> Icons.Filled.Pause
+                            else -> Icons.Filled.Repeat
                         },
                         contentDescription = when (state.repeatMode) {
-                            RepeatMode.OFF -> "顺序播放"
-                            RepeatMode.ALL -> "列表循环"
-                            RepeatMode.ONE -> "单集循环"
+                            VideoRepeatMode.OFF -> "顺序播放"
+                            VideoRepeatMode.ALL -> "列表循环"
+                            VideoRepeatMode.ONE -> "单集循环"
+                            VideoRepeatMode.PAUSE_AT_END -> "播完暂停"
                         },
                         // 顺序(未循环)半透明 = 未激活,与音频播放器的模式
-                        // 图标语言一致;列表/单集循环实心白。
+                        // 图标语言一致;其他模式实心白。
                         tint = Color.White.copy(
-                            alpha = if (state.repeatMode == RepeatMode.OFF) 0.45f else 1f,
+                            alpha = if (state.repeatMode == VideoRepeatMode.OFF) 0.45f else 1f,
                         ),
                     )
                 }
@@ -979,10 +981,10 @@ data class VideoUiState(
     val playbackState: Int = Player.STATE_IDLE,
     val speed: Float = 1f,
     /**
-     * 视频循环模式(顺序/列表循环/单集循环)。进入页面时从独立持久化的
+     * 视频结束策略(顺序/列表循环/单集循环/播完暂停)。进入页面时从独立持久化的
      * 视频偏好恢复,与音频播放器的循环互不影响。
      */
-    val repeatMode: RepeatMode = RepeatMode.OFF,
+    val repeatMode: VideoRepeatMode = VideoRepeatMode.OFF,
     /**
      * Playlist rows. Empty until the entry load resolves; for the single-file
      * route the collection members / same-folder siblings are then filled in
@@ -1103,10 +1105,10 @@ class VideoPlayerViewModel @Inject constructor(
     private var entryIsAudioOnly = false
 
     /**
-     * 视频循环模式(顺序/列表循环/单集循环),独立于音频循环持久化。
-     * 进入/重入视频会话时应用到会话播放器;页面内的循环按钮改它并落盘。
+     * 视频结束策略(顺序/列表循环/单集循环/播完暂停),独立于音频循环持久化。
+     * 进入/重入视频会话时应用到会话播放器;页面内的模式按钮改它并落盘。
      */
-    private var videoRepeatMode: RepeatMode = RepeatMode.OFF
+    private var videoRepeatMode: VideoRepeatMode = VideoRepeatMode.OFF
 
     /**
      * The session player for the PlayerView binding(连接完成后才非 null)。
@@ -1141,7 +1143,7 @@ class VideoPlayerViewModel @Inject constructor(
             _uiState.update { it.copy(repeatMode = videoRepeatMode) }
             // 读盘晚于会话进入时(极少数)补应用到播放器;音频会话中不动。
             if (enteredVideoMode || attachModesApplied) {
-                controller?.repeatMode = videoRepeatMode.toMedia3()
+                controller?.let(::applyVideoRepeatMode)
             }
         }
         // The service's error-restore can supersede the transient player
@@ -1216,7 +1218,7 @@ class VideoPlayerViewModel @Inject constructor(
         vmSavedRepeatMode = controller.repeatMode
         vmSavedShuffle = controller.shuffleModeEnabled
         attachModesApplied = true
-        controller.repeatMode = videoRepeatMode.toMedia3()
+        applyVideoRepeatMode(controller)
         controller.shuffleModeEnabled = false
         _uiState.update {
             it.copy(
@@ -1356,9 +1358,9 @@ class VideoPlayerViewModel @Inject constructor(
                 // check and immediately before setMediaItems — earlier would
                 // poison the snapshot (PlaybackService.saveAudioContext reads
                 // the modes; controller calls are delivered in order).
-                // 循环走视频自己的持久化偏好(顺序/列表循环/单集循环),不再
-                // 硬编码 OFF;shuffle 仍关闭(视频播放列表保持自然顺序)。
-                controller.repeatMode = videoRepeatMode.toMedia3()
+                // 结束策略走视频自己的持久化偏好(顺序/列表循环/单集循环/播完暂停),
+                // 不再硬编码 OFF;shuffle 仍关闭(视频播放列表保持自然顺序)。
+                applyVideoRepeatMode(controller)
                 controller.shuffleModeEnabled = false
                 // Entry-only timeline: the first frame must not wait for the
                 // playlist. adoptPlaylist() splices the rest in afterwards.
@@ -1738,16 +1740,32 @@ class VideoPlayerViewModel @Inject constructor(
         seekTo(target)
     }
 
+    private fun applyVideoRepeatMode(c: MediaController) {
+        setVideoPauseAtEnd(c, videoRepeatMode.pauseAtEnd)
+        c.repeatMode = videoRepeatMode.baseMode.toMedia3()
+    }
+
+    private fun setVideoPauseAtEnd(c: MediaController, enabled: Boolean) {
+        sendVideoCommand(
+            c = c,
+            action = PlaybackService.ACTION_VIDEO_SET_PAUSE_AT_END,
+            logMessage = "video pause-at-end -> $enabled",
+            args = Bundle().apply {
+                putBoolean(PlaybackService.EXTRA_VIDEO_PAUSE_AT_END, enabled)
+            },
+        )
+    }
+
     /**
-     * 视频循环按钮:顺序 → 列表循环 → 单集循环 → 顺序。会话内即时生效,
+     * 视频模式按钮:顺序 → 列表循环 → 单集循环 → 播完暂停 → 顺序。会话内即时生效,
      * 并立即写入独立的视频循环偏好;音频的循环偏好不受影响(服务端
      * videoMode 守卫保证不互相覆盖)。返回新模式供 UI 弹提示。
      */
-    fun cycleRepeatMode(): RepeatMode {
+    fun cycleRepeatMode(): VideoRepeatMode {
         val next = videoRepeatMode.next()
         videoRepeatMode = next
         _uiState.update { it.copy(repeatMode = next) }
-        controller?.repeatMode = next.toMedia3()
+        controller?.let(::applyVideoRepeatMode)
         // NonCancellable:点完循环立刻返回上一页时,viewModelScope 会被取消,
         // 但这次偏好写入必须落盘(DataStore 编辑只是一次很小的 IO)。
         viewModelScope.launch(NonCancellable) { settingsStore.setVideoRepeatMode(next) }
@@ -1846,6 +1864,7 @@ class VideoPlayerViewModel @Inject constructor(
         if (exitRequested) return
         exitRequested = true
         val c = controller ?: return
+        setVideoPauseAtEnd(c, false)
         if (singleFileId != null) {
             exitSingleFile(c)
             return
@@ -1964,12 +1983,17 @@ class VideoPlayerViewModel @Inject constructor(
     }
 
     /** Fire-and-log a video-mode session command (main-thread executor callback). */
-    private fun sendVideoCommand(c: MediaController, action: String, logMessage: String) {
-        val future = c.sendCustomCommand(SessionCommand(action, Bundle.EMPTY), Bundle.EMPTY)
+    private fun sendVideoCommand(
+        c: MediaController,
+        action: String,
+        logMessage: String,
+        args: Bundle = Bundle.EMPTY,
+    ) {
+        val future = c.sendCustomCommand(SessionCommand(action, Bundle.EMPTY), args)
         future.addListener({
             val result = runCatching { future.get() }.getOrNull()
             if (result?.resultCode != SessionResult.RESULT_SUCCESS) {
-                Log.w(TAG, "command $action failed (code=${result?.resultCode}); audio queue survives in QueueStore")
+                Log.w(TAG, "command $action failed (code=${result?.resultCode})")
             }
         }, ContextCompat.getMainExecutor(context))
         Log.i(TAG, logMessage)

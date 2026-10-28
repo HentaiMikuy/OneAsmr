@@ -7,7 +7,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.oneasmr.app.data.local.WorkOrder
-import com.oneasmr.app.domain.player.RepeatMode
+import com.oneasmr.app.domain.player.VideoRepeatMode
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
@@ -186,12 +186,12 @@ class SettingsStore @Inject constructor(
         dataStore.data.map { it[KEY_VIDEO_BACKGROUND_PLAYBACK] ?: true }
 
     /**
-     * 视频播放页的循环模式(顺序/列表循环/单集循环),默认顺序
-     * ([RepeatMode.OFF])。与音频播放器的循环(QueueStore)彼此独立:视频
+     * 视频播放页的结束策略(顺序/列表循环/单集循环/播完暂停),默认顺序
+     * ([VideoRepeatMode.OFF])。与音频播放器的循环(QueueStore)彼此独立:视频
      * 会话进入时应用这个偏好,退出时音频上下文按快照还原,互不覆盖。
      */
-    val videoRepeatMode: Flow<RepeatMode> =
-        dataStore.data.map { RepeatMode.fromStored(it[KEY_VIDEO_REPEAT_MODE]) }
+    val videoRepeatMode: Flow<VideoRepeatMode> =
+        dataStore.data.map { VideoRepeatMode.fromStored(it[KEY_VIDEO_REPEAT_MODE]) }
 
     /**
      * NSFW 模式开关(安全模式)。默认开 = 完整显示所有封面与曲名;关 =
@@ -241,8 +241,8 @@ class SettingsStore @Inject constructor(
         dataStore.edit { it[KEY_VIDEO_BACKGROUND_PLAYBACK] = enabled }
     }
 
-    suspend fun setVideoRepeatMode(mode: RepeatMode) {
-        dataStore.edit { it[KEY_VIDEO_REPEAT_MODE] = RepeatMode.toStored(mode) }
+    suspend fun setVideoRepeatMode(mode: VideoRepeatMode) {
+        dataStore.edit { it[KEY_VIDEO_REPEAT_MODE] = VideoRepeatMode.toStored(mode) }
     }
 
     suspend fun setNsfwEnabled(enabled: Boolean) {
