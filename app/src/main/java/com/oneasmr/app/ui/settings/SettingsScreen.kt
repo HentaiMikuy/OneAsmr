@@ -2,7 +2,9 @@ package com.oneasmr.app.ui.settings
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -11,41 +13,76 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.FactCheck
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.CloudSync
+import androidx.compose.material.icons.outlined.DarkMode
+import androidx.compose.material.icons.outlined.DeleteSweep
+import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.LibraryMusic
+import androidx.compose.material.icons.outlined.Link
+import androidx.compose.material.icons.outlined.NewReleases
+import androidx.compose.material.icons.outlined.OndemandVideo
+import androidx.compose.material.icons.outlined.Palette
+import androidx.compose.material.icons.outlined.PlayCircle
+import androidx.compose.material.icons.outlined.Remove
+import androidx.compose.material.icons.outlined.RestartAlt
+import androidx.compose.material.icons.outlined.Shield
+import androidx.compose.material.icons.outlined.Storage
+import androidx.compose.material.icons.outlined.SystemUpdate
+import androidx.compose.material.icons.outlined.Translate
+import androidx.compose.material.icons.outlined.TravelExplore
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.provider.Settings
 import android.widget.Toast
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.core.content.FileProvider
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.Lifecycle
@@ -60,8 +97,8 @@ import com.oneasmr.app.data.local.settings.ScrapingLanguage
 import com.oneasmr.app.data.local.settings.SettingsStore
 import com.oneasmr.app.data.local.settings.ThemeMode
 import com.oneasmr.app.data.local.PlaybackStateDao
-import com.oneasmr.app.data.update.UpdateInfo
 import java.io.File
+import kotlin.math.roundToInt
 import com.oneasmr.app.data.repository.CoverStore
 import com.oneasmr.app.data.repository.RootGrantStatus
 import com.oneasmr.app.data.repository.ScanRootEntry
@@ -82,6 +119,11 @@ import kotlinx.coroutines.launch
  * cap), resume policy (Task 19), optional playback-progress clear, and About
  * (version + open-source licenses). NO server entry (kikoeru integration
  * cancelled).
+ *
+ * Layout: rows are grouped by [SettingsSection] into tonal segmented cards
+ * (see SettingsComponents.kt), each led by a tinted icon badge. A keyword
+ * search filters rows across every section (matching title, synonyms and
+ * the section name), and quick-jump chips scroll straight to a section.
  */
 @Composable
 fun SettingsScreen(
@@ -114,6 +156,13 @@ fun SettingsScreen(
     var installAfterPermission by rememberSaveable { mutableStateOf(false) }
 
     var licensesVisible by remember { mutableStateOf(false) }
+
+    var query by rememberSaveable { mutableStateOf("") }
+    val scrollState = rememberScrollState()
+    val scope = rememberCoroutineScope()
+    // Section header offsets inside the scroll content, for the quick-jump
+    // chips. Plain map: only read from click handlers, never drives layout.
+    val sectionOffsets = remember { mutableMapOf<SettingsSection, Int>() }
 
     val appContext = LocalContext.current
     fun openUpdateInstaller(file: File) {
@@ -166,390 +215,472 @@ fun SettingsScreen(
         }
     }
 
+    fun onUpdateClick() {
+        when (updateState) {
+            UpdateUiState.Idle, UpdateUiState.UpToDate -> {
+                updateDialogVisible = true
+                updateViewModel.checkForUpdate()
+            }
+            is UpdateUiState.Failed -> {
+                updateDialogVisible = true
+                updateViewModel.retryAfterError()
+            }
+            is UpdateUiState.Available,
+            is UpdateUiState.Downloading,
+            is UpdateUiState.Downloaded -> updateDialogVisible = true
+            UpdateUiState.Restoring,
+            UpdateUiState.Checking -> Unit
+        }
+    }
+    val updateBusy = updateState is UpdateUiState.Checking || updateState is UpdateUiState.Restoring
+    val dynamicColorSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+    val revokedRootCount = rootEntries.count { it.status == RootGrantStatus.REVOKED }
+
+    // Every row, in display order. Each entry carries search keywords
+    // (synonyms users might type) besides its title.
+    val entries: List<SettingsEntry> = listOf(
+        // ---- 外观 ----
+        SettingsEntry(
+            SettingsSection.APPEARANCE,
+            "主题模式",
+            "主题 深色 浅色 暗色 夜间 黑暗 跟随系统 dark light theme",
+        ) { shape ->
+            SettingsItem(
+                icon = Icons.Outlined.DarkMode,
+                title = "主题模式",
+                shape = shape,
+                accent = SettingsAccent.Tertiary,
+                below = {
+                    SettingsSegmentedChoice(
+                        options = ThemeMode.entries,
+                        selected = themeMode,
+                        label = { it.displayLabel() },
+                        onSelect = viewModel::setThemeMode,
+                    )
+                },
+            )
+        },
+        SettingsEntry(
+            SettingsSection.APPEARANCE,
+            "动态取色",
+            "动态 取色 壁纸 配色 颜色 莫奈 monet material you",
+        ) { shape ->
+            SettingsSwitchItem(
+                icon = Icons.Outlined.Palette,
+                title = "动态取色",
+                subtitle = if (dynamicColorSupported) "使用系统壁纸配色" else "需要 Android 12 及以上",
+                checked = dynamicColor && dynamicColorSupported,
+                onCheckedChange = viewModel::setDynamicColor,
+                enabled = dynamicColorSupported,
+                shape = shape,
+                accent = SettingsAccent.Tertiary,
+            )
+        },
+        SettingsEntry(
+            SettingsSection.APPEARANCE,
+            "启动动画",
+            "启动 动画 开屏 闪屏 冷启动 splash",
+        ) { shape ->
+            SettingsSwitchItem(
+                icon = Icons.Outlined.AutoAwesome,
+                title = "启动动画",
+                subtitle = "冷启动时播放品牌动画；关闭后直接进入主界面（下次启动生效）",
+                checked = launchAnimationEnabled,
+                onCheckedChange = viewModel::setLaunchAnimationEnabled,
+                shape = shape,
+                accent = SettingsAccent.Tertiary,
+            )
+        },
+
+        // ---- 播放 ----
+        SettingsEntry(
+            SettingsSection.PLAYBACK,
+            "续播策略",
+            "续播 断点 记忆 进度 恢复 询问 自动 resume",
+        ) { shape ->
+            SettingsItem(
+                icon = Icons.Outlined.History,
+                title = "续播策略",
+                subtitle = "已听超过 95% 或不足 3% 的曲目从头播放，其余从记忆位置续播",
+                shape = shape,
+                below = {
+                    SettingsSegmentedChoice(
+                        options = ResumeMode.entries,
+                        selected = resumeMode,
+                        label = { it.displayLabel() },
+                        onSelect = viewModel::setResumeMode,
+                    )
+                },
+            )
+        },
+        SettingsEntry(
+            SettingsSection.PLAYBACK,
+            "视频后台续播",
+            "视频 后台 锁屏 关屏 省电 音频 继续播放",
+        ) { shape ->
+            SettingsSwitchItem(
+                icon = Icons.Outlined.OndemandVideo,
+                title = "视频后台续播",
+                subtitle = "关屏、切后台或退出视频页后继续播放（仅解码音频以省电）；关闭则离开时暂停",
+                checked = videoBackgroundPlayback,
+                onCheckedChange = viewModel::setVideoBackgroundPlayback,
+                shape = shape,
+            )
+        },
+
+        // ---- 媒体库 ----
+        SettingsEntry(
+            SettingsSection.LIBRARY,
+            "根文件夹管理",
+            "根文件夹 文件夹 目录 路径 授权 扫描 添加 folder",
+        ) { shape ->
+            SettingsItem(
+                icon = Icons.Outlined.FolderOpen,
+                title = "根文件夹管理",
+                subtitle = when {
+                    rootEntries.isEmpty() -> "尚未添加，点此授权音声文件夹"
+                    revokedRootCount > 0 -> "${rootEntries.size} 个文件夹 · $revokedRootCount 个授权已失效"
+                    else -> "${rootEntries.size} 个文件夹已授权"
+                },
+                subtitleColor = if (revokedRootCount > 0) MaterialTheme.colorScheme.error else Color.Unspecified,
+                shape = shape,
+                accent = SettingsAccent.Secondary,
+                onClick = onOpenRootFolders,
+                trailing = { SettingsChevron() },
+                below = if (rootEntries.isEmpty()) {
+                    null
+                } else {
+                    {
+                        Column(
+                            modifier = Modifier.padding(start = 56.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            rootEntries.forEach { RootStatusLine(it) }
+                        }
+                    }
+                },
+            )
+        },
+        SettingsEntry(
+            SettingsSection.LIBRARY,
+            "NSFW 模式",
+            "nsfw 安全模式 成人 r18 r15 分级 隐私 隐藏 封面 曲名",
+        ) { shape ->
+            SettingsSwitchItem(
+                icon = Icons.Outlined.Shield,
+                title = "NSFW 模式",
+                subtitle = "关闭后进入安全模式：未分级/R15/R18 作品的封面与曲名将被隐藏",
+                checked = nsfwEnabled,
+                onCheckedChange = viewModel::setNsfwEnabled,
+                shape = shape,
+                accent = SettingsAccent.Secondary,
+            )
+        },
+
+        // ---- 刮削 ----
+        SettingsEntry(
+            SettingsSection.SCRAPING,
+            "刮削语言",
+            "语言 中文 简体 日语 日本語 dlsite 元数据 language",
+        ) { shape ->
+            SettingsItem(
+                icon = Icons.Outlined.Translate,
+                title = "刮削语言",
+                subtitle = "从 DLsite 获取作品信息时使用的语言",
+                shape = shape,
+                accent = SettingsAccent.Tertiary,
+                below = {
+                    SettingsSegmentedChoice(
+                        options = ScrapingLanguage.entries,
+                        selected = scrapingLanguage,
+                        label = { it.displayLabel() },
+                        onSelect = viewModel::setScrapingLanguage,
+                    )
+                },
+            )
+        },
+        SettingsEntry(
+            SettingsSection.SCRAPING,
+            "asmr.one 备用源",
+            "asmr.one 备用 后备 补全 数据源 fallback",
+        ) { shape ->
+            SettingsSwitchItem(
+                icon = Icons.Outlined.CloudSync,
+                title = "asmr.one 备用源",
+                subtitle = "DLsite 刮削失败时使用 asmr.one 补全（仅 RJ 作品）",
+                checked = asmrOneFallbackEnabled,
+                onCheckedChange = viewModel::setAsmrOneFallbackEnabled,
+                shape = shape,
+                accent = SettingsAccent.Tertiary,
+            )
+        },
+        SettingsEntry(
+            SettingsSection.SCRAPING,
+            "asmr.one 镜像地址",
+            "asmr.one 镜像 地址 域名 api 代理 mirror url",
+        ) { shape ->
+            SettingsItem(
+                icon = Icons.Outlined.Link,
+                title = "asmr.one 镜像地址",
+                subtitle = asmrOneBaseUrl.ifBlank { "默认" },
+                shape = shape,
+                accent = SettingsAccent.Tertiary,
+                onClick = viewModel::showAsmrOneMirrorDialog,
+                trailing = { SettingsChevron() },
+            )
+        },
+        SettingsEntry(
+            SettingsSection.SCRAPING,
+            "批量刮削",
+            "批量 刮削 未刮削 失败 状态 进度 入口",
+        ) { shape ->
+            SettingsItem(
+                icon = Icons.AutoMirrored.Outlined.FactCheck,
+                title = "批量刮削",
+                subtitle = "在图书馆页右上角菜单中发起",
+                shape = shape,
+                accent = SettingsAccent.Tertiary,
+                trailing = {
+                    Text(
+                        text = if (batchPending == 0 && batchFailed == 0) {
+                            "无待刮削"
+                        } else {
+                            "未刮削 $batchPending\n失败 $batchFailed"
+                        },
+                        style = MaterialTheme.typography.labelLarge,
+                        textAlign = TextAlign.End,
+                        color = if (batchFailed > 0) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                },
+            )
+        },
+
+        // ---- 存储与数据 ----
+        SettingsEntry(
+            SettingsSection.STORAGE,
+            "封面缓存",
+            "封面 缓存 占用 空间 上限 容量 大小 cache",
+        ) { shape ->
+            val capBytes = cacheCapMb.toLong() * 1024L * 1024L
+            SettingsItem(
+                icon = Icons.Outlined.Image,
+                title = "封面缓存",
+                subtitle = if (cacheUsageRefreshing) {
+                    "计算中…"
+                } else {
+                    "已用 ${formatCacheBytes(cacheUsageBytes)} / 上限 $cacheCapMb MB"
+                },
+                shape = shape,
+                accent = SettingsAccent.Secondary,
+                trailing = {
+                    IconButton(onClick = viewModel::refreshCacheUsage, enabled = !cacheUsageRefreshing) {
+                        Icon(Icons.Filled.Refresh, contentDescription = "刷新占用")
+                    }
+                },
+                below = {
+                    LinearProgressIndicator(
+                        progress = {
+                            if (capBytes > 0) (cacheUsageBytes.toFloat() / capBytes).coerceIn(0f, 1f) else 0f
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(16.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("缓存上限", style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                "超过上限时按最近使用顺序自动清理最早的文件（始终保留至少一个）",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        CacheCapStepper(capMb = cacheCapMb, onStep = viewModel::stepCacheCap)
+                    }
+                },
+            )
+        },
+        SettingsEntry(
+            SettingsSection.STORAGE,
+            "清除封面缓存",
+            "清除 删除 清理 封面 缓存 释放 空间",
+        ) { shape ->
+            SettingsItem(
+                icon = Icons.Outlined.DeleteSweep,
+                title = if (clearingCoverCache) "清除中…" else "清除封面缓存",
+                titleColor = MaterialTheme.colorScheme.error,
+                subtitle = "删除全部封面文件，作品数据、评分与评语不受影响",
+                shape = shape,
+                accent = SettingsAccent.Error,
+                enabled = !clearingCoverCache && !cacheUsageRefreshing,
+                onClick = viewModel::requestClearCoverCache,
+            )
+        },
+        SettingsEntry(
+            SettingsSection.STORAGE,
+            "清除播放进度",
+            "清除 删除 重置 播放 进度 记忆 位置 数据",
+        ) { shape ->
+            SettingsItem(
+                icon = Icons.Outlined.RestartAlt,
+                title = if (clearingProgress) "清除中…" else "清除播放进度",
+                titleColor = MaterialTheme.colorScheme.error,
+                subtitle = "删除所有曲目的记忆播放位置（不影响评分与评语）",
+                shape = shape,
+                accent = SettingsAccent.Error,
+                enabled = !clearingProgress,
+                onClick = viewModel::requestClearPlaybackProgress,
+            )
+        },
+
+        // ---- 关于 ----
+        SettingsEntry(
+            SettingsSection.ABOUT,
+            "版本",
+            "版本 版本号 oneasmr version",
+        ) { shape ->
+            SettingsItem(
+                icon = Icons.Outlined.Info,
+                title = "版本",
+                subtitle = "OneAsmr v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+                shape = shape,
+            )
+        },
+        SettingsEntry(
+            SettingsSection.ABOUT,
+            "检查更新",
+            "检查 更新 升级 新版本 下载 安装 github release",
+        ) { shape ->
+            SettingsItem(
+                icon = Icons.Outlined.SystemUpdate,
+                title = "检查更新",
+                subtitle = updateSubtitle(updateState),
+                subtitleColor = if (updateState is UpdateUiState.Failed) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    Color.Unspecified
+                },
+                shape = shape,
+                enabled = !updateBusy,
+                onClick = ::onUpdateClick,
+                trailing = {
+                    if (updateBusy) {
+                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                    } else {
+                        Text(
+                            updateTrailing(updateState),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = when (updateState) {
+                                is UpdateUiState.Available,
+                                is UpdateUiState.Downloading,
+                                is UpdateUiState.Downloaded -> MaterialTheme.colorScheme.primary
+                                is UpdateUiState.Failed -> MaterialTheme.colorScheme.error
+                                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                    }
+                },
+            )
+        },
+        SettingsEntry(
+            SettingsSection.ABOUT,
+            "开源许可",
+            "开源 许可 协议 授权 第三方 license",
+        ) { shape ->
+            SettingsItem(
+                icon = Icons.Outlined.Description,
+                title = "开源许可",
+                shape = shape,
+                onClick = { licensesVisible = true },
+                trailing = { SettingsChevron() },
+            )
+        },
+    )
+
+    val searchTerms = query.trim().lowercase().split(Regex("\\s+")).filter { it.isNotEmpty() }
+    val visibleEntries = if (searchTerms.isEmpty()) entries else entries.filter { it.matches(searchTerms) }
+    val entriesBySection = visibleEntries.groupBy { it.section }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .safeDrawingPadding()
-            .verticalScroll(rememberScrollState())
-            .padding(16.dp)
+            .verticalScroll(scrollState)
+            .padding(horizontal = 16.dp)
+            .padding(bottom = 16.dp)
             // 底部导航为覆盖层不占位，末尾补实测簇高度的留白，避免最后一项被遮住。
             .padding(bottom = LocalBottomClusterHeight.current),
     ) {
-        Text("设置", style = MaterialTheme.typography.displaySmall)
-        Spacer(Modifier.height(16.dp))
-
-        // ---- theme ----
-        SettingsSectionHeader("主题")
-        Spacer(Modifier.height(8.dp))
-        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-            ThemeMode.entries.forEachIndexed { index, mode ->
-                SegmentedButton(
-                    selected = themeMode == mode,
-                    onClick = { viewModel.setThemeMode(mode) },
-                    shape = SegmentedButtonDefaults.itemShape(index = index, count = ThemeMode.entries.size),
-                ) {
-                    Text(mode.displayLabel())
-                }
-            }
-        }
-        Spacer(Modifier.height(8.dp))
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { viewModel.setDynamicColor(!dynamicColor) }
-                .padding(vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text("动态取色", style = MaterialTheme.typography.bodyLarge)
-                Text(
-                    "使用系统壁纸配色（Android 12+）",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Switch(
-                checked = dynamicColor,
-                onCheckedChange = { viewModel.setDynamicColor(it) },
-            )
-        }
-        HorizontalDivider()
-        Spacer(Modifier.height(24.dp))
-
-        // ---- launch ----
-        SettingsSectionHeader("启动")
-        Spacer(Modifier.height(8.dp))
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { viewModel.setLaunchAnimationEnabled(!launchAnimationEnabled) }
-                .padding(vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text("启动动画", style = MaterialTheme.typography.bodyLarge)
-                Text(
-                    "冷启动时播放品牌启动动画；关闭后系统启动窗口结束即直接进入主界面（下次启动生效）",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Switch(
-                checked = launchAnimationEnabled,
-                onCheckedChange = { viewModel.setLaunchAnimationEnabled(it) },
-            )
-        }
-        HorizontalDivider()
-        Spacer(Modifier.height(24.dp))
-
-        // ---- scraping ----
-        SettingsSectionHeader("刮削")
-        Spacer(Modifier.height(8.dp))
-        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-            ScrapingLanguage.entries.forEachIndexed { index, language ->
-                SegmentedButton(
-                    selected = scrapingLanguage == language,
-                    onClick = { viewModel.setScrapingLanguage(language) },
-                    shape = SegmentedButtonDefaults.itemShape(index = index, count = ScrapingLanguage.entries.size),
-                ) {
-                    Text(language.displayLabel())
-                }
-            }
-        }
-        Spacer(Modifier.height(8.dp))
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { viewModel.setAsmrOneFallbackEnabled(!asmrOneFallbackEnabled) }
-                .padding(vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text("asmr.one 备用源", style = MaterialTheme.typography.bodyLarge)
-                Text(
-                    "DLsite 刮削失败时使用 asmr.one 补全（仅 RJ 作品）",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Switch(
-                checked = asmrOneFallbackEnabled,
-                onCheckedChange = { viewModel.setAsmrOneFallbackEnabled(it) },
-            )
-        }
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { viewModel.showAsmrOneMirrorDialog() }
-                .padding(vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("asmr.one 镜像地址", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-            Text(
-                asmrOneBaseUrl.ifBlank { "默认" },
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("批量刮削入口", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-            Text(
-                if (batchPending == 0 && batchFailed == 0) "无待刮削作品" else "未刮削 $batchPending · 失败 $batchFailed",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
         Text(
-            "批量刮削在图书馆页右上角菜单中发起。",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            "设置",
+            style = MaterialTheme.typography.displaySmall,
+            modifier = Modifier.padding(top = 16.dp, start = 4.dp),
         )
         Spacer(Modifier.height(16.dp))
-        HorizontalDivider()
-        Spacer(Modifier.height(24.dp))
+        SettingsSearchField(query = query, onQueryChange = { query = it })
 
-        // ---- root folders ----
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onOpenRootFolders)
-                .padding(vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("根文件夹管理", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-            Text(
-                if (rootEntries.isEmpty()) "未添加" else "${rootEntries.size} 个",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        HorizontalDivider()
-        Spacer(Modifier.height(16.dp))
-
-        SettingsSectionHeader("已授权根文件夹")
-        Spacer(Modifier.height(4.dp))
-        if (rootEntries.isEmpty()) {
-            Text(
-                "无 — 添加根文件夹后，这里会显示系统授权状态。",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        } else {
-            rootEntries.forEach { entry ->
-                AuthorizedRootRow(entry)
-                HorizontalDivider()
-            }
-        }
-        Spacer(Modifier.height(24.dp))
-
-        // ---- cover cache ----
-        SettingsSectionHeader("封面缓存")
-        Spacer(Modifier.height(8.dp))
-        Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("当前占用", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-            Text(
-                if (cacheUsageRefreshing) "计算中…" else formatCacheBytes(cacheUsageBytes),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            TextButton(onClick = { viewModel.refreshCacheUsage() }, enabled = !cacheUsageRefreshing) {
-                Text("刷新")
-            }
-        }
-        Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("缓存上限", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-            OutlinedButton(
-                onClick = { viewModel.stepCacheCap(-STEP_MB) },
-                enabled = cacheCapMb > 1,
-                modifier = Modifier.height(36.dp),
-            ) { Text("−100") }
-            Text(
-                " ${cacheCapMb} MB ",
-                style = MaterialTheme.typography.bodyLarge,
-                modifier = Modifier.padding(horizontal = 8.dp),
-            )
-            OutlinedButton(
-                onClick = { viewModel.stepCacheCap(STEP_MB) },
-                enabled = cacheCapMb < MAX_CAP_MB,
-                modifier = Modifier.height(36.dp),
-            ) { Text("+100") }
-        }
-        Text(
-            "超过上限时按最近使用顺序自动清理最早的文件（始终保留至少一个）。",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.height(8.dp))
-        OutlinedButton(
-            onClick = { viewModel.requestClearCoverCache() },
-            enabled = !clearingCoverCache && !cacheUsageRefreshing,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text(if (clearingCoverCache) "清除中…" else "清除封面缓存")
-        }
-        Spacer(Modifier.height(16.dp))
-        HorizontalDivider()
-        Spacer(Modifier.height(24.dp))
-
-        // ---- resume policy ----
-        SettingsSectionHeader("续播策略")
-        Spacer(Modifier.height(8.dp))
-        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-            ResumeMode.entries.forEachIndexed { index, mode ->
-                SegmentedButton(
-                    selected = resumeMode == mode,
-                    onClick = { viewModel.setResumeMode(mode) },
-                    shape = SegmentedButtonDefaults.itemShape(index = index, count = ResumeMode.entries.size),
-                ) {
-                    Text(mode.displayLabel())
-                }
-            }
-        }
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "已听超过 95% 或不足 3% 的曲目将从头播放，其余从记忆位置续播。",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.height(8.dp))
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { viewModel.setVideoBackgroundPlayback(!videoBackgroundPlayback) }
-                .padding(vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text("视频后台续播", style = MaterialTheme.typography.bodyLarge)
-                Text(
-                    "关屏、切后台或退出视频页后继续播放（仅解码音频以省电，回到前台/重进页面恢复画面）；关闭则离开页面或后台时暂停",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Switch(
-                checked = videoBackgroundPlayback,
-                onCheckedChange = { viewModel.setVideoBackgroundPlayback(it) },
-            )
-        }
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { viewModel.setNsfwEnabled(!nsfwEnabled) }
-                .padding(vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text("NSFW 模式", style = MaterialTheme.typography.bodyLarge)
-                Text(
-                    "关闭后进入安全模式：未分级/R15/R18 作品的封面与曲名将被隐藏",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Switch(
-                checked = nsfwEnabled,
-                onCheckedChange = { viewModel.setNsfwEnabled(it) },
-            )
-        }
-        Spacer(Modifier.height(16.dp))
-        HorizontalDivider()
-        Spacer(Modifier.height(24.dp))
-
-        // ---- data management ----
-        SettingsSectionHeader("数据管理")
-        Spacer(Modifier.height(4.dp))
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { viewModel.requestClearPlaybackProgress() }
-                .padding(vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text("清除播放进度", style = MaterialTheme.typography.bodyLarge)
-                Text(
-                    "删除所有曲目的记忆播放位置（不影响评分与评语）",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Text(
-                if (clearingProgress) "清除中…" else "清除",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.error,
-            )
-        }
-        Spacer(Modifier.height(16.dp))
-        HorizontalDivider()
-        Spacer(Modifier.height(24.dp))
-
-        // ---- about ----
-        SettingsSectionHeader("关于")
-        Spacer(Modifier.height(4.dp))
-        Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("版本", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-            Text(
-                "OneAsmr v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        HorizontalDivider()
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(enabled = updateState !is UpdateUiState.Checking && updateState !is UpdateUiState.Restoring) {
-                    when (updateState) {
-                        UpdateUiState.Idle, UpdateUiState.UpToDate -> {
-                            updateDialogVisible = true
-                            updateViewModel.checkForUpdate()
-                        }
-                        is UpdateUiState.Failed -> {
-                            updateDialogVisible = true
-                            updateViewModel.retryAfterError()
-                        }
-                        is UpdateUiState.Available,
-                        is UpdateUiState.Downloading,
-                        is UpdateUiState.Downloaded -> updateDialogVisible = true
-                        UpdateUiState.Restoring,
-                        UpdateUiState.Checking -> Unit
+        if (searchTerms.isEmpty()) {
+            Spacer(Modifier.height(12.dp))
+            SettingsCategoryChips(
+                categories = SettingsSection.entries.map { it.chipLabel to it.icon },
+                onSelect = { index ->
+                    sectionOffsets[SettingsSection.entries[index]]?.let { y ->
+                        scope.launch { scrollState.animateScrollTo(y) }
                     }
-                }
-                .padding(vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text("检查更新", style = MaterialTheme.typography.bodyLarge)
-                Text(
-                    updateSubtitle(updateState),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Text(
-                updateTrailing(updateState),
-                style = MaterialTheme.typography.bodyMedium,
-                color = when (updateState) {
-                    is UpdateUiState.Available -> MaterialTheme.colorScheme.primary
-                    is UpdateUiState.Downloading -> MaterialTheme.colorScheme.primary
-                    is UpdateUiState.Failed -> MaterialTheme.colorScheme.error
-                    else -> MaterialTheme.colorScheme.onSurfaceVariant
                 },
             )
+
+            // 有新版本/安装包就绪时在顶部给一个醒目入口，不必翻到「关于」。
+            when (val update = updateState) {
+                is UpdateUiState.Available -> {
+                    Spacer(Modifier.height(16.dp))
+                    SettingsBanner(
+                        icon = Icons.Outlined.NewReleases,
+                        title = "发现新版本 v${update.info.versionName}",
+                        subtitle = "当前 v${BuildConfig.VERSION_NAME}，点击查看更新日志",
+                        action = "更新",
+                        onClick = ::onUpdateClick,
+                    )
+                }
+                is UpdateUiState.Downloaded -> {
+                    Spacer(Modifier.height(16.dp))
+                    SettingsBanner(
+                        icon = Icons.Outlined.NewReleases,
+                        title = "新版本已就绪",
+                        subtitle = "v${update.info.versionName} 安装包已下载完成",
+                        action = "安装",
+                        onClick = ::onUpdateClick,
+                    )
+                }
+                else -> Unit
+            }
         }
-        HorizontalDivider()
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { licensesVisible = true }
-                .padding(vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("开源许可", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-            Text("查看", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+        if (visibleEntries.isEmpty()) {
+            SettingsEmptySearch(query = query.trim())
+        } else {
+            SettingsSection.entries.forEach { section ->
+                val sectionEntries = entriesBySection[section]
+                if (sectionEntries != null) {
+                    SettingsSectionHeader(
+                        title = section.title,
+                        modifier = Modifier.onGloballyPositioned {
+                            sectionOffsets[section] = it.positionInParent().y.roundToInt()
+                        },
+                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        sectionEntries.forEachIndexed { index, entry ->
+                            key(entry.title) {
+                                entry.content(settingsSegmentShape(index, sectionEntries.size))
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -739,42 +870,88 @@ fun SettingsScreen(
     }
 }
 
-@Composable
-private fun SettingsSectionHeader(label: String) {
-    Text(
-        label,
-        style = MaterialTheme.typography.labelSmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        letterSpacing = 0.5.sp,
-    )
+/** Settings categories, in display order (also the quick-jump chips). */
+private enum class SettingsSection(val title: String, val chipLabel: String, val icon: ImageVector) {
+    APPEARANCE("外观", "外观", Icons.Outlined.Palette),
+    PLAYBACK("播放", "播放", Icons.Outlined.PlayCircle),
+    LIBRARY("媒体库", "媒体库", Icons.Outlined.LibraryMusic),
+    SCRAPING("刮削", "刮削", Icons.Outlined.TravelExplore),
+    STORAGE("存储与数据", "存储", Icons.Outlined.Storage),
+    ABOUT("关于", "关于", Icons.Outlined.Info),
 }
 
+/**
+ * One searchable settings row. [content] receives the segment shape, which
+ * depends on the row's position among the currently *visible* rows of its
+ * section (so filtered groups still get proper rounded ends).
+ */
+private class SettingsEntry(
+    val section: SettingsSection,
+    val title: String,
+    keywords: String,
+    val content: @Composable (Shape) -> Unit,
+) {
+    private val haystack = "$title $keywords ${section.title}".lowercase()
+
+    /** True when every whitespace-separated search term occurs in title/keywords/section. */
+    fun matches(terms: List<String>): Boolean = terms.all { haystack.contains(it) }
+}
+
+/** Compact per-root status line under 根文件夹管理 (full details live in ScanRootsScreen). */
 @Composable
-private fun AuthorizedRootRow(entry: ScanRootEntry) {
+private fun RootStatusLine(entry: ScanRootEntry) {
     val revoked = entry.status == RootGrantStatus.REVOKED
-    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = entry.root.displayName,
-                style = MaterialTheme.typography.bodyLarge,
-                modifier = Modifier.weight(1f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = if (revoked) "已失效" else "已授权",
-                style = MaterialTheme.typography.labelMedium,
-                color = if (revoked) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-            )
-        }
+    val statusColor = if (revoked) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            Modifier
+                .size(8.dp)
+                .background(statusColor, CircleShape),
+        )
+        Spacer(Modifier.width(8.dp))
         Text(
-            text = entry.root.treeUri,
-            style = MaterialTheme.typography.bodySmall,
-            fontFamily = FontFamily.Monospace,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            text = entry.root.displayName,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = if (revoked) "已失效" else "已授权",
+            style = MaterialTheme.typography.labelMedium,
+            color = statusColor,
+        )
+    }
+}
+
+/** −/+ stepper for the cover-cache cap, [STEP_MB] per tap. */
+@Composable
+private fun CacheCapStepper(capMb: Int, onStep: (Int) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        FilledTonalIconButton(
+            onClick = { onStep(-STEP_MB) },
+            enabled = capMb > 1,
+            modifier = Modifier.size(36.dp),
+        ) {
+            Icon(Icons.Outlined.Remove, contentDescription = "减少 $STEP_MB MB")
+        }
+        Text(
+            text = "$capMb MB",
+            style = MaterialTheme.typography.labelLarge,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            modifier = Modifier
+                .widthIn(min = 72.dp)
+                .padding(horizontal = 4.dp),
+        )
+        FilledTonalIconButton(
+            onClick = { onStep(STEP_MB) },
+            enabled = capMb < MAX_CAP_MB,
+            modifier = Modifier.size(36.dp),
+        ) {
+            Icon(Icons.Filled.Add, contentDescription = "增加 $STEP_MB MB")
+        }
     }
 }
 
