@@ -14,6 +14,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
@@ -23,11 +24,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -88,12 +89,15 @@ import androidx.compose.ui.graphics.painter.ColorPainter
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import coil3.compose.AsyncImage
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -958,10 +962,9 @@ private fun rememberPlayerCoverStore(): CoverStore {
  * secondary actions (speed, sleep, lyrics, queue) are tonal pills. All
  * playback behavior, session flows and semantics strings are unchanged.
  *
- * 布局为上下两段式：中区 weight(1f) 承载封面/标题（可滚动）或全屏歌词
- * （卡拉OK模式，封面/标题隐藏），未展开歌词时以三行实时歌词条作为入口，
- * 并停靠在中区底部；缓冲条/滑杆/时间/传输键/功能丸组成底部控制簇固定
- * 停靠屏幕底部——标准音乐播放器布局，消除了高屏下功能丸下方的大片空白。
+ * 布局为上下两段式：中区 weight(1f) 承载全屏歌词（卡拉OK模式）或自适应英雄区
+ * （按有无字幕自动调节封面比例与弹性间距，使封面、曲名/作品信息、三行字幕与
+ * 进度条在视觉上均匀分布）；滑杆/时间/传输键/功能丸组成底部控制簇固定停靠屏幕底部。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -1044,8 +1047,7 @@ fun PlayerScreen(
                         Modifier
                     },
                 )
-                .padding(horizontal = 8.dp, vertical = 4.dp)
-                .padding(bottom = 12.dp),
+                .padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onBack) {
@@ -1269,14 +1271,16 @@ private fun PlayerContent(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         // 中区：歌词模式整体换成 LyricsPanel（卡拉OK视图，封面/标题隐藏，
-        // Apple Music 式全屏歌词）；否则保留可滚动的封面+标题区（小屏仍可滚）。
+        // Apple Music 式全屏歌词）；否则使用自适应英雄区，按有无字幕自动
+        // 分配封面尺寸与各层级间距。
+        val hasLyrics = lyricsState.lyrics?.lines?.isNotEmpty() == true
         Box(
             Modifier
                 .weight(1f)
                 .fillMaxWidth(),
         ) {
             Crossfade(
-                targetState = showLyrics && lyricsState.lyrics != null,
+                targetState = showLyrics && hasLyrics,
                 label = "lyricsMode",
             ) { lyricsMode ->
                 if (lyricsMode) {
@@ -1289,81 +1293,16 @@ private fun PlayerContent(
                         modifier = Modifier.fillMaxSize(),
                     )
                 } else {
-                    Column(
-                        Modifier.fillMaxSize(),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        // 封面与标题保留独立滚动区域；三行字幕固定在下方，
-                        // 高屏时不会再把大片空白留在字幕与进度条之间。
-                        Column(
-                            Modifier
-                                .weight(1f)
-                                .fillMaxWidth()
-                                .verticalScroll(rememberScrollState()),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                        ) {
-                            PlayerCover(
-                                coverModel = coverModel,
-                                hasCover = !state.currentRjCode.isNullOrBlank(),
-                                rotate = rotateCover,
-                                censored = censored,
-                                onToggleRotate = onToggleRotate,
-                            )
-
-                            // 封面下的标题与作品信息整体稍向下移，留出更舒展的层级间距。
-                            Spacer(Modifier.height(28.dp))
-                            Text(
-                                state.trackTitle,
-                                style = MaterialTheme.typography.headlineSmall,
-                                textAlign = TextAlign.Center,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Spacer(Modifier.height(6.dp))
-                            // Mono work code + circle (Wave B/C card language) in one muted line.
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                if (!state.currentRjCode.isNullOrBlank()) {
-                                    Text(
-                                        state.currentRjCode,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontFamily = FontFamily.Monospace,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                    if (state.workTitle.isNotEmpty()) {
-                                        Text(
-                                            "  ·  ",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                    }
-                                }
-                                if (state.workTitle.isNotEmpty()) {
-                                    Text(
-                                        state.workTitle,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                }
-                            }
-                        }
-
-                        // 三行实时歌词条：上一句 / 当前句 / 下一句，点击进入全屏歌词。
-                        if (lyricsState.lyrics != null && !showLyrics) {
-                            Spacer(Modifier.height(8.dp))
-                            LyricsStrip(lyricsState = lyricsState, onClick = onToggleLyrics)
-                        }
-                        // 面板已展开但歌词仍在加载（如 rememberSaveable 恢复后重载）的占位文案。
-                        if (showLyrics && lyricsState.lyrics == null && lyricsState.loading) {
-                            Spacer(Modifier.height(8.dp))
-                            Text(
-                                "正在加载歌词…",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
+                    PlayerHeroSection(
+                        state = state,
+                        lyricsState = lyricsState,
+                        showLyrics = showLyrics,
+                        onToggleLyrics = onToggleLyrics,
+                        rotateCover = rotateCover,
+                        onToggleRotate = onToggleRotate,
+                        coverModel = coverModel,
+                        censored = censored,
+                    )
                 }
             }
 
@@ -1375,7 +1314,7 @@ private fun PlayerContent(
                     shape = RoundedCornerShape(8.dp),
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
-                        .padding(bottom = 8.dp),
+                        .padding(bottom = 4.dp),
                 ) {
                     Text(
                         hint,
@@ -1387,8 +1326,8 @@ private fun PlayerContent(
         }
 
         // ---- 底部控制簇（不参与中区滚动，始终钉在屏幕底部）----
-        Spacer(Modifier.height(16.dp))
-
+        // OneAsmrSeekBar 的 48dp 触控区已在 3dp 轨道上方自带约 22.5dp 视觉留白，
+        // 中区底部弹性留白与之衔接，此处不再重复叠加固定大间距。
         SeekRow(
             positionMs = positionMs,
             bufferedPositionMs = bufferedPositionMs,
@@ -1397,7 +1336,7 @@ private fun PlayerContent(
             onSeek = onSeek,
         )
 
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(14.dp))
         // Transport row: shuffle/repeat flank prev/play/next; play-pause is
         // the 64dp primary FAB-style circle.
         val (playPauseInteractionSource, playPauseScale) = rememberPressScale(0.92f)
@@ -1507,7 +1446,7 @@ private fun PlayerContent(
             }
         }
 
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(16.dp))
         // Secondary actions as tonal pills (secondaryContainer, shapes.small).
         Row(
             Modifier.fillMaxWidth(),
@@ -1533,7 +1472,7 @@ private fun PlayerContent(
                     Text(sleepTimer.display, style = MaterialTheme.typography.labelLarge)
                 }
             }
-            if (lyricsState.lyrics != null) {
+            if (hasLyrics) {
                 TonalPill(
                     onClick = onToggleLyrics,
                     active = showLyrics,
@@ -1610,45 +1549,279 @@ private fun SeekRow(
     // track (see OneAsmrSeekBar), so the separate 2dp buffered bar above the
     // slider is gone — one crisp line instead of two stacked bars.
     var dragPosition by remember { mutableFloatStateOf(-1f) }
-    OneAsmrSeekBar(
-        value = if (dragPosition >= 0f) dragPosition else positionMs.toFloat(),
-        onValueChange = { dragPosition = it },
-        onValueChangeFinished = {
-            if (dragPosition >= 0f) {
-                onSeek(dragPosition.toLong())
-                dragPosition = -1f
-            }
-        },
-        valueRange = 0f..(durationMs.coerceAtLeast(1L).toFloat()),
-        bufferedFraction = bufferedFraction,
-        modifier = Modifier
-            .fillMaxWidth()
-            .semantics {
-                contentDescription =
-                    "player position=$positionMs duration=$durationMs " +
-                        "buffered=${(bufferedFraction * 100).toInt()}%"
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        // Slider 保持 48dp 标准无障碍触控高度，轨道居中后下方留有约 22dp 空白；
+        // 轻微收拢时间行，使其在视觉上紧贴进度轨道而非偏向下方播放键。
+        verticalArrangement = Arrangement.spacedBy((-8).dp),
+    ) {
+        OneAsmrSeekBar(
+            value = if (dragPosition >= 0f) dragPosition else positionMs.toFloat(),
+            onValueChange = { dragPosition = it },
+            onValueChangeFinished = {
+                if (dragPosition >= 0f) {
+                    onSeek(dragPosition.toLong())
+                    dragPosition = -1f
+                }
             },
-    )
-    Row(Modifier.fillMaxWidth()) {
-        Text(
-            formatTime(positionMs),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            valueRange = 0f..(durationMs.coerceAtLeast(1L).toFloat()),
+            bufferedFraction = bufferedFraction,
+            modifier = Modifier
+                .fillMaxWidth()
+                .semantics {
+                    contentDescription =
+                        "player position=$positionMs duration=$durationMs " +
+                            "buffered=${(bufferedFraction * 100).toInt()}%"
+                },
         )
-        Spacer(Modifier.weight(1f))
-        Text(
-            if (isBuffering) "缓冲中…" else formatTime(durationMs),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        Row(Modifier.fillMaxWidth()) {
+            Text(
+                formatTime(positionMs),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.weight(1f))
+            Text(
+                if (isBuffering) "缓冲中…" else formatTime(durationMs),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
 /**
- * 三行实时歌词：上一句 / 当前句 / 下一句。当前播放行越界或为负时回落到
- * 第一行；首尾缺少的句子以空行占位，确保当前句始终位于中间。行切换用
- * Crossfade 淡入淡出。整条可点击进入全屏歌词模式；clickable 会合并子节点
- * 语义，因此 "lyrics strip" 节点上同时带三行文本。
+ * 播放页中区自适应英雄区：根据当前曲目是否展示字幕槽位，协同调整封面边长与
+ * 纵向弹性留白，避免原来顶对齐导致的「上方局部拥挤、下方大片空洞」或小屏下
+ * 标题与字幕互相挤压的问题：
+ * - 无字幕时：封面放大至内容区宽度 88%（受可用高度钳制），「曲名 + 作品信息」
+ *   作为一个紧凑整体居中坐落在封面下沿与进度条轨道的视觉正中间；
+ * - 有字幕（或正在加载匹配到的字幕文件）时：封面温和收拢至 75%（随屏高自适应），
+ *   使「封面 → 曲名/作品信息 → 三行字幕卡片 → 进度条轨道」三段视觉间距近似等分。
+ */
+@Composable
+private fun PlayerHeroSection(
+    state: PlayerUiState,
+    lyricsState: LyricsUiState,
+    showLyrics: Boolean,
+    onToggleLyrics: () -> Unit,
+    rotateCover: Boolean,
+    onToggleRotate: () -> Unit,
+    coverModel: Any?,
+    censored: Boolean,
+) {
+    val hasLyrics = lyricsState.lyrics?.lines?.isNotEmpty() == true
+    val showLyricsStrip = !showLyrics && hasLyrics
+    val showLyricsLoading = lyricsState.loading && !hasLyrics
+    val hasSubtitleSlot = showLyricsStrip || showLyricsLoading
+
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val fontScale = LocalDensity.current.fontScale.coerceAtLeast(1f)
+        val minCoverSize = 136.dp
+        val nonCoverBudget = (if (hasSubtitleSlot) 224.dp else 132.dp) * fontScale
+        val maxCoverWidthFraction = if (hasSubtitleSlot) 0.75f else 0.88f
+        val targetCoverSize = minOf(
+            maxWidth * maxCoverWidthFraction,
+            (maxHeight - nonCoverBudget).coerceAtLeast(minCoverSize),
+        )
+        val coverSize by animateDpAsState(
+            targetValue = targetCoverSize,
+            animationSpec = tween(durationMillis = 240),
+            label = "playerCoverSize",
+        )
+        val compactScroll = maxHeight < minCoverSize + nonCoverBudget
+
+        if (compactScroll) {
+            // 分屏/极矮窗口兜底：切换为滚动布局，确保封面、曲名与字幕全部可达。
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Spacer(Modifier.height(8.dp))
+                PlayerCover(
+                    size = coverSize,
+                    coverModel = coverModel,
+                    hasCover = !state.currentRjCode.isNullOrBlank(),
+                    rotate = rotateCover,
+                    censored = censored,
+                    onToggleRotate = onToggleRotate,
+                )
+                Spacer(Modifier.height(16.dp))
+                TrackInfoBlock(
+                    trackTitle = state.trackTitle,
+                    rjCode = state.currentRjCode,
+                    workTitle = state.workTitle,
+                )
+                if (hasSubtitleSlot) {
+                    Spacer(Modifier.height(14.dp))
+                    SubtitleSlot(
+                        lyricsState = lyricsState,
+                        showLoading = showLyricsLoading,
+                        onClick = onToggleLyrics,
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+            }
+        } else if (hasSubtitleSlot) {
+            Column(
+                modifier = Modifier.fillMaxSize(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.weight(0.5f))
+                PlayerCover(
+                    size = coverSize,
+                    coverModel = coverModel,
+                    hasCover = !state.currentRjCode.isNullOrBlank(),
+                    rotate = rotateCover,
+                    censored = censored,
+                    onToggleRotate = onToggleRotate,
+                )
+                Spacer(Modifier.height(18.dp))
+                Spacer(Modifier.weight(1f))
+                TrackInfoBlock(
+                    trackTitle = state.trackTitle,
+                    rjCode = state.currentRjCode,
+                    workTitle = state.workTitle,
+                )
+                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.weight(1f))
+                SubtitleSlot(
+                    lyricsState = lyricsState,
+                    showLoading = showLyricsLoading,
+                    onClick = onToggleLyrics,
+                )
+                // 下方 SeekBar 触控盒在轨道上方自带约 22.5dp 留白，0.85 权重对齐三段视觉间距。
+                Spacer(Modifier.weight(0.85f))
+            }
+        } else {
+            Column(
+                modifier = Modifier.fillMaxSize(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.weight(0.65f))
+                PlayerCover(
+                    size = coverSize,
+                    coverModel = coverModel,
+                    hasCover = !state.currentRjCode.isNullOrBlank(),
+                    rotate = rotateCover,
+                    censored = censored,
+                    onToggleRotate = onToggleRotate,
+                )
+                Spacer(Modifier.height(22.dp))
+                Spacer(Modifier.weight(1f))
+                TrackInfoBlock(
+                    trackTitle = state.trackTitle,
+                    rjCode = state.currentRjCode,
+                    workTitle = state.workTitle,
+                )
+                // 与封面→标题的 22dp 基准对称，叠加 SeekBar 轨道上方约 22.5dp 留白。
+                Spacer(Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+/** 当前播放曲目名 + 作品编号徽章与作品名，内部保持紧凑归组、字号层级平滑过渡。 */
+@Composable
+private fun TrackInfoBlock(
+    trackTitle: String,
+    rjCode: String?,
+    workTitle: String,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            text = trackTitle,
+            style = MaterialTheme.typography.headlineSmall.copy(
+                fontSize = 20.sp,
+                lineHeight = 26.sp,
+            ),
+            textAlign = TextAlign.Center,
+            minLines = 1,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+        val hasRj = !rjCode.isNullOrBlank()
+        // 未刮削作品的标题常直接等于 RJ 号，避免重复渲染「RJxxxxxx · RJxxxxxx」。
+        val distinctWorkTitle = workTitle.takeIf {
+            it.isNotBlank() && !it.equals(rjCode, ignoreCase = true)
+        }
+        if (hasRj || distinctWorkTitle != null) {
+            Spacer(Modifier.height(10.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center,
+            ) {
+                if (hasRj) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
+                        shape = RoundedCornerShape(6.dp),
+                    ) {
+                        Text(
+                            text = rjCode!!,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                        )
+                    }
+                    if (distinctWorkTitle != null) {
+                        Spacer(Modifier.width(8.dp))
+                    }
+                }
+                if (distinctWorkTitle != null) {
+                    Text(
+                        text = distinctWorkTitle,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SubtitleSlot(
+    lyricsState: LyricsUiState,
+    showLoading: Boolean,
+    onClick: () -> Unit,
+) {
+    if (showLoading) {
+        // 与三行字幕卡片等高占位，避免异步读取字幕完成瞬间中区元素跳动。
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(MaterialTheme.shapes.medium)
+                .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            LyricsStripLine(text = null, active = false)
+            LyricsStripLine(text = "正在加载歌词…", active = false, placeholder = true)
+            LyricsStripLine(text = null, active = false)
+        }
+    } else {
+        LyricsStrip(lyricsState = lyricsState, onClick = onClick)
+    }
+}
+
+/**
+ * 三行实时歌词卡片：上一句 / 当前句 / 下一句。当前播放行越界或为负时回落到
+ * 第一行；首尾缺少的句子以空行占位，确保当前句始终位于中间，且半透明圆角卡片
+ * 外框恒定锚定上下视觉边界（首尾空行不会再造成间距忽大忽小）。行切换仅在卡片
+ * 内部做 Crossfade，整卡可点击进入全屏歌词模式；clickable 合并子节点语义，
+ * 因此 "lyrics strip" 节点上同时带三行文本。
  */
 @Composable
 private fun LyricsStrip(
@@ -1662,59 +1835,70 @@ private fun LyricsStrip(
     } else {
         0
     }
-    Crossfade(
-        targetState = lineIndex,
-        label = "lyricsStripLine",
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(MaterialTheme.shapes.small)
+            .clip(MaterialTheme.shapes.medium)
+            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))
             .clickable(onClick = onClick)
-            .semantics { contentDescription = "lyrics strip" },
-    ) { index ->
-        Column(Modifier.fillMaxWidth()) {
-            LyricsStripLine(
-                text = lyrics.lines.getOrNull(index - 1)?.text,
-                active = false,
-            )
-            LyricsStripLine(
-                text = lyrics.lines.getOrNull(index)?.text,
-                active = true,
-            )
-            LyricsStripLine(
-                text = lyrics.lines.getOrNull(index + 1)?.text,
-                active = false,
-            )
+            .semantics { contentDescription = "lyrics strip" }
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+    ) {
+        Crossfade(
+            targetState = lineIndex,
+            label = "lyricsStripLine",
+            modifier = Modifier.fillMaxWidth(),
+        ) { index ->
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                LyricsStripLine(
+                    text = lyrics.lines.getOrNull(index - 1)?.text,
+                    active = false,
+                )
+                LyricsStripLine(
+                    text = lyrics.lines.getOrNull(index)?.text,
+                    active = true,
+                )
+                LyricsStripLine(
+                    text = lyrics.lines.getOrNull(index + 1)?.text,
+                    active = false,
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun LyricsStripLine(text: String?, active: Boolean) {
+private fun LyricsStripLine(
+    text: String?,
+    active: Boolean,
+    placeholder: Boolean = false,
+) {
     Text(
         text = text?.ifEmpty { "♪" } ?: "",
-        style = if (active) {
+        style = if (active || placeholder) {
             MaterialTheme.typography.titleMedium
         } else {
             MaterialTheme.typography.bodyMedium
         },
-        color = if (active) {
-            MaterialTheme.colorScheme.primary
-        } else {
-            MaterialTheme.colorScheme.onSurfaceVariant
+        color = when {
+            active -> MaterialTheme.colorScheme.primary
+            placeholder -> MaterialTheme.colorScheme.onSurfaceVariant
+            else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.68f)
         },
         textAlign = TextAlign.Center,
         minLines = 1,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 2.dp),
+        modifier = Modifier.fillMaxWidth(),
     )
 }
 
 /**
- * Wave D hero cover: centered, 78% of the width, 1:1, [MaterialTheme.shapes.large]
- * on a 32dp elevation shadow — it shares the backdrop's resolved model (Coil
+ * Wave D hero cover: centered 1:1 square of adaptive [size], [MaterialTheme.shapes.large]
+ * on a 28dp elevation shadow — it shares the backdrop's resolved model (Coil
  * caches the second decode), so no second CoverStore query runs here. The
  * rotate affordance is preserved; it floats over the cover on a translucent
  * dark circle (Wave C top-bar language) since onSurfaceVariant is illegible
@@ -1722,6 +1906,7 @@ private fun LyricsStripLine(text: String?, active: Boolean) {
  */
 @Composable
 private fun PlayerCover(
+    size: Dp,
     coverModel: Any?,
     hasCover: Boolean,
     rotate: Boolean,
@@ -1735,16 +1920,17 @@ private fun PlayerCover(
         animationSpec = infiniteRepeatable(tween(16_000, easing = LinearEasing)),
         label = "coverSpinAngle",
     )
-    Box(contentAlignment = Alignment.Center) {
+    Box(
+        modifier = Modifier.size(size),
+        contentAlignment = Alignment.Center,
+    ) {
         if (!hasCover) {
             // No current item (e.g. the session was cleared after a playback
             // error) — render the placeholder surface, never a blank-rjCode
             // CoverStore call (it requires a non-blank code).
             Box(
                 Modifier
-                    .padding(top = 16.dp)
-                    .fillMaxWidth(0.78f)
-                    .aspectRatio(1f)
+                    .fillMaxSize()
                     .clip(MaterialTheme.shapes.large)
                     .background(MaterialTheme.colorScheme.surfaceVariant),
             )
@@ -1753,10 +1939,8 @@ private fun PlayerCover(
             FrostedCensoredCover(
                 model = coverModel,
                 modifier = Modifier
-                    .padding(top = 16.dp)
-                    .fillMaxWidth(0.78f)
-                    .aspectRatio(1f)
-                    .shadow(32.dp, MaterialTheme.shapes.large)
+                    .fillMaxSize()
+                    .shadow(28.dp, MaterialTheme.shapes.large)
                     .clip(MaterialTheme.shapes.large)
                     .graphicsLayer { rotationZ = if (rotate) rotation else 0f },
             )
@@ -1765,10 +1949,8 @@ private fun PlayerCover(
                 model = coverModel,
                 contentDescription = null,
                 modifier = Modifier
-                    .padding(top = 16.dp)
-                    .fillMaxWidth(0.78f)
-                    .aspectRatio(1f)
-                    .shadow(32.dp, MaterialTheme.shapes.large)
+                    .fillMaxSize()
+                    .shadow(28.dp, MaterialTheme.shapes.large)
                     .clip(MaterialTheme.shapes.large)
                     .graphicsLayer { rotationZ = if (rotate) rotation else 0f },
                 contentScale = ContentScale.Crop,
@@ -1780,7 +1962,7 @@ private fun PlayerCover(
             onClick = onToggleRotate,
             modifier = Modifier
                 .align(Alignment.BottomEnd)
-                .padding(20.dp)
+                .padding(12.dp)
                 .background(Color.Black.copy(alpha = 0.3f), CircleShape)
                 .semantics { contentDescription = "cover rotation=${if (rotate) "on" else "off"}" },
         ) {
