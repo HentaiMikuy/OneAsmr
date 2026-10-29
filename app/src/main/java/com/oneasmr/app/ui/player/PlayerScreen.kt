@@ -13,11 +13,7 @@ import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
-import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
@@ -50,7 +46,6 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.RepeatOne
-import androidx.compose.material.icons.filled.RotateRight
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
@@ -948,7 +943,7 @@ private fun rememberPlayerCoverStore(): CoverStore {
 }
 
 /**
- * Full player screen (plan Task 21): cover (rotating optional), track/work
+ * Full player screen (plan Task 21): cover, track/work
  * titles, buffered progress bar + seek slider, prev/play/next, repeat /
  * shuffle / speed, sleep-timer picker (Task 19 presets), lyrics panel toggle
  * (Task 20 — entry hidden when the track has no .lrc) and the queue bottom
@@ -985,7 +980,6 @@ fun PlayerScreen(
     var showSpeedDialog by rememberSaveable { mutableStateOf(false) }
     var showSleepDialog by rememberSaveable { mutableStateOf(false) }
     var showLyrics by rememberSaveable { mutableStateOf(false) }
-    var rotateCover by rememberSaveable { mutableStateOf(false) }
     var failureDismissed by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
@@ -1121,8 +1115,6 @@ fun PlayerScreen(
                     lyricsState = lyricsState,
                     showLyrics = showLyrics,
                     onToggleLyrics = { showLyrics = !showLyrics },
-                    rotateCover = rotateCover,
-                    onToggleRotate = { rotateCover = !rotateCover },
                     coverModel = coverModel,
                     censored = state.censored,
                     positionMs = viewModel.positionMs,
@@ -1232,8 +1224,6 @@ private fun PlayerContent(
     lyricsState: LyricsUiState,
     showLyrics: Boolean,
     onToggleLyrics: () -> Unit,
-    rotateCover: Boolean,
-    onToggleRotate: () -> Unit,
     coverModel: Any?,
     censored: Boolean,
     positionMs: StateFlow<Long>,
@@ -1298,8 +1288,6 @@ private fun PlayerContent(
                         lyricsState = lyricsState,
                         showLyrics = showLyrics,
                         onToggleLyrics = onToggleLyrics,
-                        rotateCover = rotateCover,
-                        onToggleRotate = onToggleRotate,
                         coverModel = coverModel,
                         censored = censored,
                     )
@@ -1605,8 +1593,6 @@ private fun PlayerHeroSection(
     lyricsState: LyricsUiState,
     showLyrics: Boolean,
     onToggleLyrics: () -> Unit,
-    rotateCover: Boolean,
-    onToggleRotate: () -> Unit,
     coverModel: Any?,
     censored: Boolean,
 ) {
@@ -1644,9 +1630,7 @@ private fun PlayerHeroSection(
                     size = coverSize,
                     coverModel = coverModel,
                     hasCover = !state.currentRjCode.isNullOrBlank(),
-                    rotate = rotateCover,
                     censored = censored,
-                    onToggleRotate = onToggleRotate,
                 )
                 Spacer(Modifier.height(16.dp))
                 TrackInfoBlock(
@@ -1675,9 +1659,7 @@ private fun PlayerHeroSection(
                     size = coverSize,
                     coverModel = coverModel,
                     hasCover = !state.currentRjCode.isNullOrBlank(),
-                    rotate = rotateCover,
                     censored = censored,
-                    onToggleRotate = onToggleRotate,
                 )
                 Spacer(Modifier.height(18.dp))
                 Spacer(Modifier.weight(1f))
@@ -1707,9 +1689,7 @@ private fun PlayerHeroSection(
                     size = coverSize,
                     coverModel = coverModel,
                     hasCover = !state.currentRjCode.isNullOrBlank(),
-                    rotate = rotateCover,
                     censored = censored,
-                    onToggleRotate = onToggleRotate,
                 )
                 Spacer(Modifier.height(22.dp))
                 Spacer(Modifier.weight(1f))
@@ -1899,27 +1879,19 @@ private fun LyricsStripLine(
 /**
  * Wave D hero cover: centered 1:1 square of adaptive [size], [MaterialTheme.shapes.large]
  * on a 28dp elevation shadow — it shares the backdrop's resolved model (Coil
- * caches the second decode), so no second CoverStore query runs here. The
- * rotate affordance is preserved; it floats over the cover on a translucent
- * dark circle (Wave C top-bar language) since onSurfaceVariant is illegible
- * over arbitrary cover art.
+ * caches the second decode), so no second CoverStore query runs here.
+ *
+ * 封面是纯展示元素：早前那颗「旋转封面」角标按钮已随功能一并删除，现在封面
+ * 不接受点击，也不做任何动画（旋转会让封面刮削后重新解码时的取景变得难以预期）。
  */
 @Composable
 private fun PlayerCover(
     size: Dp,
     coverModel: Any?,
     hasCover: Boolean,
-    rotate: Boolean,
     censored: Boolean,
-    onToggleRotate: () -> Unit,
 ) {
-    val infiniteTransition = rememberInfiniteTransition(label = "coverSpin")
-    val rotation by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(tween(16_000, easing = LinearEasing)),
-        label = "coverSpinAngle",
-    )
+    val shape = MaterialTheme.shapes.large
     Box(
         modifier = Modifier.size(size),
         contentAlignment = Alignment.Center,
@@ -1931,18 +1903,17 @@ private fun PlayerCover(
             Box(
                 Modifier
                     .fillMaxSize()
-                    .clip(MaterialTheme.shapes.large)
+                    .clip(shape)
                     .background(MaterialTheme.colorScheme.surfaceVariant),
             )
         } else if (censored) {
-            // 安全模式:敏感作品的 hero 封面换毛玻璃(布局/尺寸/旋转与真封面一致)。
+            // 安全模式:敏感作品的 hero 封面换毛玻璃(布局/尺寸与真封面一致)。
             FrostedCensoredCover(
                 model = coverModel,
                 modifier = Modifier
                     .fillMaxSize()
-                    .shadow(28.dp, MaterialTheme.shapes.large)
-                    .clip(MaterialTheme.shapes.large)
-                    .graphicsLayer { rotationZ = if (rotate) rotation else 0f },
+                    .shadow(28.dp, shape)
+                    .clip(shape),
             )
         } else {
             AsyncImage(
@@ -1950,30 +1921,11 @@ private fun PlayerCover(
                 contentDescription = null,
                 modifier = Modifier
                     .fillMaxSize()
-                    .shadow(28.dp, MaterialTheme.shapes.large)
-                    .clip(MaterialTheme.shapes.large)
-                    .graphicsLayer { rotationZ = if (rotate) rotation else 0f },
+                    .shadow(28.dp, shape)
+                    .clip(shape),
                 contentScale = ContentScale.Crop,
                 placeholder = ColorPainter(MaterialTheme.colorScheme.surfaceVariant),
                 error = ColorPainter(MaterialTheme.colorScheme.surfaceVariant),
-            )
-        }
-        IconButton(
-            onClick = onToggleRotate,
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(12.dp)
-                .background(Color.Black.copy(alpha = 0.3f), CircleShape)
-                .semantics { contentDescription = "cover rotation=${if (rotate) "on" else "off"}" },
-        ) {
-            Icon(
-                Icons.Filled.RotateRight,
-                contentDescription = null,
-                tint = if (rotate) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    Color.White.copy(alpha = 0.75f)
-                },
             )
         }
     }
