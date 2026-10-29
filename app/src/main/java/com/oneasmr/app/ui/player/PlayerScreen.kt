@@ -390,15 +390,66 @@ class PlayerViewModel @Inject constructor(
         Log.i(TAG, "attach-only: session already plays $workId (queue=${controller.mediaItemCount}, index=${controller.currentMediaItemIndex})")
         registerSessionListener(controller)
         refreshFromController()
-        // Lyrics need the work tree; load it lazily (never blocks the UI).
         viewModelScope.launch {
+            // 同作品内换音轨:会话已经在放这个作品时,请求的音轨与当前曲目不同
+            // 就必须真的切过去(点音轨 = 播放该音轨),否则"再点一条就静默失效"。
+            // 断点续播要读 playback_state,失败只降级为不切歌,不能连累整页。
+            val switchedTrackIndex = try {
+                switchToRequestedTrack(controller)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "attach-only: track switch failed (${e.message})")
+                null
+            }
+            val playingTrackIndex = switchedTrackIndex ?: parts.trackIndex
+            // Lyrics need the work tree; load it lazily (never blocks the UI).
             runCatching { loadWorkTree() }
                 .onFailure { Log.w(TAG, "attach-only: tree unavailable (${it.message}); lyrics entry hidden") }
-            loadLyricsFor(parts.trackIndex)
+            loadLyricsFor(playingTrackIndex)
             // 会话队列可能来自开关开启时的旧构建:按当前开关重同步曲名。
             syncQueueTitlesToSafeMode()
         }
         startTicker()
+    }
+
+    /**
+     * 会话里已有本作品的队列时,把播放位置切到导航参数请求的音轨。
+     *
+     * attach 路径原本只接管控制器、从不碰队列(见 plan 的"播放页不重建队列"),
+     * 于是"点另一条音轨"会退化成"打开播放页看当前曲目"。这里按 mediaId 里的
+     * trackIndex 在会话队列里找到目标条目,套用与首次启动相同的断点续播策略
+     * (resumePositionResolver)后 seek + play。
+     *
+     * @return 切换后的音轨号;没有切换(请求的就是当前曲目 / 队列里找不到该音轨)
+     * 时返回 null,调用方沿用当前曲目。
+     */
+    private suspend fun switchToRequestedTrack(controller: MediaController): Int? {
+        if (controller.mediaItemCount == 0) return null
+        val currentKey = controller.currentMediaItem?.mediaId?.let(KeySpec::parseTrackKey)
+        if (currentKey?.trackIndex == trackIndex) return null
+        val targetQueueIndex = (0 until controller.mediaItemCount).firstOrNull { index ->
+            KeySpec.parseTrackKey(controller.getMediaItemAt(index).mediaId)?.trackIndex == trackIndex
+        } ?: run {
+            Log.w(
+                TAG,
+                "attach-only: track $trackIndex not in session queue " +
+                    "(${controller.mediaItemCount} items, current=${currentKey?.trackIndex}); staying put",
+            )
+            return null
+        }
+        val targetKey = KeySpec.parseTrackKey(controller.getMediaItemAt(targetQueueIndex).mediaId)
+        val startPositionMs = resumePositionResolver.resolve(
+            targetKey?.let { KeySpec.trackKey(it.sourceScope, it.rjCode, it.trackIndex) },
+        )
+        controller.seekTo(targetQueueIndex, startPositionMs)
+        controller.play()
+        Log.i(
+            TAG,
+            "attach-only: switched to track $trackIndex " +
+                "(queue index=$targetQueueIndex, start=${startPositionMs}ms)",
+        )
+        return trackIndex
     }
 
     private fun launchFromTree(controller: MediaController) {
@@ -698,14 +749,17 @@ class PlayerViewModel @Inject constructor(
 
     private fun loadLyricsFor(trackIndex: Int) {
         if (loadedForTrackIndex == trackIndex) return
-        loadedForTrackIndex = trackIndex
-        lyricsJob?.cancel()
         val root = treeRoot
         val audio = audioByIndex[trackIndex]
         if (root == null || audio == null) {
+            // 树还没就绪(会话内切歌时,transition 回调可能早于 loadWorkTree
+            // 完成)时**不能**占用 loadedForTrackIndex —— 否则树加载完成后那次
+            // 补加载会被上面的早退挡掉,歌词在本页再也出不来。
             _lyricsUi.value = LyricsUiState()
             return
         }
+        loadedForTrackIndex = trackIndex
+        lyricsJob?.cancel()
         val lyricsNode = LyricsMatcher.findLyrics(root, audio.relativePath)
         if (lyricsNode == null) {
             Log.i(TAG, "lyrics: no matching lyrics/subtitle for track $trackIndex (${audio.relativePath})")
