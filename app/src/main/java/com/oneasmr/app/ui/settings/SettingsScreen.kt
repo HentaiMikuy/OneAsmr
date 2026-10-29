@@ -23,6 +23,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.FactCheck
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.CloudSync
 import androidx.compose.material.icons.outlined.DarkMode
@@ -76,8 +77,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -98,7 +97,6 @@ import com.oneasmr.app.data.local.settings.SettingsStore
 import com.oneasmr.app.data.local.settings.ThemeMode
 import com.oneasmr.app.data.local.PlaybackStateDao
 import java.io.File
-import kotlin.math.roundToInt
 import com.oneasmr.app.data.repository.CoverStore
 import com.oneasmr.app.data.repository.RootGrantStatus
 import com.oneasmr.app.data.repository.ScanRootEntry
@@ -123,7 +121,9 @@ import kotlinx.coroutines.launch
  * Layout: rows are grouped by [SettingsSection] into tonal segmented cards
  * (see SettingsComponents.kt), each led by a tinted icon badge. A keyword
  * search filters rows across every section (matching title, synonyms and
- * the section name), and quick-jump chips scroll straight to a section.
+ * the section name); the category chips below it narrow the list down to a
+ * single section instead of scrolling to it, so switching sections never
+ * needs a manual scroll back to the top.
  */
 @Composable
 fun SettingsScreen(
@@ -158,11 +158,10 @@ fun SettingsScreen(
     var licensesVisible by remember { mutableStateOf(false) }
 
     var query by rememberSaveable { mutableStateOf("") }
+    // 分类筛选:null = 全部。点标签只展示该分类的内容,不再"跳转到某一节"。
+    var selectedSection by rememberSaveable { mutableStateOf<SettingsSection?>(null) }
     val scrollState = rememberScrollState()
     val scope = rememberCoroutineScope()
-    // Section header offsets inside the scroll content, for the quick-jump
-    // chips. Plain map: only read from click handlers, never drives layout.
-    val sectionOffsets = remember { mutableMapOf<SettingsSection, Int>() }
 
     val appContext = LocalContext.current
     fun openUpdateInstaller(file: File) {
@@ -602,8 +601,16 @@ fun SettingsScreen(
     )
 
     val searchTerms = query.trim().lowercase().split(Regex("\\s+")).filter { it.isNotEmpty() }
-    val visibleEntries = if (searchTerms.isEmpty()) entries else entries.filter { it.matches(searchTerms) }
+    // 分类筛选与搜索是两种互斥的"看什么":点标签只展示该分类;一旦输入关键字,
+    // 搜索回到全库语义(忽略分类),清空关键字后恢复之前选中的分类。
+    val sectionFilter = selectedSection.takeIf { searchTerms.isEmpty() }
+    val visibleEntries = entries
+        .filter { sectionFilter == null || it.section == sectionFilter }
+        .filter { searchTerms.isEmpty() || it.matches(searchTerms) }
     val entriesBySection = visibleEntries.groupBy { it.section }
+    // 第 0 颗「全部」= 不过滤,其余与 SettingsSection.entries 顺序一一对应。
+    val categoryChips = listOf("全部" to Icons.Outlined.Apps) +
+        SettingsSection.entries.map { it.chipLabel to it.icon }
 
     Column(
         modifier = Modifier
@@ -626,15 +633,20 @@ fun SettingsScreen(
         if (searchTerms.isEmpty()) {
             Spacer(Modifier.height(12.dp))
             SettingsCategoryChips(
-                categories = SettingsSection.entries.map { it.chipLabel to it.icon },
+                categories = categoryChips,
+                selectedIndex = selectedSection?.let { it.ordinal + 1 } ?: 0,
                 onSelect = { index ->
-                    sectionOffsets[SettingsSection.entries[index]]?.let { y ->
-                        scope.launch { scrollState.animateScrollTo(y) }
-                    }
+                    selectedSection = if (index == 0) null else SettingsSection.entries[index - 1]
+                    // 切换分类后内容整体换掉:直接把滚动位置归零(不做动画,
+                    // 免得列表替换和滚动动画叠在一起看着发飘)。
+                    scope.launch { scrollState.scrollTo(0) }
                 },
             )
+        }
 
-            // 有新版本/安装包就绪时在顶部给一个醒目入口，不必翻到「关于」。
+        // 有新版本/安装包就绪时在顶部给一个醒目入口，不必翻到「关于」。
+        // 仅"全部 + 未搜索"时出现:筛选某一分类时横幅是噪音,「关于」里也有入口。
+        if (searchTerms.isEmpty() && selectedSection == null) {
             when (val update = updateState) {
                 is UpdateUiState.Available -> {
                     Spacer(Modifier.height(16.dp))
@@ -666,12 +678,7 @@ fun SettingsScreen(
             SettingsSection.entries.forEach { section ->
                 val sectionEntries = entriesBySection[section]
                 if (sectionEntries != null) {
-                    SettingsSectionHeader(
-                        title = section.title,
-                        modifier = Modifier.onGloballyPositioned {
-                            sectionOffsets[section] = it.positionInParent().y.roundToInt()
-                        },
-                    )
+                    SettingsSectionHeader(title = section.title)
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         sectionEntries.forEachIndexed { index, entry ->
                             key(entry.title) {

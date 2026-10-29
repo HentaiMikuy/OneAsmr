@@ -20,8 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.ChevronRight
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -289,10 +288,17 @@ internal fun SettingsSearchField(
     )
 }
 
-/** Horizontally scrolling quick-jump chips, one per section. */
+/**
+ * 分类筛选条：索引 0 是「全部」（不过滤），其余与 [categories] 顺序对应。
+ *
+ * 用 [FilterChip] 而不是 AssistChip，是为了让"当前选中哪一类"成为真正的
+ * 可选状态（selected 语义，TalkBack 也会读出来）——点击即切换下方内容的
+ * 展示范围，不再是"滚到某一节"的跳转。
+ */
 @Composable
 internal fun SettingsCategoryChips(
     categories: List<Pair<String, ImageVector>>,
+    selectedIndex: Int,
     onSelect: (index: Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -303,11 +309,12 @@ internal fun SettingsCategoryChips(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         categories.forEachIndexed { index, (label, icon) ->
-            AssistChip(
+            FilterChip(
+                selected = index == selectedIndex,
                 onClick = { onSelect(index) },
                 label = { Text(label) },
                 leadingIcon = {
-                    Icon(icon, contentDescription = null, modifier = Modifier.size(AssistChipDefaults.IconSize))
+                    Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
                 },
                 shape = CircleShape,
             )
