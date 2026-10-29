@@ -50,6 +50,7 @@ captures/
 # Project-local tooling state (kept out of version control per plan)
 .omo/
 .codegraph/
+.workbuddy/
 
 # macOS
 .DS_Store
