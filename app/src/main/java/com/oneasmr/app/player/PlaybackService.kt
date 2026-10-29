@@ -40,6 +40,7 @@ import com.oneasmr.app.data.local.isCensored
 import com.oneasmr.app.data.local.settings.PersistedQueue
 import com.oneasmr.app.data.local.settings.QueueStore
 import com.oneasmr.app.data.local.settings.SettingsStore
+import com.oneasmr.app.domain.player.AudioRepeatMode
 import com.oneasmr.app.domain.player.FairDeckShuffle
 import com.oneasmr.app.domain.player.PlayQueueItem
 import dagger.hilt.android.AndroidEntryPoint
@@ -160,6 +161,7 @@ class PlaybackService : MediaSessionService() {
         val playWhenReady: Boolean,
         val speed: Float,
         val repeatMode: Int,
+        val pauseAtEnd: Boolean,
         val shuffleEnabled: Boolean,
     )
 
@@ -260,6 +262,7 @@ class PlaybackService : MediaSessionService() {
             playWhenReady = player.playWhenReady,
             speed = player.playbackParameters.speed,
             repeatMode = player.repeatMode,
+            pauseAtEnd = player.pauseAtEndOfMediaItems,
             shuffleEnabled = player.shuffleModeEnabled,
         )
         Log.i(
@@ -283,7 +286,10 @@ class PlaybackService : MediaSessionService() {
         val saved = savedAudioContext
         videoMode = false
         savedAudioContext = null
-        player.pauseAtEndOfMediaItems = false
+        // 音频可能正停在「播完暂停」档(见 AudioRepeatMode):退出视频必须把
+        // 这个 player 级开关还原成进入前的值,否则视频留下的 false 会静默把
+        // 用户选的第 4 档降级成顺序播放。
+        player.pauseAtEndOfMediaItems = saved?.pauseAtEnd ?: false
         serviceScope.launch {
             progressWriter.flush()
             if (saved == null) {
@@ -325,9 +331,12 @@ class PlaybackService : MediaSessionService() {
      */
     private fun leaveVideoModePlaying() {
         val dropped = savedAudioContext?.items?.size ?: 0
+        // 队列不回滚,但「播完暂停」这一档是 player 级开关,必须还原成进入
+        // 视频前音频的值:否则偏好显示第 4 档、真实行为却是顺序播放。
+        val audioPauseAtEnd = savedAudioContext?.pauseAtEnd ?: false
         videoMode = false
         savedAudioContext = null
-        player.pauseAtEndOfMediaItems = false
+        player.pauseAtEndOfMediaItems = audioPauseAtEnd
         serviceScope.launch { progressWriter.flush() }
         Log.i(TAG, "video leave-playing: video mode off, item keeps playing (audio context dropped: $dropped items)")
     }
@@ -634,8 +643,15 @@ class PlaybackService : MediaSessionService() {
                 Log.i(TAG, "repeat mode -> ${repeatMode.toRepeatMode()} (video mode: audio pref untouched)")
                 return
             }
-            serviceScope.launch { queueStore.setRepeatMode(repeatMode.toRepeatMode()) }
-            Log.i(TAG, "repeat mode -> ${repeatMode.toRepeatMode()}")
+            // 「播完暂停」是 player 级的独立开关,与 media3 的 repeat 值正交。
+            // 外部(通知栏/耳机键/系统)把档位切到 ALL/ONE 时两套语义不能同时
+            // 生效,这里主动清掉开关;OFF 档则保留它,合并成第 4 档落盘。
+            if (repeatMode != Player.REPEAT_MODE_OFF && player.pauseAtEndOfMediaItems) {
+                player.pauseAtEndOfMediaItems = false
+            }
+            val merged = AudioRepeatMode.of(repeatMode.toRepeatMode(), player.pauseAtEndOfMediaItems)
+            serviceScope.launch { queueStore.setRepeatMode(merged) }
+            Log.i(TAG, "repeat mode -> $merged")
         }
 
         override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
@@ -772,7 +788,11 @@ class PlaybackService : MediaSessionService() {
             val persisted = queueStore.queue.first()
             // Modes are independent of the queue: restore them even when the
             // last queue was cleared (the player singleton starts fresh here).
-            player.repeatMode = queueStore.repeatMode.first().toMedia3()
+            // 「播完暂停」必须先于 repeat 落地:onRepeatModeChanged 的合并持久化
+            // 读的是这两个值的组合,顺序反过来会先落一个错误的中间态。
+            val savedRepeat = queueStore.repeatMode.first()
+            player.pauseAtEndOfMediaItems = savedRepeat.pauseAtEnd
+            player.repeatMode = savedRepeat.baseMode.toMedia3()
             // Enabling shuffle fires onShuffleModeEnabledChanged, whose
             // listener applies the fair-deck order automatically.
             if (queueStore.shuffleEnabled.first()) player.shuffleModeEnabled = true
@@ -811,7 +831,7 @@ class PlaybackService : MediaSessionService() {
             Log.i(
                 TAG,
                 "session restored: ${persisted.items.size} items at index $startIndex " +
-                    "repeat=${player.repeatMode.toRepeatMode()} shuffle=${player.shuffleModeEnabled} " +
+                    "repeat=$savedRepeat shuffle=${player.shuffleModeEnabled} " +
                     "speed=${player.playbackParameters.speed} " +
                     "position=$startPositionMs ms (key=$startKey, not started)",
             )
@@ -851,6 +871,7 @@ class PlaybackService : MediaSessionService() {
                 .add(SessionCommand(ACTION_VIDEO_EXIT, Bundle.EMPTY))
                 .add(SessionCommand(ACTION_VIDEO_LEAVE_PLAYING, Bundle.EMPTY))
                 .add(SessionCommand(ACTION_VIDEO_SET_PAUSE_AT_END, Bundle.EMPTY))
+                .add(SessionCommand(ACTION_AUDIO_SET_REPEAT_MODE, Bundle.EMPTY))
                 .build()
             return ConnectionResult.accept(
                 sessionCommands,
@@ -900,6 +921,23 @@ class PlaybackService : MediaSessionService() {
                 ACTION_VIDEO_SET_PAUSE_AT_END -> {
                     player.pauseAtEndOfMediaItems = args.getBoolean(EXTRA_VIDEO_PAUSE_AT_END, false)
                     Log.i(TAG, "video pause-at-end -> ${player.pauseAtEndOfMediaItems}")
+                    return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+                }
+                ACTION_AUDIO_SET_REPEAT_MODE -> {
+                    // 一次性把「基档 + 播完暂停开关」一起落下来:分两步写会让
+                    // onRepeatModeChanged 先合并出一个中间档,UI 会闪一下。
+                    val mode = AudioRepeatMode.of(
+                        baseMode = args.getInt(EXTRA_AUDIO_REPEAT_BASE, Player.REPEAT_MODE_OFF)
+                            .toRepeatMode(),
+                        pauseAtEnd = args.getBoolean(EXTRA_AUDIO_PAUSE_AT_END, false),
+                    )
+                    // 先开关、后档位:repeat 赋值可能触发 onRepeatModeChanged,
+                    // 那个回调读的正是这两者的组合,顺序保证它合并出的就是这一档。
+                    player.pauseAtEndOfMediaItems = mode.pauseAtEnd
+                    player.repeatMode = mode.baseMode.toMedia3()
+                    // 档位没变时上面的赋值不触发回调,这里补一次落盘。
+                    serviceScope.launch { queueStore.setRepeatMode(mode) }
+                    Log.i(TAG, "audio repeat mode -> $mode")
                     return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
                 }
             }
@@ -995,6 +1033,17 @@ class PlaybackService : MediaSessionService() {
         const val ACTION_VIDEO_LEAVE_PLAYING = "oneasmr.command.video_leave_playing"
         const val ACTION_VIDEO_SET_PAUSE_AT_END = "oneasmr.command.video_set_pause_at_end"
         const val EXTRA_VIDEO_PAUSE_AT_END = "video_pause_at_end"
+
+        /**
+         * 音频第 4 档「播完暂停」:media3 的 repeat 枚举没有对应值,它落在 player
+         * 的 `pauseAtEndOfMediaItems` 开关上(基档为 OFF)。所以设置档位必须带上
+         * 两个 extra 一起下发,服务端才能一次性落地并合并持久化。
+         */
+        const val ACTION_AUDIO_SET_REPEAT_MODE = "oneasmr.command.audio_set_repeat_mode"
+
+        /** media3 的 repeat int(OFF/ALL/ONE),即 [AudioRepeatMode.baseMode]。 */
+        const val EXTRA_AUDIO_REPEAT_BASE = "audio_repeat_base"
+        const val EXTRA_AUDIO_PAUSE_AT_END = "audio_pause_at_end"
 
         /** Task 22: video playback failed (service restored the audio context). */
         const val ACTION_VIDEO_PLAYBACK_FAILED = "oneasmr.app.video_playback_failed"

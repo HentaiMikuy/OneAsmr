@@ -121,8 +121,8 @@ import com.oneasmr.app.data.scanner.TrackNodeType
 import com.oneasmr.app.data.scanner.TrackTreeBuilder
 import com.oneasmr.app.data.scanner.WorkPathResolver
 import com.oneasmr.app.domain.lyrics.LrcLyrics
+import com.oneasmr.app.domain.player.AudioRepeatMode
 import com.oneasmr.app.domain.player.PlayQueue
-import com.oneasmr.app.domain.player.RepeatMode
 import com.oneasmr.app.domain.player.PlaybackSpeed
 import com.oneasmr.app.domain.player.harmonizedTitles
 import com.oneasmr.app.domain.player.safeModeTitle
@@ -135,7 +135,6 @@ import com.oneasmr.app.player.PlaybackService
 import com.oneasmr.app.player.ResumePositionResolver
 import com.oneasmr.app.player.SessionConnection
 import com.oneasmr.app.player.toMedia3
-import com.oneasmr.app.player.toRepeatMode
 import com.oneasmr.app.ui.common.FrostedCensoredCover
 import com.oneasmr.app.ui.common.OneAsmrSeekBar
 import com.oneasmr.app.ui.common.rememberPressScale
@@ -177,7 +176,8 @@ data class PlayerUiState(
     val trackTitle: String = "",
     val isPlaying: Boolean = false,
     val queueSize: Int = 0,
-    val repeatMode: Int = Player.REPEAT_MODE_OFF,
+    /** 四档循环(顺序/列表循环/单曲循环/播完暂停);值来自 QueueStore 的合并状态。 */
+    val repeatMode: AudioRepeatMode = AudioRepeatMode.OFF,
     val shuffleEnabled: Boolean = false,
     val speed: Float = 1f,
     val playbackState: Int = Player.STATE_IDLE,
@@ -261,6 +261,8 @@ class PlayerViewModel @Inject constructor(
 
     /** Live track tree of the playing work (lyrics matching needs it). */
     private var treeRoot: TrackNode? = null
+    /** 最近一次实际生效的四档循环值(点击即同步写入;持久化状态异步回流校正)。 */
+    private var appliedRepeatMode: AudioRepeatMode = AudioRepeatMode.OFF
     private var audioByIndex: Map<Int, TrackNode> = emptyMap()
     /** 真实曲名缓存(trackIndex → 文件名):和谐后还原用,来自启动队列或音轨树。 */
     private var realTitlesByIndex: Map<Int, String> = emptyMap()
@@ -284,6 +286,16 @@ class PlayerViewModel @Inject constructor(
             IntentFilter(PlaybackService.ACTION_SLEEP_TIMER_STATE),
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
+        // 第 4 档「播完暂停」在 media3 的 repeat 枚举里没有对应值:服务端把
+        // (repeat 值 + pause-at-end 开关)合并成一个 AudioRepeatMode 写进
+        // QueueStore,这里订阅那条流作为唯一权威副本 —— 通知栏/耳机键改档位
+        // 也会经服务端回流到这里。
+        viewModelScope.launch {
+            queueStore.repeatMode.collect { mode ->
+                appliedRepeatMode = mode
+                _uiState.update { it.copy(repeatMode = mode) }
+            }
+        }
         // 安全模式开关变化 → 重算封面和谐状态,并把会话队列曲名同步为
         // 「音频 N」或还原真实曲名(见 syncQueueTitlesToSafeMode)。
         viewModelScope.launch {
@@ -599,10 +611,6 @@ class PlayerViewModel @Inject constructor(
                 refreshQueuePanelSilently()
             }
 
-            override fun onRepeatModeChanged(repeatMode: Int) {
-                _uiState.update { it.copy(repeatMode = repeatMode) }
-            }
-
             override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
                 _uiState.update { it.copy(shuffleEnabled = shuffleModeEnabled) }
             }
@@ -633,7 +641,6 @@ class PlayerViewModel @Inject constructor(
                 trackTitle = current?.mediaMetadata?.title?.toString() ?: it.trackTitle,
                 isPlaying = c.isPlaying,
                 queueSize = c.mediaItemCount,
-                repeatMode = c.repeatMode,
                 shuffleEnabled = c.shuffleModeEnabled,
                 speed = c.playbackParameters.speed,
                 playbackState = c.playbackState,
@@ -735,16 +742,36 @@ class PlayerViewModel @Inject constructor(
     // ------------------------------------------------------------------
 
     /**
-     * 循环模式 OFF→ALL→ONE→OFF。从控制器(会话权威源)读出当前值、
-     * 算出并应用下一档,同时**返回实际应用的档位**——UI 用返回值弹提示,
-     * 快速连点时提示永远与真实状态一致(乐观推算会读滞后于会话的 UI 状态)。
-     * 控制器不可用时返回 null(未应用任何变化,调用方应跳过提示)。
+     * 四档循环 顺序 → 列表循环 → 单曲循环 → 播完暂停 → 顺序。当前档位取本地
+     * 已应用值 —「播完暂停」在 media3 的 repeat 枚举里没有对应值,控制器读回来
+     * 只有三档,分不出 OFF 与第 4 档;四档的权威副本由服务端合并后写进
+     * QueueStore,页面订阅那条流回填(见 init 里的 collector)。
+     * **返回实际应用的档位**——UI 用返回值弹提示,快速连点时提示永远与真实
+     * 状态一致。控制器不可用时返回 null(未应用任何变化,调用方应跳过提示)。
      */
-    fun cycleRepeat(): RepeatMode? {
+    fun cycleRepeat(): AudioRepeatMode? {
         val c = controller ?: return null
-        val next = c.repeatMode.toRepeatMode().next()
-        c.repeatMode = next.toMedia3()
+        val next = appliedRepeatMode.next()
+        sendAudioRepeatMode(c, next)
+        appliedRepeatMode = next
+        _uiState.update { it.copy(repeatMode = next) }
+        Log.i(TAG, "audio repeat -> $next")
         return next
+    }
+
+    /**
+     * 整档一次性下发:基档(media3 repeat int)+「播完暂停」开关打包进同一条
+     * 会话命令,由服务端原子落地并合并持久化 —— 分两步写会让 UI 先闪一个
+     * 中间档(见 PlaybackService.ACTION_AUDIO_SET_REPEAT_MODE)。
+     */
+    private fun sendAudioRepeatMode(c: MediaController, mode: AudioRepeatMode) {
+        c.sendCustomCommand(
+            SessionCommand(PlaybackService.ACTION_AUDIO_SET_REPEAT_MODE, Bundle.EMPTY),
+            Bundle().apply {
+                putInt(PlaybackService.EXTRA_AUDIO_REPEAT_BASE, mode.baseMode.toMedia3())
+                putBoolean(PlaybackService.EXTRA_AUDIO_PAUSE_AT_END, mode.pauseAtEnd)
+            },
+        )
     }
 
     /** 随机开关:同 [cycleRepeat],返回实际应用的开关状态,不可用时返回 null。 */
@@ -1207,11 +1234,12 @@ private fun PlayerBackdrop(coverModel: Any?, censored: Boolean) {
     )
 }
 
-/** 切换后的循环模式文案（与 cycleRepeat 的 OFF→ALL→ONE→OFF 循环一致）。 */
-private fun repeatModeLabel(mode: RepeatMode): String = when (mode) {
-    RepeatMode.OFF -> "顺序播放"
-    RepeatMode.ALL -> "列表循环"
-    RepeatMode.ONE -> "单曲循环"
+/** 切换后的循环档位文案（与 AudioRepeatMode.next 的四档循环一致）。 */
+private fun repeatModeLabel(mode: AudioRepeatMode): String = when (mode) {
+    AudioRepeatMode.OFF -> "顺序播放"
+    AudioRepeatMode.ALL -> "列表循环"
+    AudioRepeatMode.ONE -> "单曲循环"
+    AudioRepeatMode.PAUSE_AT_END -> "播完暂停"
 }
 
 /** 模式切换提示浮层的停留时长。 */
@@ -1233,7 +1261,7 @@ private fun PlayerContent(
     onPrev: () -> Unit,
     onTogglePlayPause: () -> Unit,
     onNext: () -> Unit,
-    onCycleRepeat: () -> RepeatMode?,
+    onCycleRepeat: () -> AudioRepeatMode?,
     onToggleShuffle: () -> Boolean?,
     onSpeedClick: () -> Unit,
     onSleepClick: () -> Unit,
@@ -1417,19 +1445,22 @@ private fun PlayerContent(
                 },
                 modifier = Modifier.semantics {
                     contentDescription = when (state.repeatMode) {
-                        Player.REPEAT_MODE_ALL -> "repeat=ALL"
-                        Player.REPEAT_MODE_ONE -> "repeat=ONE"
-                        else -> "repeat=OFF"
+                        AudioRepeatMode.ALL -> "repeat=ALL"
+                        AudioRepeatMode.ONE -> "repeat=ONE"
+                        AudioRepeatMode.PAUSE_AT_END -> "repeat=PAUSE_AT_END"
+                        AudioRepeatMode.OFF -> "repeat=OFF"
                     }
                 },
             ) {
                 ModeToggleIcon(
-                    icon = if (state.repeatMode == Player.REPEAT_MODE_ONE) {
-                        Icons.Filled.RepeatOne
-                    } else {
-                        Icons.Filled.Repeat
+                    icon = when (state.repeatMode) {
+                        AudioRepeatMode.ONE -> Icons.Filled.RepeatOne
+                        // 第 4 档借暂停图标:循环图标里没有"停在曲末"的表达,
+                        // 视频页同一档也用 Pause(见 VideoPlayerScreen)。
+                        AudioRepeatMode.PAUSE_AT_END -> Icons.Filled.Pause
+                        else -> Icons.Filled.Repeat
                     },
-                    active = state.repeatMode != Player.REPEAT_MODE_OFF,
+                    active = state.repeatMode != AudioRepeatMode.OFF,
                 )
             }
         }

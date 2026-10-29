@@ -3,8 +3,8 @@ package com.oneasmr.app.data.local.settings
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.oneasmr.app.data.local.TestDataStoreFile
+import com.oneasmr.app.domain.player.AudioRepeatMode
 import com.oneasmr.app.domain.player.PlayQueueItem
-import com.oneasmr.app.domain.player.RepeatMode
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -39,7 +39,7 @@ class QueueStoreTest {
     fun `defaults are empty queue off repeat no shuffle speed 1x`() = runTest {
         val store = QueueStore(file("defaults").open())
         assertNull(store.queue.first())
-        assertEquals(RepeatMode.OFF, store.repeatMode.first())
+        assertEquals(AudioRepeatMode.OFF, store.repeatMode.first())
         assertFalse(store.shuffleEnabled.first())
         assertEquals(1f, store.speed.first())
     }
@@ -53,7 +53,7 @@ class QueueStoreTest {
             items = listOf(item(1), item(2), item(3)),
             currentIndex = 1,
         ))
-        store.setRepeatMode(RepeatMode.ONE)
+        store.setRepeatMode(AudioRepeatMode.ONE)
         store.setShuffleEnabled(true)
         store.setSpeed(1.7f)
 
@@ -64,7 +64,7 @@ class QueueStoreTest {
         assertEquals("content://doc/2", restored.items[1].uri)
         assertEquals(1, restored.currentIndex)
         assertTrue(restored.isRestorable)
-        assertEquals(RepeatMode.ONE, restarted.repeatMode.first())
+        assertEquals(AudioRepeatMode.ONE, restarted.repeatMode.first())
         assertTrue(restarted.shuffleEnabled.first())
         assertEquals(1.7f, restarted.speed.first())
     }
@@ -76,12 +76,27 @@ class QueueStoreTest {
         store.saveQueue(com.oneasmr.app.data.local.settings.PersistedQueue(
             workId = "local:RJ100200", items = listOf(item(1)), currentIndex = 0,
         ))
-        store.setRepeatMode(RepeatMode.ALL)
+        store.setRepeatMode(AudioRepeatMode.ALL)
         store.saveQueue(null)
 
         val restarted = QueueStore(tf.restart())
         assertNull(restarted.queue.first())
-        assertEquals(RepeatMode.ALL, restarted.repeatMode.first())
+        assertEquals(AudioRepeatMode.ALL, restarted.repeatMode.first())
+    }
+
+    @Test
+    fun `pause at end round trips and is cleared by another mode`() = runTest {
+        val tf = file("pause_at_end")
+        val store = QueueStore(tf.open())
+        store.setRepeatMode(AudioRepeatMode.PAUSE_AT_END)
+
+        val restarted = QueueStore(tf.restart())
+        assertEquals(AudioRepeatMode.PAUSE_AT_END, restarted.repeatMode.first())
+
+        // 切到别的档必须把「播完暂停」开关一并清掉,否则读侧会拿到
+        // "ONE + 播完暂停"的半套状态(两者互斥,见 PlaybackService)。
+        restarted.setRepeatMode(AudioRepeatMode.ONE)
+        assertEquals(AudioRepeatMode.ONE, QueueStore(tf.restart()).repeatMode.first())
     }
 
     @Test
