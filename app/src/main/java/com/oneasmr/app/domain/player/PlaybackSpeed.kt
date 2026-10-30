@@ -16,6 +16,14 @@ object PlaybackSpeed {
     const val MAX = 2.0f
     const val STEP = 0.1f
 
+    /**
+     * Long-press boost speed (video page: hold anywhere → 3x, release →
+     * back to the previous speed). Deliberately OUTSIDE [SUPPORTED]: it is a
+     * transient gesture state, never offered by the speed picker and never
+     * persisted (see PlaybackService.onPlaybackParametersChanged).
+     */
+    const val BOOST = 3.0f
+
     /** All supported speeds: 0.5, 0.6, ..., 2.0 (16 values). */
     val SUPPORTED: List<Float> = (5..20).map { it / 10f }
 

@@ -71,6 +71,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
@@ -207,9 +208,11 @@ import kotlinx.coroutines.withContext
  *
  * Gestures: tap toggles the custom controls, double-tap seeks ±10s, a vertical
  * drag on the left/right half adjusts window brightness / STREAM_MUSIC volume,
- * and a HORIZONTAL drag scrubs the timeline — right fast-forwards, left
- * rewinds, with the target time previewed in the centered overlay and applied
- * once on release (see [VideoGestureOps.swipeSeekTarget]).
+ * a HORIZONTAL drag scrubs the timeline — right fast-forwards, left rewinds,
+ * with the target time previewed in the centered overlay and applied once on
+ * release (see [VideoGestureOps.swipeSeekTarget]) — and HOLDING the finger
+ * down anywhere (either half) plays at [PlaybackSpeed.BOOST] until it lifts,
+ * restoring the user's own speed and never persisting the boost.
  *
  * Fullscreen: orientation change + immersive system bars (configChanges is
  * declared on MainActivity, so rotation recomposes without activity
@@ -283,7 +286,13 @@ fun VideoPlayerScreen(
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_STOP -> viewModel.onAppBackgrounded()
+                Lifecycle.Event.ON_STOP -> {
+                    viewModel.onAppBackgrounded()
+                    // 熄屏/切后台时系统的按压会被取消:手势态与「加速中」
+                    // 浮层一并复位,别把自动隐藏抑制留在后台。
+                    gestureActive = false
+                    gestureOverlay = null
+                }
                 Lifecycle.Event.ON_START -> viewModel.onAppForegrounded()
                 else -> Unit
             }
@@ -360,13 +369,30 @@ fun VideoPlayerScreen(
             modifier = Modifier
                 .fillMaxSize()
                 // Tap layer (Todo 6): single tap toggles the controls (after the
-                // double-tap timeout), double tap seeks ±10s by screen half.
+                // double-tap timeout), double tap seeks ±10s by screen half,
+                // long press anywhere (either half) holds a 3x boost until the
+                // finger lifts (the release is observed by the watchdog below).
                 .pointerInput(locked) {
                     if (locked) return@pointerInput
                     detectTapGestures(
                         onTap = {
                             controlsVisible = !controlsVisible
                             if (controlsVisible) lastInteractionTick++
+                        },
+                        onLongPress = {
+                            // A drag that consumes the pointer also lands here
+                            // (the tap detector sees a cancelled wait); the drag
+                            // layers set gestureActive first, so this guard
+                            // keeps 3x out of brightness/volume/seek drags.
+                            if (!gestureActive && viewModel.beginSpeedBoost()) {
+                                gestureActive = true
+                                gestureOverlay = GestureFeedback(
+                                    text = "3x 快进中",
+                                    description = "video speed boost=${PlaybackSpeed.BOOST}x",
+                                )
+                                gestureOverlayTick++
+                                lastInteractionTick++
+                            }
                         },
                         onDoubleTap = { offset ->
                             val forward = offset.x >= size.width / 2f
@@ -387,6 +413,23 @@ fun VideoPlayerScreen(
                             controlsVisible = true
                         },
                     )
+                }
+                // Long-press boost release watchdog: once the boost is live, the
+                // finger-up must restore the user's speed. The tap detector owns
+                // its own timeout/consumeUntilUp machinery, so the release is
+                // observed here instead — read-only, Final pass, no consumption
+                // (it must never steal an event from the tap/drag layers).
+                .pointerInput(locked) {
+                    if (locked) return@pointerInput
+                    awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Final)
+                            if (event.changes.none { it.pressed } && viewModel.endSpeedBoost()) {
+                                gestureActive = false
+                                gestureOverlayTick++
+                            }
+                        }
+                    }
                 }
                 // Vertical drag layer (Todo 6): left half = window brightness,
                 // right half = STREAM_MUSIC volume. A passed slop cancels the
@@ -1215,6 +1258,13 @@ class VideoPlayerViewModel @Inject constructor(
     private var videoRepeatMode: VideoRepeatMode = VideoRepeatMode.OFF
 
     /**
+     * 长按加速前的速度(null = 当前不在加速态)。按住期间播放器是
+     * [PlaybackSpeed.BOOST],松手按这个快照还原 —— 用户自己的倍速偏好
+     * (0.5x–2.0x)完全不受影响。
+     */
+    private var boostSavedSpeed: Float? = null
+
+    /**
      * The session player for the PlayerView binding(连接完成后才非 null)。
      * 必须是 StateFlow 而非普通属性:AndroidView 的 update lambda 只在其
      * 读取的快照状态变化时重跑 —— 普通属性会让「服务冷启动、控制器晚于
@@ -1778,6 +1828,9 @@ class VideoPlayerViewModel @Inject constructor(
         }
 
         override fun onPlaybackParametersChanged(playbackParameters: PlaybackParameters) {
+            // 长按加速是瞬时态:加速期间不把 3x 写进 UI —— 倍速按钮继续显示
+            // 用户自己选的档位,真正的"3 倍速"由居中手势浮层提示,松手即恢复。
+            if (boostSavedSpeed != null) return
             _uiState.update { it.copy(speed = playbackParameters.speed) }
         }
 
@@ -1884,6 +1937,36 @@ class VideoPlayerViewModel @Inject constructor(
     }
 
     /**
+     * 长按临时加速(按住 3x、松手恢复),左右半屏都生效 —— 与横向滑动 seek
+     * 是两件事:滑动是"跳位置",长按是"加快播放"。
+     *
+     * 返回是否真的进入了加速态:暂停时按住没有意义(不改变速度、也不弹提示),
+     * 页面被锁定或正在拖拽/滑动时由调用方拦下。
+     */
+    fun beginSpeedBoost(): Boolean {
+        val c = controller ?: return false
+        if (boostSavedSpeed != null) return false
+        if (!c.isPlaying) return false
+        val from = c.playbackParameters.speed
+        boostSavedSpeed = from
+        c.setPlaybackSpeed(PlaybackSpeed.BOOST)
+        Log.i(TAG, "video speed boost on: ${from}x -> ${PlaybackSpeed.BOOST}x")
+        return true
+    }
+
+    /**
+     * 结束加速并恢复按住前的速度;返回是否真的恢复过(未加速时是空操作,
+     * 调用方据此决定要不要复位浮层/自动隐藏状态)。
+     */
+    fun endSpeedBoost(): Boolean {
+        val restore = boostSavedSpeed ?: return false
+        boostSavedSpeed = null
+        controller?.setPlaybackSpeed(restore)
+        Log.i(TAG, "video speed boost off: restored ${restore}x")
+        return true
+    }
+
+    /**
      * (e) 播放列表切集:纯会话内 seekTo(index, 各自记忆的续播位置) ——
      * 不导航、不重发 ACTION_VIDEO_ENTER。ALWAYS_ASK 仍走自动续播占位
      * (无询问 UI,与 ResumePositionResolver 的既有约定一致)。
@@ -1909,6 +1992,8 @@ class VideoPlayerViewModel @Inject constructor(
      * - 视频 + 开关关:保持旧行为,后台即暂停(never play unseen)。
      */
     fun onAppBackgrounded() {
+        // 熄屏/切后台时按压会被系统取消:别让 3x 加速跟着进后台。
+        endSpeedBoost()
         val c = controller ?: return
         if (!c.playWhenReady) return
         // (c) 判定基于 CURRENT 条目(切集后已更新),不是入口冻结的 videoKey。
@@ -2126,6 +2211,8 @@ class VideoPlayerViewModel @Inject constructor(
 
     override fun onCleared() {
         exitVideo()
+        // 安全网:页面在按住加速期间被销毁时,别把 3x 留在会话上。
+        endSpeedBoost()
         tickerJob?.cancel()
         runCatching { context.applicationContext.unregisterReceiver(videoFailureReceiver) }
         runCatching { controllerFuture?.let { MediaController.releaseFuture(it) } }

@@ -43,6 +43,7 @@ import com.oneasmr.app.data.local.settings.SettingsStore
 import com.oneasmr.app.domain.player.AudioRepeatMode
 import com.oneasmr.app.domain.player.FairDeckShuffle
 import com.oneasmr.app.domain.player.PlayQueueItem
+import com.oneasmr.app.domain.player.PlaybackSpeed
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 import kotlin.random.Random
@@ -683,7 +684,12 @@ class PlaybackService : MediaSessionService() {
         override fun onPlaybackParametersChanged(playbackParameters: PlaybackParameters) {
             val speed = playbackParameters.speed
             val pitch = playbackParameters.pitch
-            serviceScope.launch { queueStore.setSpeed(speed) }
+            // 超过 MAX 的速度只可能来自视频页「长按 3x 加速」这个瞬时态:
+            // 它必须随松手消失,绝不落盘 —— 否则异常退出后下次冷启动会以
+            // 3x 恢复,而倍速选择器里根本没有这一档。
+            if (speed <= PlaybackSpeed.MAX) {
+                serviceScope.launch { queueStore.setSpeed(speed) }
+            }
             // Identity evidence: same player/session hash on every step proves
             // the speed change never rebuilds the player (plan must-not);
             // pitch=1.0 proves the Sonic pitch-preserving path stayed on.
