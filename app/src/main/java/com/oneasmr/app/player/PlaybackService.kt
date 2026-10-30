@@ -331,14 +331,16 @@ class PlaybackService : MediaSessionService() {
      */
     private fun leaveVideoModePlaying() {
         val dropped = savedAudioContext?.items?.size ?: 0
-        // 队列不回滚,但「播完暂停」这一档是 player 级开关,必须还原成进入
-        // 视频前音频的值:否则偏好显示第 4 档、真实行为却是顺序播放。
-        val audioPauseAtEnd = savedAudioContext?.pauseAtEnd ?: false
+        // 队列不回滚,当前条目**仍然是视频条目** —— 它的结束策略必须留着,
+        // 这里以前把 pauseAtEndOfMediaItems 还原成音频值(默认 false),于是
+        // 单条视频时间线掉回音频档位:音频若是「单曲循环/列表循环」,这一集
+        // 播完就会立刻从头再播(用户实测:设了播完暂停却单曲循环)。
+        // 音频档位不会丢:音频队列真正接管时间线时由 PlayerViewModel 的
+        // applyLaunch 按 QueueStore 重新落地,回滚路径则由 exitVideoMode 还原。
         videoMode = false
         savedAudioContext = null
-        player.pauseAtEndOfMediaItems = audioPauseAtEnd
         serviceScope.launch { progressWriter.flush() }
-        Log.i(TAG, "video leave-playing: video mode off, item keeps playing (audio context dropped: $dropped items)")
+        Log.i(TAG, "video leave-playing: video mode off, video end policy kept (audio context dropped: $dropped items)")
     }
 
     // ---------------------------------------------------------------------
@@ -785,6 +787,13 @@ class PlaybackService : MediaSessionService() {
      */
     private fun restoreSession() {
         serviceScope.launch {
+            // 会话里已经有条目(音频/视频正在播)时,这是"服务被重建"而不是
+            // 冷启动 —— 绝不能拿 QueueStore 的音频档位覆盖正在生效的会话档位
+            // (视频的「播完暂停」就是在这里被静默改回音频档位的)。
+            if (player.mediaItemCount > 0) {
+                Log.i(TAG, "session restore skipped (queue already on player)")
+                return@launch
+            }
             val persisted = queueStore.queue.first()
             // Modes are independent of the queue: restore them even when the
             // last queue was cleared (the player singleton starts fresh here).
@@ -799,10 +808,6 @@ class PlaybackService : MediaSessionService() {
             player.setPlaybackSpeed(queueStore.speed.first())
             if (persisted == null) {
                 Log.i(TAG, "session restore: no persisted queue (modes only)")
-                return@launch
-            }
-            if (player.mediaItemCount > 0) {
-                Log.i(TAG, "session restore skipped (queue already on player)")
                 return@launch
             }
             if (!persisted.isRestorable) {

@@ -509,7 +509,7 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    private fun applyLaunch(controller: MediaController, launch: PlaybackLaunch) {
+    private suspend fun applyLaunch(controller: MediaController, launch: PlaybackLaunch) {
         _uiState.update {
             it.copy(
                 workTitle = launch.work.title,
@@ -522,6 +522,18 @@ class PlayerViewModel @Inject constructor(
             launch.startPositionMs,
         )
         controller.prepare()
+        // 共享播放器上的 repeat/pauseAtEnd 可能还留着上一个视频会话的结束策略
+        // (见 VideoPlayerScreen 的退出续播契约:视频条目退出页面后继续播,
+        // 并保留自己的「播完暂停」)。音频队列接管时间线时必须把 QueueStore
+        // 里的音频档位重新落地,否则音频会继承视频的档位。
+        val audioMode = withContext(Dispatchers.IO) { queueStore.repeatMode.first() }
+        appliedRepeatMode = audioMode
+        _uiState.update { it.copy(repeatMode = audioMode) }
+        sendAudioRepeatMode(controller, audioMode)
+        val shuffle = withContext(Dispatchers.IO) { queueStore.shuffleEnabled.first() }
+        if (shuffle && !controller.shuffleModeEnabled) {
+            controller.shuffleModeEnabled = true
+        }
         controller.play()
         registerSessionListener(controller)
         refreshFromController()

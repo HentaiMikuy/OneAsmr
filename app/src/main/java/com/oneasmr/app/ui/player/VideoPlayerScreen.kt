@@ -175,13 +175,16 @@ import kotlinx.coroutines.withContext
  *    same-folder siblings (single-file route), or all VIDEO tracks of the
  *    work — replace the audio queue. Repeat comes from the video's OWN
  *    persisted preference (顺序 / 列表循环 / 单集循环 / 播完暂停, default 顺序) and
- *    shuffle stays off, applied inside the enter-snapshot listener; the audio
- *    modes are restored on exit — from the service's saved audio context
- *    (ACTION_VIDEO_EXIT) or from the ViewModel's own pre-entry capture
- *    (single-file leave-playing, which first collapses the timeline back to
- *    the current item). The service still skips QueueStore persistence in
- *    video mode, so even a force-stop mid-video cold-restores the AUDIO
- *    queue. The timeline is built in two steps so the playlist never blocks
+ *    shuffle stays off, applied inside the enter-snapshot listener. On exit
+ *    the end policy follows the ITEM, not the audio queue: the rollback path
+ *    restores the audio context (and its modes) from the service's snapshot
+ *    (ACTION_VIDEO_EXIT), while the continue-playing paths collapse the
+ *    timeline back to the current item and KEEP the video's policy — writing
+ *    the audio mode back onto a one-item timeline makes "播完暂停" look like
+ *    single-track loop (see [VideoPlayerViewModel.applyExitModes]). The
+ *    service still skips QueueStore persistence in video mode, so even a
+ *    force-stop mid-video cold-restores the AUDIO queue. The timeline is
+ *    built in two steps so the playlist never blocks
  *    the first frame: the entry item is set alone first, then the resolved
  *    playlist is spliced in with `addMediaItems` (no setMediaItems, no
  *    re-prepare, no hitch) — see [VideoPlayerViewModel.enterVideo] /
@@ -1864,7 +1867,9 @@ class VideoPlayerViewModel @Inject constructor(
         if (exitRequested) return
         exitRequested = true
         val c = controller ?: return
-        setVideoPauseAtEnd(c, false)
+        // 不在入口无条件关 pauseAtEndOfMediaItems:回滚到音频上下文的路径
+        // (ACTION_VIDEO_EXIT)由服务按快照还原;而「退出后续播」的条目仍是
+        // 视频条目,必须保留它自己的「播完暂停」,否则会掉回音频档位。
         if (singleFileId != null) {
             exitSingleFile(c)
             return
@@ -1873,13 +1878,10 @@ class VideoPlayerViewModel @Inject constructor(
         // 感知,但属状态泄漏,下个视频会莫名黑屏。
         if (videoTrackDisabledForBackground) setVideoTrackDisabled(false)
         if (!enteredVideoMode) {
-            // ATTACH 页:进入时把 repeat/shuffle 改成了视频循环偏好,退出
-            // 还原音频模式(不动时间线、不发服务命令)。
+            // ATTACH 页:进入时把 repeat/shuffle 改成了视频结束策略,退出时
+            // 按条目类型交还(不动时间线、不发服务命令)。
             if (attachModesApplied) {
-                runCatching {
-                    c.repeatMode = vmSavedRepeatMode
-                    c.shuffleModeEnabled = vmSavedShuffle
-                }
+                runCatching { applyExitModes(c) }
             }
             return
         }
@@ -1894,11 +1896,15 @@ class VideoPlayerViewModel @Inject constructor(
     /**
      * 单档页面退出。ATTACH 进入的页面(胶囊点回)不改播放状态 —— 会话本就
      * 没被这类页面打断过,退出只把画面让出去,不需要任何服务命令(但它会把
-     * repeat/shuffle 换成视频循环偏好,退出时在本地还原);ENTER 过的
-     * 页面才需要收尾:继续播放(先把会话收拢为当前条目、还原进入前的循环/随机,
-     * 再禁用视频轨 + 让服务结束视频模式)或暂停回滚(旧行为,「视频后台续播」
-     * 关时)。重展开过时间线的 ATTACH 页(attachReexpanded)同样先收拢+还原,
-     * 但不发任何服务命令(h)。
+     * repeat/shuffle 换成视频结束策略,退出时按条目类型交还);ENTER 过的
+     * 页面才需要收尾:继续播放(先把会话收拢为当前条目、按条目类型交还结束
+     * 策略,再禁用视频轨 + 让服务结束视频模式)或暂停回滚(旧行为,「视频后台
+     * 续播」关时)。重展开过时间线的 ATTACH 页(attachReexpanded)同样先收拢+
+     * 交还,但不发任何服务命令(h)。
+     *
+     * 「按条目类型交还」是关键:续播的是视频条目时保留视频自己的档位,绝不
+     * 把音频档位写回来 —— 收拢后的单条时间线上,音频的「单曲循环/列表循环」
+     * 就是"这一集播完从头再播"(见 [applyExitModes])。
      */
     private fun exitSingleFile(c: MediaController) {
         if (_uiState.value.playbackFailed) {
@@ -1919,19 +1925,16 @@ class VideoPlayerViewModel @Inject constructor(
         // (h) 必须在 !enteredVideoMode 分支之前:重展开的 ATTACH 页从不置
         // enteredVideoMode,但该页中和过模式、展开过时间线,退出同样要收尾。
         if (attachReexpanded) {
-            collapseToCurrentAndRestoreModes(c)
+            collapseToCurrentAndApplyModes(c)
             setVideoTrackDisabled(true)
-            Log.i(TAG, "single exit (attach re-expanded): collapsed + modes restored, no service command")
+            Log.i(TAG, "single exit (attach re-expanded): collapsed + end policy kept, no service command")
             return
         }
         if (!enteredVideoMode) {
             // 纯 ATTACH 页:时间线没重展开,但 repeat/shuffle 已被改成视频
-            // 循环偏好 —— 退出时还原进入前的音频模式(不碰时间线、不发命令)。
+            // 结束策略 —— 退出时按条目类型交还(不碰时间线、不发命令)。
             if (attachModesApplied) {
-                runCatching {
-                    c.repeatMode = vmSavedRepeatMode
-                    c.shuffleModeEnabled = vmSavedShuffle
-                }
+                runCatching { applyExitModes(c) }
             }
             setVideoTrackDisabled(true)
             return
@@ -1939,11 +1942,11 @@ class VideoPlayerViewModel @Inject constructor(
         if (continuesAfterPageExit(currentIsAudioOnly(), videoBackgroundPlaybackEnabled)) {
             // 画面无人看:与后台同款省电,只解码音频;当前条目留在会话里继续播。
             setVideoTrackDisabled(true)
-            collapseToCurrentAndRestoreModes(c)
+            collapseToCurrentAndApplyModes(c)
             sendVideoCommand(
                 c,
                 PlaybackService.ACTION_VIDEO_LEAVE_PLAYING,
-                "single exit: playback continues (collapsed to current item, modes restored)",
+                "single exit: playback continues (collapsed to current item, end policy kept)",
             )
             return
         }
@@ -1953,15 +1956,15 @@ class VideoPlayerViewModel @Inject constructor(
 
     /**
      * (f)/(h) 退出收尾,顺序即契约:先把会话时间线收拢为当前条目(迷你
-     * 播放器只带这一条走),再从 VM 自快照还原 repeat/shuffle —— 先收拢
-     * 后还原,避免在收缩中的时间线上触发 fair-deck 整组重洗。
+     * 播放器只带这一条走),再按条目类型交还结束策略 —— 先收拢后交还,
+     * 避免在收缩中的时间线上触发 fair-deck 整组重洗。
      *
      * 已接受边界(计划 3f):收拢的 setMediaItems 会触发
      * onMediaItemTransition(PLAYLIST_CHANGED),进而带动服务的
      * checkEndOfTrackTimer —— 「播完当前曲」睡眠定时在退出续播时会提前
      * 到期。仅记录,不改服务。
      */
-    private fun collapseToCurrentAndRestoreModes(c: MediaController) {
+    private fun collapseToCurrentAndApplyModes(c: MediaController) {
         runCatching {
             val current = c.currentMediaItem
             if (current != null && c.mediaItemCount > 1) {
@@ -1975,11 +1978,32 @@ class VideoPlayerViewModel @Inject constructor(
                         "end-of-track sleep timer may expire — accepted edge)",
                 )
             }
+            applyExitModes(c)
+        }.onFailure { e ->
+            Log.w(TAG, "single exit collapse/apply-modes failed: ${e.message}")
+        }
+    }
+
+    /**
+     * 退出续播时把结束策略交还给正确的所有者。
+     *
+     * - 视频条目:保留视频自己的档位(顺序/列表循环/单集循环/播完暂停)。
+     *   **绝不能**把音频档位写回来:收拢后的时间线只剩一条,音频的
+     *   「单曲循环」或「列表循环」在这条时间线上表现完全一样 —— 这一集
+     *   播完立刻从头再播,用户看到的就是"设了播完暂停却单曲循环"。
+     * - 音频单档(纯音频散文件):它就是音频条目,恢复进入前的音频档位。
+     *
+     * 音频档位不会因此丢失:音频队列真正接管时间线时由
+     * [PlayerViewModel] 按 QueueStore 重新落地。
+     */
+    private fun applyExitModes(c: MediaController) {
+        if (currentIsAudioOnly()) {
             c.repeatMode = vmSavedRepeatMode
             c.shuffleModeEnabled = vmSavedShuffle
-        }.onFailure { e ->
-            Log.w(TAG, "single exit collapse/restore failed: ${e.message}")
+            return
         }
+        applyVideoRepeatMode(c)
+        c.shuffleModeEnabled = false
     }
 
     /** Fire-and-log a video-mode session command (main-thread executor callback). */
