@@ -19,6 +19,7 @@ import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -61,6 +62,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -132,6 +134,7 @@ import com.oneasmr.app.ui.player.SpeedPickerSheet
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
+import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -202,6 +205,12 @@ import kotlinx.coroutines.withContext
  * Must-NOT honored: no subtitle-track switching, no PiP, no casting; video is
  * never added to the shuffle/queue logic.
  *
+ * Gestures: tap toggles the custom controls, double-tap seeks ±10s, a vertical
+ * drag on the left/right half adjusts window brightness / STREAM_MUSIC volume,
+ * and a HORIZONTAL drag scrubs the timeline — right fast-forwards, left
+ * rewinds, with the target time previewed in the centered overlay and applied
+ * once on release (see [VideoGestureOps.swipeSeekTarget]).
+ *
  * Fullscreen: orientation change + immersive system bars (configChanges is
  * declared on MainActivity, so rotation recomposes without activity
  * recreation); portrait↔landscape via the fullscreen toggle. A lock guard
@@ -232,6 +241,10 @@ fun VideoPlayerScreen(
     var gestureActive by remember { mutableStateOf(false) }
     var gestureOverlay by remember { mutableStateOf<GestureFeedback?>(null) }
     var gestureOverlayTick by remember { mutableIntStateOf(0) }
+    // 横向滑动快进/快退:按下瞬间的位置 + 累计位移;松手才真正 seek,
+    // 拖拽期间只用居中浮层预览目标时间(不对播放器逐帧 seek)。
+    var seekSwipeStartMs by remember { mutableLongStateOf(0L) }
+    var seekSwipeDeltaPx by remember { mutableFloatStateOf(0f) }
     val audioManager = remember(context) {
         context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     }
@@ -412,6 +425,64 @@ fun VideoPlayerScreen(
                         },
                         onDragEnd = {
                             gestureActive = false
+                            gestureOverlayTick++
+                            lastInteractionTick++
+                        },
+                        onDragCancel = {
+                            gestureActive = false
+                            gestureOverlayTick++
+                            lastInteractionTick++
+                        },
+                    )
+                }
+                // Horizontal drag layer: swipe right = fast-forward, swipe left
+                // = rewind (a full-width swipe covers
+                // [VideoGestureOps.SWIPE_SEEK_FULL_WIDTH_MS]). The target is
+                // previewed in the centered overlay and applied ONCE on
+                // release — seeking per pointer move would thrash the SAF
+                // source. Vertical drags still own brightness/volume: whichever
+                // axis crosses its touch slop first wins, the other cancels.
+                .pointerInput(locked) {
+                    if (locked) return@pointerInput
+                    detectHorizontalDragGestures(
+                        onDragStart = {
+                            seekSwipeStartMs = viewModel.positionMs.value
+                            seekSwipeDeltaPx = 0f
+                            gestureActive = true
+                            controlsVisible = true
+                            lastInteractionTick++
+                            gestureOverlay = seekSwipeFeedback(
+                                startMs = seekSwipeStartMs,
+                                targetMs = seekSwipeStartMs,
+                                durationMs = viewModel.durationMs.value,
+                            )
+                            gestureOverlayTick++
+                        },
+                        onHorizontalDrag = { _, dragAmount ->
+                            seekSwipeDeltaPx += dragAmount
+                            gestureOverlay = seekSwipeFeedback(
+                                startMs = seekSwipeStartMs,
+                                targetMs = VideoGestureOps.swipeSeekTarget(
+                                    positionMs = seekSwipeStartMs,
+                                    deltaXPx = seekSwipeDeltaPx,
+                                    totalWidthPx = size.width.toFloat(),
+                                    durationMs = viewModel.durationMs.value,
+                                ),
+                                durationMs = viewModel.durationMs.value,
+                            )
+                            lastInteractionTick++
+                        },
+                        onDragEnd = {
+                            val target = VideoGestureOps.swipeSeekTarget(
+                                positionMs = seekSwipeStartMs,
+                                deltaXPx = seekSwipeDeltaPx,
+                                totalWidthPx = size.width.toFloat(),
+                                durationMs = viewModel.durationMs.value,
+                            )
+                            gestureActive = false
+                            if (abs(target - seekSwipeStartMs) >= SWIPE_SEEK_MIN_DELTA_MS) {
+                                viewModel.seekTo(target)
+                            }
                             gestureOverlayTick++
                             lastInteractionTick++
                         },
@@ -905,6 +976,9 @@ private const val AUTO_HIDE_MS = 3000L
 /** Linger of the gesture feedback surface after a double-tap / drag. */
 private const val GESTURE_FEEDBACK_MS = 1500L
 
+/** Swipes shorter than this are ignored — a sub-second seek only re-buffers. */
+private const val SWIPE_SEEK_MIN_DELTA_MS = 1_000L
+
 /** Centered feedback of the gesture layer; [description] is the dump semantics. */
 private data class GestureFeedback(val text: String, val description: String)
 
@@ -955,6 +1029,33 @@ private fun gestureFeedback(brightness: Boolean, fraction: Float): GestureFeedba
     } else {
         GestureFeedback("音量 $percent%", "video volume value=$percent")
     }
+}
+
+/**
+ * Swipe-seek overlay: direction + distance + the target/total time, so the
+ * user knows where the release will land before letting go. Delta is derived
+ * from the (already clamped) target, so it never claims a jump the player
+ * cannot make at the queue edges.
+ */
+private fun seekSwipeFeedback(startMs: Long, targetMs: Long, durationMs: Long): GestureFeedback {
+    val deltaSec = ((targetMs - startMs) / 1000L).toInt()
+    val prefix = if (deltaSec >= 0) "快进" else "快退"
+    val position = if (durationMs > 0L) {
+        "${formatTime(targetMs)} / ${formatTime(durationMs)}"
+    } else {
+        formatTime(targetMs)
+    }
+    // 刚过触摸阈值、位移还是 0 的那一帧不给方向,只提示这是滑动手势,
+    // 免得出现"快进 0s"这种自相矛盾的文案。
+    val text = if (deltaSec == 0) {
+        "滑动快进 / 快退  $position"
+    } else {
+        "$prefix ${abs(deltaSec)}s  $position"
+    }
+    return GestureFeedback(
+        text = text,
+        description = "video seek swipe delta=${deltaSec}s target=${targetMs}ms",
+    )
 }
 
 /**

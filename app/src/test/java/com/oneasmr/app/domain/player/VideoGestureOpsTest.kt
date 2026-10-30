@@ -94,6 +94,45 @@ class VideoGestureOpsTest {
     }
 
     // ------------------------------------------------------------------
+    // swipeSeekTarget (horizontal swipe fast-forward / rewind)
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `right swipe fast-forwards and left swipe rewinds`() {
+        // Half the screen width = half of SWIPE_SEEK_FULL_WIDTH_MS (60 s).
+        assertEquals(
+            360_000L,
+            VideoGestureOps.swipeSeekTarget(300_000L, 500f, 1000f, 600_000L),
+        )
+        assertEquals(
+            240_000L,
+            VideoGestureOps.swipeSeekTarget(300_000L, -500f, 1000f, 600_000L),
+        )
+    }
+
+    @Test
+    fun `a full width swipe covers the whole fixed span`() {
+        assertEquals(
+            300_000L + VideoGestureOps.SWIPE_SEEK_FULL_WIDTH_MS,
+            VideoGestureOps.swipeSeekTarget(300_000L, 1000f, 1000f, 600_000L),
+        )
+        assertEquals(120_000L, VideoGestureOps.SWIPE_SEEK_FULL_WIDTH_MS)
+    }
+
+    @Test
+    fun `swipe target clamps at the timeline edges`() {
+        assertEquals(0L, VideoGestureOps.swipeSeekTarget(10_000L, -500f, 1000f, 600_000L))
+        assertEquals(600_000L, VideoGestureOps.swipeSeekTarget(590_000L, 500f, 1000f, 600_000L))
+    }
+
+    @Test
+    fun `zero movement keeps the position and a degenerate width never divides by zero`() {
+        assertEquals(300_000L, VideoGestureOps.swipeSeekTarget(300_000L, 0f, 1000f, 600_000L))
+        assertEquals(300_000L, VideoGestureOps.swipeSeekTarget(300_000L, 500f, 0f, 600_000L))
+        assertEquals(0L, VideoGestureOps.swipeSeekTarget(-5_000L, 500f, 0f, 600_000L))
+    }
+
+    // ------------------------------------------------------------------
     // siblingFolderOf / isSibling
     // ------------------------------------------------------------------
 

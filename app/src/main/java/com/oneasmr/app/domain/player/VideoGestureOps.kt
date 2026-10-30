@@ -1,17 +1,26 @@
 package com.oneasmr.app.domain.player
 
 import kotlin.math.round
+import kotlin.math.roundToLong
 
 /**
  * Pure JVM ops for the enriched video player page (plan Task 1 of
  * video-player-controls): vertical-drag fraction mapping (brightness/volume),
- * ±10s skip clamping, and exact-same-folder sibling filtering for the
- * single-file playlist. No Android types — unit-tested without a device.
+ * horizontal swipe-seek mapping, ±10s skip clamping, and exact-same-folder
+ * sibling filtering for the single-file playlist. No Android types —
+ * unit-tested without a device.
  */
 object VideoGestureOps {
 
     /** Seek step of the skip buttons and double-tap seek: 10 seconds. */
     const val SKIP_STEP_MS = 10_000L
+
+    /**
+     * Horizontal swipe-seek span: dragging across the FULL screen width moves
+     * the position by this much. Fixed (not duration-proportional) so the
+     * gesture feels the same on a 3-minute clip and a 40-minute one.
+     */
+    const val SWIPE_SEEK_FULL_WIDTH_MS = 120_000L
 
     /**
      * Maps a vertical drag to a value fraction: an upward drag (negative
@@ -34,6 +43,25 @@ object VideoGestureOps {
      */
     fun skipTarget(positionMs: Long, deltaMs: Long, durationMs: Long): Long =
         (positionMs + deltaMs).coerceIn(0L, maxOf(durationMs, 0L))
+
+    /**
+     * Target of a horizontal swipe-seek: dragging right ([deltaXPx] > 0)
+     * fast-forwards, dragging left rewinds. The pixel distance maps linearly
+     * onto [SWIPE_SEEK_FULL_WIDTH_MS] per screen width, then goes through
+     * [skipTarget] so the result is clamped to [0, duration]. A degenerate
+     * [totalWidthPx] yields the untouched (clamped) start position instead of
+     * dividing by zero.
+     */
+    fun swipeSeekTarget(
+        positionMs: Long,
+        deltaXPx: Float,
+        totalWidthPx: Float,
+        durationMs: Long,
+    ): Long {
+        if (totalWidthPx <= 0f) return positionMs.coerceIn(0L, maxOf(durationMs, 0L))
+        val deltaMs = (SWIPE_SEEK_FULL_WIDTH_MS * (deltaXPx / totalWidthPx)).roundToLong()
+        return skipTarget(positionMs, deltaMs, durationMs)
+    }
 
     /**
      * Parent directory of a display-name relative path ("a/b/c.mp4" -> "a/b";
