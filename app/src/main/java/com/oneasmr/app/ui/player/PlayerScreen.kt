@@ -44,8 +44,6 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.QueueMusic
-import androidx.compose.material.icons.filled.Repeat
-import androidx.compose.material.icons.filled.RepeatOne
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
@@ -81,7 +79,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.painter.ColorPainter
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -260,8 +257,6 @@ class PlayerViewModel @Inject constructor(
 
     /** Live track tree of the playing work (lyrics matching needs it). */
     private var treeRoot: TrackNode? = null
-    /** 最近一次实际生效的四档循环值(点击即同步写入;持久化状态异步回流校正)。 */
-    private var appliedRepeatMode: AudioRepeatMode = AudioRepeatMode.OFF
     private var audioByIndex: Map<Int, TrackNode> = emptyMap()
     /** 真实曲名缓存(trackIndex → 文件名):和谐后还原用,来自启动队列或音轨树。 */
     private var realTitlesByIndex: Map<Int, String> = emptyMap()
@@ -291,7 +286,6 @@ class PlayerViewModel @Inject constructor(
         // 也会经服务端回流到这里。
         viewModelScope.launch {
             queueStore.repeatMode.collect { mode ->
-                appliedRepeatMode = mode
                 _uiState.update { it.copy(repeatMode = mode) }
             }
         }
@@ -523,7 +517,6 @@ class PlayerViewModel @Inject constructor(
         // 并保留自己的「播完暂停」)。音频队列接管时间线时必须把 QueueStore
         // 里的音频档位重新落地,否则音频会继承视频的档位。
         val audioMode = withContext(Dispatchers.IO) { queueStore.repeatMode.first() }
-        appliedRepeatMode = audioMode
         _uiState.update { it.copy(repeatMode = audioMode) }
         sendAudioRepeatMode(controller, audioMode)
         val shuffle = withContext(Dispatchers.IO) { queueStore.shuffleEnabled.first() }
@@ -782,21 +775,15 @@ class PlayerViewModel @Inject constructor(
     // ------------------------------------------------------------------
 
     /**
-     * 四档循环 顺序 → 列表循环 → 单曲循环 → 播完暂停 → 顺序。当前档位取本地
-     * 已应用值 —「播完暂停」在 media3 的 repeat 枚举里没有对应值,控制器读回来
-     * 只有三档,分不出 OFF 与第 4 档;四档的权威副本由服务端合并后写进
-     * QueueStore,页面订阅那条流回填(见 init 里的 collector)。
-     * **返回实际应用的档位**——UI 用返回值弹提示,快速连点时提示永远与真实
-     * 状态一致。控制器不可用时返回 null(未应用任何变化,调用方应跳过提示)。
+     * 直接选择四档播放策略，仍通过原有会话命令原子应用并持久化。
+     * 返回已下发的档位供 UI 提示；控制器不可用时返回 null。
      */
-    fun cycleRepeat(): AudioRepeatMode? {
+    fun setRepeatMode(mode: AudioRepeatMode): AudioRepeatMode? {
         val c = controller ?: return null
-        val next = appliedRepeatMode.next()
-        sendAudioRepeatMode(c, next)
-        appliedRepeatMode = next
-        _uiState.update { it.copy(repeatMode = next) }
-        Log.i(TAG, "audio repeat -> $next")
-        return next
+        sendAudioRepeatMode(c, mode)
+        _uiState.update { it.copy(repeatMode = mode) }
+        Log.i(TAG, "audio repeat -> $mode")
+        return mode
     }
 
     /**
@@ -814,7 +801,7 @@ class PlayerViewModel @Inject constructor(
         )
     }
 
-    /** 随机开关:同 [cycleRepeat],返回实际应用的开关状态,不可用时返回 null。 */
+    /** 随机开关：返回已应用的开关状态，不可用时返回 null。 */
     fun toggleShuffle(): Boolean? {
         val c = controller ?: return null
         val next = !c.shuffleModeEnabled
@@ -1191,7 +1178,7 @@ fun PlayerScreen(
                     onPrev = viewModel::prevTrack,
                     onTogglePlayPause = viewModel::togglePlayPause,
                     onNext = viewModel::nextTrack,
-                    onCycleRepeat = viewModel::cycleRepeat,
+                    onSelectRepeat = viewModel::setRepeatMode,
                     onToggleShuffle = viewModel::toggleShuffle,
                     onSpeedClick = { showSpeedDialog = true },
                     onSleepClick = { showSleepDialog = true },
@@ -1274,14 +1261,6 @@ private fun PlayerBackdrop(coverModel: Any?, censored: Boolean) {
     )
 }
 
-/** 切换后的循环档位文案（与 AudioRepeatMode.next 的四档循环一致）。 */
-private fun repeatModeLabel(mode: AudioRepeatMode): String = when (mode) {
-    AudioRepeatMode.OFF -> "顺序播放"
-    AudioRepeatMode.ALL -> "列表循环"
-    AudioRepeatMode.ONE -> "单曲循环"
-    AudioRepeatMode.PAUSE_AT_END -> "播完暂停"
-}
-
 /** 模式切换提示浮层的停留时长。 */
 private const val MODE_HINT_MS = 1600L
 
@@ -1301,7 +1280,7 @@ private fun PlayerContent(
     onPrev: () -> Unit,
     onTogglePlayPause: () -> Unit,
     onNext: () -> Unit,
-    onCycleRepeat: () -> AudioRepeatMode?,
+    onSelectRepeat: (AudioRepeatMode) -> AudioRepeatMode?,
     onToggleShuffle: () -> Boolean?,
     onSpeedClick: () -> Unit,
     onSleepClick: () -> Unit,
@@ -1397,10 +1376,15 @@ private fun PlayerContent(
         // the 64dp primary FAB-style circle.
         val (playPauseInteractionSource, playPauseScale) = rememberPressScale(0.92f)
         Row(
+            modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            IconButton(
+            PlaybackModeButton(
+                icon = Icons.Filled.Shuffle,
+                label = if (state.shuffleEnabled) "随机开启" else "随机关闭",
+                active = state.shuffleEnabled,
+                enabled = state.queueSize > 0,
+                onClickLabel = if (state.shuffleEnabled) "关闭随机播放" else "开启随机播放",
                 onClick = {
                     // VM 从控制器返回实际应用的开关状态,提示与真实状态一致。
                     onToggleShuffle()?.let { next ->
@@ -1408,15 +1392,8 @@ private fun PlayerContent(
                         modeHintTick++
                     }
                 },
-                modifier = Modifier.semantics {
-                    contentDescription = "shuffle=${if (state.shuffleEnabled) "on" else "off"}"
-                },
-            ) {
-                ModeToggleIcon(
-                    icon = Icons.Filled.Shuffle,
-                    active = state.shuffleEnabled,
-                )
-            }
+                modifier = Modifier.weight(1f),
+            )
             IconButton(
                 onClick = onPrev,
                 enabled = state.queueSize > 0,
@@ -1475,34 +1452,17 @@ private fun PlayerContent(
                     modifier = Modifier.size(42.dp),
                 )
             }
-            IconButton(
-                onClick = {
-                    // VM 从控制器返回实际应用的档位,快速连点时提示不滞后于真实状态。
-                    onCycleRepeat()?.let { next ->
-                        modeHint = repeatModeLabel(next)
+            RepeatModeSelector(
+                mode = state.repeatMode,
+                enabled = state.queueSize > 0,
+                onSelect = { selected ->
+                    onSelectRepeat(selected)?.let { applied ->
+                        modeHint = repeatModeLabel(applied)
                         modeHintTick++
                     }
                 },
-                modifier = Modifier.semantics {
-                    contentDescription = when (state.repeatMode) {
-                        AudioRepeatMode.ALL -> "repeat=ALL"
-                        AudioRepeatMode.ONE -> "repeat=ONE"
-                        AudioRepeatMode.PAUSE_AT_END -> "repeat=PAUSE_AT_END"
-                        AudioRepeatMode.OFF -> "repeat=OFF"
-                    }
-                },
-            ) {
-                ModeToggleIcon(
-                    icon = when (state.repeatMode) {
-                        AudioRepeatMode.ONE -> Icons.Filled.RepeatOne
-                        // 第 4 档借暂停图标:循环图标里没有"停在曲末"的表达,
-                        // 视频页同一档也用 Pause(见 VideoPlayerScreen)。
-                        AudioRepeatMode.PAUSE_AT_END -> Icons.Filled.Pause
-                        else -> Icons.Filled.Repeat
-                    },
-                    active = state.repeatMode != AudioRepeatMode.OFF,
-                )
-            }
+                modifier = Modifier.weight(1f),
+            )
         }
 
         Spacer(Modifier.height(16.dp))
@@ -1557,41 +1517,7 @@ private fun PlayerContent(
     }
 }
 
-/**
- * 进度区（缓冲条 + 拖动条 + 时间）：三个进度流在内部订阅，
- * 500ms 节拍只重组这一小块，不波及整页。
- */
-/**
- * 随机/循环开关的图标：图形族全程无框，开启态以主题色着色 + 图标下方圆点标记。
- * 不用 *On 带框变体——循环三档里总有一档（顺序播放）无框，会成为样式例外；
- * 圆点是附加指示灯，亮/灭不改变图形结构，任意档位组合下两键风格一致。
- */
-@Composable
-private fun ModeToggleIcon(icon: ImageVector, active: Boolean) {
-    Box(Modifier.fillMaxSize()) {
-        Icon(
-            icon,
-            contentDescription = null,
-            tint = if (active) {
-                MaterialTheme.colorScheme.primary
-            } else {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            },
-            modifier = Modifier.align(Alignment.Center),
-        )
-        if (active) {
-            Box(
-                Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 4.dp)
-                    .size(4.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary),
-            )
-        }
-    }
-}
-
+/** 进度区订阅专用进度流，500ms 节拍只重组这一小块。 */
 @Composable
 private fun SeekRow(
     positionMs: StateFlow<Long>,
