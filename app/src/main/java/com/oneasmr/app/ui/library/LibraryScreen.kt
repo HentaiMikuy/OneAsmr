@@ -1250,7 +1250,7 @@ internal fun SortMenu(
  * Task 15 library filter menu with the Wave B compact trigger: an
  * [Icons.Filled.FilterList] icon button opening the same dropdown as before —
  * no filter ("全部") / rated-only ("已评分") / one entry per progress state /
- * one entry per manual age rating (全年龄/R15/R18, "分级：…"); a 6dp primary
+ * one entry per manual age rating (未分级/全年龄/R15/R18, "分级：…"); a 6dp primary
  * dot marks an active filter. The selection is DAO-level (a WHERE predicate
  * in the paging query, see [WorkDao.pagingSource]) — never in-memory.
  */
@@ -1320,9 +1320,9 @@ internal fun FilterMenu(
                 )
             }
             HorizontalDivider()
-            AgeRating.entries.forEach { rating ->
+            (listOf<AgeRating?>(null) + AgeRating.entries).forEach { rating ->
                 DropdownMenuItem(
-                    text = { Text("分级：${rating.label}") },
+                    text = { Text("分级：${rating?.label ?: "未分级"}") },
                     trailingIcon = if (filter == WorkFilter.Age(rating)) {
                         { Icon(Icons.Filled.Check, contentDescription = null) }
                     } else {

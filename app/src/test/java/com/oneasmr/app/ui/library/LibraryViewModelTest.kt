@@ -494,6 +494,12 @@ class LibraryViewModelTest {
         assertEquals(WorkFilter.Age(AgeRating.R18), lastFactoryFilter)
         assertTrue(awaitPagedItems(30).isNotEmpty())
 
+        viewModel.setFilter(WorkFilter.Age(null))
+        scheduler.advanceUntilIdle()
+        assertEquals(WorkFilter.Age(null), lastFactoryFilter)
+        assertEquals(WorkFilter.Age(null), viewModel.libraryFilter.value)
+        assertTrue(awaitPagedItems(30).isNotEmpty())
+
         viewModel.setFilter(null)
         scheduler.advanceUntilIdle()
         assertEquals(null, lastFactoryFilter)

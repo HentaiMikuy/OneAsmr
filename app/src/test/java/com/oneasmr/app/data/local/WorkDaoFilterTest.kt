@@ -17,7 +17,7 @@ import org.robolectric.annotation.Config
 /**
  * Task 15 filter dimension of the library paging query (DAO-level, never
  * in-memory): rated-only, per-progress-state, "none" (incl. review-less
- * works), per manual age rating (全年龄/R15/R18), and composition with search
+ * works), per manual age rating (未分级/全年龄/R15/R18), and composition with search
  * + sort — all through the REAL Room PagingSource.
  */
 @RunWith(RobolectricTestRunner::class)
@@ -171,6 +171,43 @@ class WorkDaoFilterTest {
 
         val r18 = loadAll(filter = WorkFilter.Age(AgeRating.R18))
         assertEquals(listOf("local:RJ100003"), r18.map { it.id })
+    }
+
+    @Test
+    fun `unassigned age filter excludes every assigned rating and follows rating edits`() = runBlocking {
+        commitWork("RJ100001")
+        commitWork("RJ100002")
+        commitWork("RJ100003")
+        commitWork("RJ100004")
+        db.workDao().updateAgeRating("local:RJ100001", AgeRating.ALL_AGES, 1_000L)
+        db.workDao().updateAgeRating("local:RJ100002", AgeRating.R15, 1_000L)
+        db.workDao().updateAgeRating("local:RJ100003", AgeRating.R18, 1_000L)
+        // 星级评分与年龄分级独立：已评分但没有年龄分级的作品仍应命中。
+        review("local:RJ100004", rating = 5, progress = ProgressState.listened)
+
+        assertEquals(listOf("local:RJ100004"), loadAll(WorkFilter.Age(null)).map { it.id })
+
+        db.workDao().updateAgeRating("local:RJ100004", AgeRating.R15, 2_000L)
+        assertEquals(emptyList<String>(), loadAll(WorkFilter.Age(null)).map { it.id })
+
+        db.workDao().updateAgeRating("local:RJ100001", null, 3_000L)
+        assertEquals(listOf("local:RJ100001"), loadAll(WorkFilter.Age(null)).map { it.id })
+    }
+
+    @Test
+    fun `unassigned age filter composes with keyword search and sorting`() = runBlocking {
+        commitWork("RJ100001")
+        commitWork("RJ100002")
+        commitWork("RJ100003")
+        db.workDao().updateAgeRating("local:RJ100001", AgeRating.ALL_AGES, 1_000L)
+        db.workDao().upsert(db.workDao().getById("local:RJ100002")!!.copy(titleSortKey = "zzz"))
+        db.workDao().upsert(db.workDao().getById("local:RJ100003")!!.copy(titleSortKey = "aaa"))
+
+        val sorted = loadAll(WorkFilter.Age(null), order = WorkOrder.TITLE_SORT_KEY)
+        assertEquals(listOf("local:RJ100003", "local:RJ100002"), sorted.map { it.id })
+        val hits = loadAll(WorkFilter.Age(null), order = WorkOrder.TITLE_SORT_KEY, keyword = "RJ100002")
+        assertEquals(listOf("local:RJ100002"), hits.map { it.id })
+        assertEquals(emptyList<String>(), loadAll(WorkFilter.Age(null), keyword = "RJ100001").map { it.id })
     }
 
     @Test

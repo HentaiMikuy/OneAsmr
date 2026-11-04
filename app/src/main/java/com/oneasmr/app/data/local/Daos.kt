@@ -89,14 +89,14 @@ data class WorkListItem(
  * - [Progress]: works whose progress state equals [state]. `none` matches
  *   BOTH explicit `progress = 'none'` rows and works without any review row
  *   (a no-review work is trivially "no progress yet" — kikoeru's default).
- * - [Age]: works the user manually age-rated (全年龄/R15/R18). Works with a
- *   different rating OR no rating at all are excluded.
+ * - [Age]: works matching a manual age rating (全年龄/R15/R18), or works
+ *   without one when [Age.rating] is null.
  */
 sealed interface WorkFilter {
     data object Rated : WorkFilter
     data class Progress(val state: ProgressState) : WorkFilter
-    /** 手动年龄分级筛选(全年龄/R15/R18)。 */
-    data class Age(val rating: AgeRating) : WorkFilter
+    /** 手动年龄分级筛选；rating 为 null 时仅匹配未分级作品。 */
+    data class Age(val rating: AgeRating?) : WorkFilter
 }
 
 /**
@@ -339,7 +339,7 @@ interface WorkDao {
      * unavailable), UNIONed across the four dimensions exactly like
      * [search]; the order is applied by the database. Task 15 adds the
      * review-join [filter] predicate (progress state / rated-only) as a
-     * third composition axis; the manual age-rating filter (全年龄/R15/R18)
+     * third composition axis; the manual age-rating filter (未分级/全年龄/R15/R18)
      * rides the same axis over `w.ageRating` — all combine in one SQL
      * statement.
      *
@@ -434,8 +434,13 @@ interface WorkDao {
                     " WHERE r.progress = :stateName"
                 }
             is WorkFilter.Age -> {
-                args += filter.rating.name
-                " WHERE w.ageRating = :ageRating"
+                val rating = filter.rating
+                if (rating == null) {
+                    " WHERE w.ageRating IS NULL"
+                } else {
+                    args += rating.name
+                    " WHERE w.ageRating = :ageRating"
+                }
             }
         }
         val orderBy = when (order) {
