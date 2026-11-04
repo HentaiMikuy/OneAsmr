@@ -1,5 +1,6 @@
 package com.oneasmr.app.ui.singles
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -21,10 +22,12 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ViewList
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -95,6 +98,9 @@ internal fun SingleFileBrowser(
     onToggleFavorite: (SingleFileRow) -> Unit,
     overflowActions: (SingleFileRow) -> List<RowAction>,
     modifier: Modifier = Modifier,
+    selectionMode: Boolean = false,
+    selectedFileIds: Set<Long> = emptySet(),
+    onToggleSelected: (SingleFileRow) -> Unit = {},
     headerContent: (@Composable () -> Unit)? = null,
 ) {
     val grid = viewMode == LibraryViewMode.GRID
@@ -129,6 +135,9 @@ internal fun SingleFileBrowser(
                     onClick = { onOpenFile(row.file.id) },
                     onToggleFavorite = { onToggleFavorite(row) },
                     overflowActions = overflowActions(row),
+                    selectionMode = selectionMode,
+                    selected = row.file.id in selectedFileIds,
+                    onToggleSelected = { onToggleSelected(row) },
                 )
             } else {
                 Column {
@@ -137,6 +146,9 @@ internal fun SingleFileBrowser(
                         onClick = { onOpenFile(row.file.id) },
                         onToggleFavorite = { onToggleFavorite(row) },
                         overflowActions = overflowActions(row),
+                        selectionMode = selectionMode,
+                        selected = row.file.id in selectedFileIds,
+                        onToggleSelected = { onToggleSelected(row) },
                     )
                     HorizontalDivider()
                 }
@@ -152,6 +164,9 @@ private fun SingleFileGridCard(
     onClick: () -> Unit,
     onToggleFavorite: () -> Unit,
     overflowActions: List<RowAction>,
+    selectionMode: Boolean,
+    selected: Boolean,
+    onToggleSelected: () -> Unit,
 ) {
     val file = row.file
     val kindLabel = if (file.kind == SingleFileKind.VIDEO) "视频" else "音频"
@@ -160,7 +175,16 @@ private fun SingleFileGridCard(
     Surface(
         modifier = Modifier.graphicsLayer { scaleX = pressScale; scaleY = pressScale },
         shape = MaterialTheme.shapes.medium,
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        color = if (selectionMode && selected) {
+            MaterialTheme.colorScheme.primaryContainer
+        } else {
+            MaterialTheme.colorScheme.surfaceContainerLow
+        },
+        border = if (selectionMode && selected) {
+            BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+        } else {
+            null
+        },
     ) {
         Column(
             Modifier
@@ -168,11 +192,24 @@ private fun SingleFileGridCard(
                 .combinedClickable(
                     interactionSource = interactionSource,
                     indication = LocalIndication.current,
-                    role = Role.Button,
-                    onClickLabel = if (file.missing) "文件已失效" else "播放$kindLabel",
-                    onClick = { if (!file.missing) onClick() },
-                    onLongClickLabel = "更多操作",
-                    onLongClick = { menuExpanded = true },
+                    role = if (selectionMode) Role.Checkbox else Role.Button,
+                    onClickLabel = when {
+                        selectionMode -> if (selected) "取消选择" else "选择文件"
+                        file.missing -> "文件已失效"
+                        else -> "播放$kindLabel"
+                    },
+                    onClick = {
+                        when {
+                            selectionMode -> onToggleSelected()
+                            !file.missing -> onClick()
+                        }
+                    },
+                    onLongClickLabel = if (selectionMode) null else "更多操作",
+                    onLongClick = if (selectionMode) {
+                        null
+                    } else {
+                        { menuExpanded = true }
+                    },
                     hapticFeedbackEnabled = true,
                 ),
         ) {
@@ -194,18 +231,30 @@ private fun SingleFileGridCard(
                         modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
                     )
                 }
-                IconButton(
-                    onClick = onToggleFavorite,
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(2.dp)
-                        .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.55f), CircleShape),
-                ) {
+                if (selectionMode) {
                     Icon(
-                        if (row.isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
-                        contentDescription = if (row.isFavorite) "取消收藏" else "收藏",
-                        tint = if (row.isFavorite) MaterialTheme.colorScheme.primary else Color.White,
+                        if (selected) Icons.Filled.CheckCircle else Icons.Outlined.RadioButtonUnchecked,
+                        contentDescription = null,
+                        tint = if (selected) MaterialTheme.colorScheme.primary else Color.White,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(8.dp)
+                            .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.55f), CircleShape),
                     )
+                } else {
+                    IconButton(
+                        onClick = onToggleFavorite,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(2.dp)
+                            .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.55f), CircleShape),
+                    ) {
+                        Icon(
+                            if (row.isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                            contentDescription = if (row.isFavorite) "取消收藏" else "收藏",
+                            tint = if (row.isFavorite) MaterialTheme.colorScheme.primary else Color.White,
+                        )
+                    }
                 }
                 file.durationMs?.let { duration ->
                     Surface(

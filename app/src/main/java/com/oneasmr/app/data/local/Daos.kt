@@ -975,6 +975,10 @@ interface CollectionDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun addItem(item: CollectionItem)
 
+    /** 多选批量加入；单次 DAO 写入由 SQLiteDriver 原生事务保证原子性。 */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun addItems(items: List<CollectionItem>)
+
     @Query("DELETE FROM collection_item WHERE collectionId = :collectionId AND fileId = :fileId")
     suspend fun removeItem(collectionId: Long, fileId: Long)
 

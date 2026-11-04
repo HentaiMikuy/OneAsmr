@@ -158,6 +158,30 @@ class SinglesViewModel @Inject constructor(
         }
     }
 
+    /** 多选批量加入；成员表主键 + INSERT IGNORE 保证重复操作幂等。 */
+    fun addFilesToCollections(fileIds: Set<Long>, collectionIds: Set<Long>) {
+        if (fileIds.isEmpty() || collectionIds.isEmpty()) return
+        viewModelScope.launch {
+            val now = System.currentTimeMillis()
+            collectionDao.ensureFavorites(now)
+            val items = collectionIds.flatMap { collectionId ->
+                val firstSortIndex = collectionDao.maxItemSortIndex(collectionId) + 1
+                fileIds.mapIndexed { index, fileId ->
+                    CollectionItem(
+                        collectionId = collectionId,
+                        fileId = fileId,
+                        sortIndex = firstSortIndex + index,
+                        addedAt = now,
+                    )
+                }
+            }
+            // 不能用 RoomDatabase.withTransaction：BundledSQLiteDriver 没有
+            // SupportSQLiteOpenHelper。单次批量 DAO 写由驱动原生事务提交。
+            collectionDao.addItems(items)
+            message.value = "已将 ${fileIds.size} 个文件加入所选收藏夹"
+        }
+    }
+
     /** 建自定义夹;空白名忽略。@return 无(UI 乐观关闭对话框,流自会刷新)。 */
     fun createCollection(name: String) {
         val trimmed = name.trim()

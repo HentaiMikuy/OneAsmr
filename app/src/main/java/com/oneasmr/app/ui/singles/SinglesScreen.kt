@@ -1,5 +1,6 @@
 package com.oneasmr.app.ui.singles
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -12,10 +13,12 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -24,8 +27,11 @@ import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Checklist
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material.icons.outlined.AudioFile
 import androidx.compose.material.icons.outlined.FolderSpecial
@@ -54,6 +60,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.ColorPainter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -71,7 +78,7 @@ import com.oneasmr.app.navigation.LocalBottomClusterHeight
 /**
  * 单档库根标签页:收藏夹区(系统「收藏」置顶 + 自定义夹 + 新建)+
  * 全部文件卡片/列表(缩略图/标题/频道·时长、续播进度线、爱心快捷收藏、
- * 加入收藏夹)。与作品库分体系 —— 无进度状态,组织方式即收藏夹。
+ * 单个或多选批量加入收藏夹)。与作品库分体系 —— 无进度状态,组织方式即收藏夹。
  */
 @Composable
 fun SinglesScreen(
@@ -87,6 +94,27 @@ fun SinglesScreen(
     var removeTarget by remember { mutableStateOf<SingleFileRow?>(null) }
     var bindTarget by remember { mutableStateOf<SingleFileRow?>(null) }
     var sortMenu by remember { mutableStateOf(false) }
+    var selectionMode by remember { mutableStateOf(false) }
+    var selectedFileIds by remember { mutableStateOf(setOf<Long>()) }
+    var batchMembershipDialog by remember { mutableStateOf(false) }
+
+    val availableFileIds = state.files.mapTo(mutableSetOf()) { it.file.id }
+    val selectedVisibleFileIds = selectedFileIds.intersect(availableFileIds)
+    val allSelected = availableFileIds.isNotEmpty() && selectedVisibleFileIds.size == availableFileIds.size
+
+    fun exitSelectionMode() {
+        selectionMode = false
+        selectedFileIds = emptySet()
+        batchMembershipDialog = false
+    }
+
+    BackHandler(enabled = selectionMode && !batchMembershipDialog) { exitSelectionMode() }
+    LaunchedEffect(availableFileIds) {
+        // 重扫或手动移除后，不让已不存在的 id 留在多选计数里。
+        if (selectedVisibleFileIds.size != selectedFileIds.size) {
+            selectedFileIds = selectedVisibleFileIds
+        }
+    }
 
     // 一次性提示(补全结果等)用 Toast:本页无 Scaffold/SnackbarHost。
     val context = LocalContext.current
@@ -109,69 +137,103 @@ fun SinglesScreen(
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column(Modifier.weight(1f)) {
-                Text("单档", style = MaterialTheme.typography.displaySmall)
-                Text(
-                    "${state.files.size} 个文件",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            SinglesViewModeToggle(mode = viewMode, onSelect = viewModel::setViewMode)
-            Box {
-                IconButton(onClick = { sortMenu = true }) {
-                    Icon(
-                        Icons.Filled.Sort,
-                        contentDescription = "排序：${state.order.label}，${state.order.directionLabel(state.sortDescending)}",
+            if (selectionMode) {
+                IconButton(onClick = ::exitSelectionMode) {
+                    Icon(Icons.Filled.Close, contentDescription = "退出多选")
+                }
+                Column(Modifier.weight(1f)) {
+                    Text("已选 ${selectedVisibleFileIds.size} 项", style = MaterialTheme.typography.headlineSmall)
+                    Text(
+                        "点击文件选择或取消",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
-                    SinglesOrder.entries.forEach { order ->
-                        DropdownMenuItem(
-                            text = { Text(order.label) },
-                            leadingIcon = {
-                                RadioButton(
-                                    selected = state.order == order,
-                                    onClick = null,
-                                )
-                            },
-                            trailingIcon = if (state.order == order) {
-                                {
-                                    Icon(
-                                        if (state.sortDescending) Icons.Filled.ArrowDownward else Icons.Filled.ArrowUpward,
-                                        contentDescription = if (state.sortDescending) "降序" else "升序",
-                                    )
-                                }
-                            } else {
-                                null
-                            },
-                            onClick = {
-                                viewModel.setOrder(order)
-                                sortMenu = false
-                            },
-                        )
-                    }
-                    HorizontalDivider()
-                    listOf(false, true).forEach { descending ->
-                        DropdownMenuItem(
-                            text = { Text(state.order.directionLabel(descending)) },
-                            leadingIcon = {
-                                RadioButton(selected = state.sortDescending == descending, onClick = null)
-                            },
-                            onClick = {
-                                viewModel.setSortDescending(descending)
-                                sortMenu = false
-                            },
-                        )
-                    }
-                    HorizontalDivider()
-                    DropdownMenuItem(
-                        text = { Text("移除所有失效条目") },
-                        onClick = {
-                            sortMenu = false
-                            viewModel.removeAllMissing()
-                        },
+                IconButton(
+                    onClick = {
+                        selectedFileIds = if (allSelected) emptySet() else availableFileIds
+                    },
+                    enabled = availableFileIds.isNotEmpty(),
+                ) {
+                    Icon(
+                        Icons.Filled.SelectAll,
+                        contentDescription = if (allSelected) "取消全选" else "全选",
                     )
+                }
+                IconButton(
+                    onClick = { batchMembershipDialog = true },
+                    enabled = selectedVisibleFileIds.isNotEmpty(),
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.PlaylistAdd, contentDescription = "批量加入收藏夹")
+                }
+            } else {
+                Column(Modifier.weight(1f)) {
+                    Text("单档", style = MaterialTheme.typography.displaySmall)
+                    Text(
+                        "${state.files.size} 个文件",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                IconButton(onClick = { selectionMode = true }) {
+                    Icon(Icons.Filled.Checklist, contentDescription = "多选")
+                }
+                SinglesViewModeToggle(mode = viewMode, onSelect = viewModel::setViewMode)
+                Box {
+                    IconButton(onClick = { sortMenu = true }) {
+                        Icon(
+                            Icons.Filled.Sort,
+                            contentDescription = "排序：${state.order.label}，${state.order.directionLabel(state.sortDescending)}",
+                        )
+                    }
+                    DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
+                        SinglesOrder.entries.forEach { order ->
+                            DropdownMenuItem(
+                                text = { Text(order.label) },
+                                leadingIcon = {
+                                    RadioButton(
+                                        selected = state.order == order,
+                                        onClick = null,
+                                    )
+                                },
+                                trailingIcon = if (state.order == order) {
+                                    {
+                                        Icon(
+                                            if (state.sortDescending) Icons.Filled.ArrowDownward else Icons.Filled.ArrowUpward,
+                                            contentDescription = if (state.sortDescending) "降序" else "升序",
+                                        )
+                                    }
+                                } else {
+                                    null
+                                },
+                                onClick = {
+                                    viewModel.setOrder(order)
+                                    sortMenu = false
+                                },
+                            )
+                        }
+                        HorizontalDivider()
+                        listOf(false, true).forEach { descending ->
+                            DropdownMenuItem(
+                                text = { Text(state.order.directionLabel(descending)) },
+                                leadingIcon = {
+                                    RadioButton(selected = state.sortDescending == descending, onClick = null)
+                                },
+                                onClick = {
+                                    viewModel.setSortDescending(descending)
+                                    sortMenu = false
+                                },
+                            )
+                        }
+                        HorizontalDivider()
+                        DropdownMenuItem(
+                            text = { Text("移除所有失效条目") },
+                            onClick = {
+                                sortMenu = false
+                                viewModel.removeAllMissing()
+                            },
+                        )
+                    }
                 }
             }
         }
@@ -190,8 +252,23 @@ fun SinglesScreen(
             viewMode = viewMode,
             onOpenFile = onOpenFile,
             onToggleFavorite = viewModel::toggleFavorite,
+            selectionMode = selectionMode,
+            selectedFileIds = selectedVisibleFileIds,
+            onToggleSelected = { row ->
+                selectedFileIds = if (row.file.id in selectedFileIds) {
+                    selectedFileIds - row.file.id
+                } else {
+                    selectedFileIds + row.file.id
+                }
+            },
             overflowActions = { row ->
                 buildList {
+                    add(
+                        RowAction("多选") {
+                            selectionMode = true
+                            selectedFileIds = selectedFileIds + row.file.id
+                        },
+                    )
                     add(RowAction("加入收藏夹…") { membershipTarget = row })
                     // 有 ID 一键补全；无 ID 先手动关联链接。
                     if (row.file.youtubeId != null) {
@@ -204,27 +281,29 @@ fun SinglesScreen(
             },
             headerContent = {
                 Column {
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = headerInset, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            "收藏夹",
-                            style = MaterialTheme.typography.titleMedium,
-                            modifier = Modifier.weight(1f),
-                        )
-                        IconButton(onClick = { createDialog = true }) {
-                            Icon(Icons.Filled.Add, contentDescription = "新建收藏夹")
+                    if (!selectionMode) {
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = headerInset, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                "收藏夹",
+                                style = MaterialTheme.typography.titleMedium,
+                                modifier = Modifier.weight(1f),
+                            )
+                            IconButton(onClick = { createDialog = true }) {
+                                Icon(Icons.Filled.Add, contentDescription = "新建收藏夹")
+                            }
                         }
-                    }
-                    LazyRow(
-                        contentPadding = PaddingValues(horizontal = headerInset),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        items(state.collections, key = { it.collection.id }) { entry ->
-                            CollectionCard(entry = entry, onClick = { onOpenCollection(entry.collection.id) })
+                        LazyRow(
+                            contentPadding = PaddingValues(horizontal = headerInset),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            items(state.collections, key = { it.collection.id }) { entry ->
+                                CollectionCard(entry = entry, onClick = { onOpenCollection(entry.collection.id) })
+                            }
                         }
                     }
                     Row(
@@ -232,7 +311,7 @@ fun SinglesScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text("全部文件", style = MaterialTheme.typography.titleMedium)
-                        if (viewMode == LibraryViewMode.GRID) {
+                        if (!selectionMode && viewMode == LibraryViewMode.GRID) {
                             SingleFileLongPressHint(Modifier.weight(1f).padding(start = 12.dp))
                         }
                     }
@@ -260,6 +339,18 @@ fun SinglesScreen(
             },
             onCreate = { createDialog = true },
             onDismiss = { membershipTarget = null },
+        )
+    }
+    if (batchMembershipDialog) {
+        BatchMembershipDialog(
+            fileCount = selectedVisibleFileIds.size,
+            collections = state.collections,
+            onConfirm = { collectionIds ->
+                viewModel.addFilesToCollections(selectedVisibleFileIds, collectionIds)
+                exitSelectionMode()
+            },
+            onCreate = { createDialog = true },
+            onDismiss = { batchMembershipDialog = false },
         )
     }
     removeTarget?.let { target ->
@@ -400,13 +491,31 @@ internal fun SingleFileListRow(
     onClick: () -> Unit,
     onToggleFavorite: () -> Unit,
     overflowActions: List<RowAction>,
+    selectionMode: Boolean = false,
+    selected: Boolean = false,
+    onToggleSelected: () -> Unit = {},
 ) {
     val file = row.file
     val greyed = file.missing
     Row(
         Modifier
             .fillMaxWidth()
-            .clickable(enabled = !greyed, onClick = onClick)
+            .background(
+                if (selectionMode && selected) {
+                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
+                } else {
+                    Color.Transparent
+                },
+            )
+            .clickable(
+                enabled = selectionMode || !greyed,
+                onClickLabel = if (selectionMode) {
+                    if (selected) "取消选择" else "选择文件"
+                } else {
+                    null
+                },
+                onClick = { if (selectionMode) onToggleSelected() else onClick() },
+            )
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -472,18 +581,23 @@ internal fun SingleFileListRow(
                 )
             }
         }
-        IconButton(onClick = onToggleFavorite) {
-            Icon(
-                if (row.isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
-                contentDescription = if (row.isFavorite) "取消收藏" else "收藏",
-                tint = if (row.isFavorite) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                },
-            )
+        if (selectionMode) {
+            Spacer(Modifier.width(8.dp))
+            Checkbox(checked = selected, onCheckedChange = null)
+        } else {
+            IconButton(onClick = onToggleFavorite) {
+                Icon(
+                    if (row.isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                    contentDescription = if (row.isFavorite) "取消收藏" else "收藏",
+                    tint = if (row.isFavorite) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
+            SingleFileOverflowMenu(overflowActions)
         }
-        SingleFileOverflowMenu(overflowActions)
     }
 }
 
@@ -560,6 +674,63 @@ private fun MembershipDialog(
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("完成") } },
+    )
+}
+
+/** 多选文件批量加入一个或多个收藏夹；只新增成员关系，不移除原有归属。 */
+@Composable
+private fun BatchMembershipDialog(
+    fileCount: Int,
+    collections: List<CollectionWithCount>,
+    onConfirm: (Set<Long>) -> Unit,
+    onCreate: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var checked by remember { mutableStateOf(setOf<Long>()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("批量加入收藏夹") },
+        text = {
+            Column {
+                Text(
+                    "将 $fileCount 个文件加入所选收藏夹，已有条目不会重复添加。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(8.dp))
+                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 320.dp)) {
+                    items(collections, key = { it.collection.id }) { entry ->
+                        val id = entry.collection.id
+                        val isChecked = id in checked
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable { checked = if (isChecked) checked - id else checked + id }
+                                .padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Checkbox(checked = isChecked, onCheckedChange = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text(entry.collection.name, style = MaterialTheme.typography.bodyLarge)
+                        }
+                    }
+                    item {
+                        TextButton(onClick = onCreate) {
+                            Icon(Icons.Filled.Add, contentDescription = null)
+                            Spacer(Modifier.width(4.dp))
+                            Text("新建收藏夹")
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(checked) },
+                enabled = fileCount > 0 && checked.isNotEmpty(),
+            ) { Text("添加") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
 }
 
