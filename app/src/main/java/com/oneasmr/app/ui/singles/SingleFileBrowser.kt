@@ -1,7 +1,8 @@
 package com.oneasmr.app.ui.singles
 
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -43,12 +44,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.oneasmr.app.data.local.SingleFileKind
 import com.oneasmr.app.data.local.settings.LibraryViewMode
 import com.oneasmr.app.navigation.LocalBottomClusterHeight
 import com.oneasmr.app.ui.common.SingleFileThumb
+import com.oneasmr.app.ui.common.rememberPressScale
 
 @Composable
 internal fun SinglesViewModeToggle(mode: LibraryViewMode, onSelect: (LibraryViewMode) -> Unit) {
@@ -66,6 +71,19 @@ internal fun SinglesViewModeToggle(mode: LibraryViewMode, onSelect: (LibraryView
             Icon(Icons.AutoMirrored.Filled.ViewList, contentDescription = "列表视图")
         }
     }
+}
+
+@Composable
+internal fun SingleFileLongPressHint(modifier: Modifier = Modifier) {
+    Text(
+        "长按卡片查看更多操作",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        textAlign = TextAlign.End,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = modifier,
+    )
 }
 
 /** 首页和收藏夹共用浏览布局；页头占满整行，避免嵌套纵向滚动。 */
@@ -98,6 +116,10 @@ internal fun SingleFileBrowser(
         if (headerContent != null) {
             item(key = "header", span = { GridItemSpan(maxLineSpan) }, contentType = "header") {
                 headerContent()
+            }
+        } else if (grid) {
+            item(key = "long_press_hint", span = { GridItemSpan(maxLineSpan) }, contentType = "hint") {
+                SingleFileLongPressHint(Modifier.fillMaxWidth().padding(horizontal = 4.dp))
             }
         }
         items(files, key = { it.file.id }, contentType = { if (grid) "card" else "row" }) { row ->
@@ -133,11 +155,27 @@ private fun SingleFileGridCard(
 ) {
     val file = row.file
     val kindLabel = if (file.kind == SingleFileKind.VIDEO) "视频" else "音频"
+    var menuExpanded by remember(file.id) { mutableStateOf(false) }
+    val (interactionSource, pressScale) = rememberPressScale(0.97f)
     Surface(
+        modifier = Modifier.graphicsLayer { scaleX = pressScale; scaleY = pressScale },
         shape = MaterialTheme.shapes.medium,
         color = MaterialTheme.colorScheme.surfaceContainerLow,
     ) {
-        Column(Modifier.fillMaxWidth().clickable(enabled = !file.missing, onClick = onClick)) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .combinedClickable(
+                    interactionSource = interactionSource,
+                    indication = LocalIndication.current,
+                    role = Role.Button,
+                    onClickLabel = if (file.missing) "文件已失效" else "播放$kindLabel",
+                    onClick = { if (!file.missing) onClick() },
+                    onLongClickLabel = "更多操作",
+                    onLongClick = { menuExpanded = true },
+                    hapticFeedbackEnabled = true,
+                ),
+        ) {
             Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f)) {
                 SingleFileThumb(
                     thumbSource = file.thumbSource,
@@ -190,6 +228,11 @@ private fun SingleFileGridCard(
                         trackColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                     )
                 }
+                SingleFileActionMenu(
+                    actions = overflowActions,
+                    expanded = menuExpanded,
+                    onDismiss = { menuExpanded = false },
+                )
             }
             Text(
                 file.displayTitle,
@@ -200,20 +243,14 @@ private fun SingleFileGridCard(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(start = 10.dp, end = 10.dp, top = 10.dp),
             )
-            Row(
-                Modifier.fillMaxWidth().padding(start = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    file.channel?.takeIf { it.isNotBlank() } ?: kindLabel,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-                SingleFileOverflowMenu(overflowActions)
-            }
+            Text(
+                file.channel?.takeIf { it.isNotBlank() } ?: kindLabel,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth().padding(start = 10.dp, end = 10.dp, top = 4.dp, bottom = 10.dp),
+            )
         }
     }
 }
@@ -225,16 +262,21 @@ internal fun SingleFileOverflowMenu(actions: List<RowAction>) {
         IconButton(onClick = { expanded = true }) {
             Icon(Icons.Filled.MoreVert, contentDescription = "更多操作")
         }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            actions.forEach { item ->
-                DropdownMenuItem(
-                    text = { Text(item.label) },
-                    onClick = {
-                        expanded = false
-                        item.action()
-                    },
-                )
-            }
+        SingleFileActionMenu(actions, expanded, onDismiss = { expanded = false })
+    }
+}
+
+@Composable
+private fun SingleFileActionMenu(actions: List<RowAction>, expanded: Boolean, onDismiss: () -> Unit) {
+    DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
+        actions.forEach { item ->
+            DropdownMenuItem(
+                text = { Text(item.label) },
+                onClick = {
+                    onDismiss()
+                    item.action()
+                },
+            )
         }
     }
 }

@@ -227,11 +227,15 @@ fun SinglesScreen(
                             CollectionCard(entry = entry, onClick = { onOpenCollection(entry.collection.id) })
                         }
                     }
-                    Text(
-                        "全部文件",
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.padding(horizontal = headerInset, vertical = 8.dp),
-                    )
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = headerInset, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("全部文件", style = MaterialTheme.typography.titleMedium)
+                        if (viewMode == LibraryViewMode.GRID) {
+                            SingleFileLongPressHint(Modifier.weight(1f).padding(start = 12.dp))
+                        }
+                    }
                 }
             },
         )
