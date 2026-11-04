@@ -14,6 +14,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.annotation.RequiresApi
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Column
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -25,6 +26,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.oneasmr.app.data.local.settings.SettingsStore
 import com.oneasmr.app.data.local.settings.ContentSafetySettings
@@ -176,6 +178,9 @@ class MainActivity : ComponentActivity() {
                         enableEdgeToEdge()
                         Log.i(TAG, "onCreate: launch animation layer dismissed")
                     }
+                    // 每次冷启动最多处理一次启动后的 NSFW 提醒。Activity 重建时
+                    // playLaunchAnimation 的进程闸门已消费，不会重复弹出；新进程会重新提醒。
+                    var startupNsfwReminderHandled by remember { mutableStateOf(false) }
                     LaunchAnimatedStart(
                         active = showLaunchAnimation,
                         started = launchHandoffReady.value,
@@ -185,8 +190,23 @@ class MainActivity : ComponentActivity() {
                         },
                     ) {
                         OneAsmrNavHost(deepLinkIntent = deepLinkIntent)
-                        if (!nsfwChoiceAsked && !contentSafety.absoluteRestrictionEnabled) {
-                            NsfwChoiceDialog(settingsStore = settingsStore)
+                        if (!showLaunchAnimation) {
+                            if (!nsfwChoiceAsked && !contentSafety.absoluteRestrictionEnabled) {
+                                NsfwChoiceDialog(
+                                    settingsStore = settingsStore,
+                                    onChoiceMade = { startupNsfwReminderHandled = true },
+                                )
+                            } else if (
+                                playLaunchAnimation &&
+                                nsfwChoiceAsked &&
+                                contentSafety.effectiveNsfwEnabled &&
+                                !startupNsfwReminderHandled
+                            ) {
+                                NsfwStartupReminderDialog(
+                                    settingsStore = settingsStore,
+                                    onHandled = { startupNsfwReminderHandled = true },
+                                )
+                            }
                         }
                     }
                 }
@@ -200,7 +220,10 @@ class MainActivity : ComponentActivity() {
      * 与曲名隐藏,适合公共场合)。
      */
     @Composable
-    private fun NsfwChoiceDialog(settingsStore: SettingsStore) {
+    private fun NsfwChoiceDialog(
+        settingsStore: SettingsStore,
+        onChoiceMade: () -> Unit,
+    ) {
         val scope = rememberCoroutineScope()
         AlertDialog(
             onDismissRequest = {},
@@ -214,6 +237,7 @@ class MainActivity : ComponentActivity() {
             confirmButton = {
                 TextButton(
                     onClick = {
+                        onChoiceMade()
                         scope.launch {
                             settingsStore.setNsfwEnabled(true)
                             settingsStore.setNsfwChoiceAsked()
@@ -224,12 +248,49 @@ class MainActivity : ComponentActivity() {
             dismissButton = {
                 TextButton(
                     onClick = {
+                        onChoiceMade()
                         scope.launch {
                             settingsStore.setNsfwEnabled(false)
                             settingsStore.setNsfwChoiceAsked()
                         }
                     },
                 ) { Text("不启用") }
+            },
+        )
+    }
+
+    /** 冷启动动画结束后提醒用户当前会完整显示敏感内容；本次启动选择保持后不再打扰。 */
+    @Composable
+    private fun NsfwStartupReminderDialog(
+        settingsStore: SettingsStore,
+        onHandled: () -> Unit,
+    ) {
+        val scope = rememberCoroutineScope()
+        AlertDialog(
+            onDismissRequest = onHandled,
+            title = { Text("当前处于 NSFW 模式") },
+            text = {
+                Text(
+                    "所有作品的封面与曲名都会完整显示。是否需要关闭 NSFW 模式，" +
+                        "或切换为隐藏所有作品封面与曲名的绝对限制模式？",
+                )
+            },
+            confirmButton = {
+                Column(horizontalAlignment = Alignment.End) {
+                    TextButton(
+                        onClick = {
+                            onHandled()
+                            scope.launch { settingsStore.setAbsoluteRestrictionEnabled(true) }
+                        },
+                    ) { Text("切换为绝对限制") }
+                    TextButton(
+                        onClick = {
+                            onHandled()
+                            scope.launch { settingsStore.setNsfwEnabled(false) }
+                        },
+                    ) { Text("关闭 NSFW 模式") }
+                    TextButton(onClick = onHandled) { Text("保持当前模式") }
+                }
             },
         )
     }
