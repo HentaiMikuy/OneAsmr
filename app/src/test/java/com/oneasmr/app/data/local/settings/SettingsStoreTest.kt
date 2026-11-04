@@ -121,6 +121,32 @@ class SettingsStoreTest {
     }
 
     @Test
+    fun `singles view mode persists independently of the work library`() = runTest {
+        val tf = file("singles-viewmode")
+        val store = storeIn(tf.open())
+        assertEquals(LibraryViewMode.LIST, store.singlesViewMode.first())
+        assertEquals(LibraryViewMode.GRID, store.libraryViewMode.first())
+        store.setLibraryViewMode(LibraryViewMode.LIST)
+        store.setSinglesViewMode(LibraryViewMode.GRID)
+
+        val restarted = storeIn(tf.restart())
+        assertEquals(LibraryViewMode.GRID, restarted.singlesViewMode.first())
+        assertEquals(LibraryViewMode.LIST, restarted.libraryViewMode.first())
+        restarted.setLibraryViewMode(LibraryViewMode.GRID)
+        restarted.setSinglesViewMode(LibraryViewMode.LIST)
+        assertEquals(LibraryViewMode.GRID, restarted.libraryViewMode.first())
+        assertEquals(LibraryViewMode.LIST, restarted.singlesViewMode.first())
+    }
+
+    @Test
+    fun `corrupt singles view mode falls back to LIST`() = runTest {
+        val tf = file("singles-viewmode-corrupt")
+        val dataStore = tf.open()
+        dataStore.edit { it[stringPreferencesKey("singles_view_mode")] = "CAROUSEL" }
+        assertEquals(LibraryViewMode.LIST, storeIn(dataStore).singlesViewMode.first())
+    }
+
+    @Test
     fun `theme resolution against system setting`() {
         assertTrue(ThemeMode.SYSTEM.resolveDarkTheme(true))
         assertFalse(ThemeMode.SYSTEM.resolveDarkTheme(false))

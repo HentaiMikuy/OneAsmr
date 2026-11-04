@@ -52,16 +52,15 @@ enum class ScrapingLanguage(val code: String) {
     }
 }
 
-/** Library home layout (Task 12): cover grid vs list rows, persisted. */
+/** 库页面的网格/列表布局；作品库与单档库分别保存偏好。 */
 enum class LibraryViewMode {
     GRID,
     LIST,
     ;
 
     companion object {
-        /** Read the persisted value; unknown/missing values fall back to [GRID]. */
-        fun fromStored(value: String?): LibraryViewMode =
-            entries.firstOrNull { it.name == value } ?: GRID
+        fun fromStored(value: String?, fallback: LibraryViewMode = GRID): LibraryViewMode =
+            entries.firstOrNull { it.name == value } ?: fallback
     }
 }
 
@@ -121,6 +120,10 @@ class SettingsStore @Inject constructor(
     /** Library home layout preference (Task 12), defaults to the cover grid. */
     val libraryViewMode: Flow<LibraryViewMode> =
         dataStore.data.map { LibraryViewMode.fromStored(it[KEY_LIBRARY_VIEW_MODE]) }
+
+    /** 单档首页与收藏夹共用，默认保留原来的列表布局，不影响作品库。 */
+    val singlesViewMode: Flow<LibraryViewMode> =
+        dataStore.data.map { LibraryViewMode.fromStored(it[KEY_SINGLES_VIEW_MODE], LibraryViewMode.LIST) }
 
     /** Library sort order (Task 13); unknown/missing stored values fall back to [WorkOrder.ID]. */
     val librarySortOrder: Flow<WorkOrder> =
@@ -291,6 +294,10 @@ class SettingsStore @Inject constructor(
         dataStore.edit { it[KEY_LIBRARY_VIEW_MODE] = mode.name }
     }
 
+    suspend fun setSinglesViewMode(mode: LibraryViewMode) {
+        dataStore.edit { it[KEY_SINGLES_VIEW_MODE] = mode.name }
+    }
+
     /** Persists the library sort selection (order + direction) in one atomic edit. */
     suspend fun setLibrarySort(order: WorkOrder, descending: Boolean) {
         dataStore.edit {
@@ -335,6 +342,7 @@ class SettingsStore @Inject constructor(
         private val KEY_SCRAPER_BASE_URL_OVERRIDE = stringPreferencesKey("scraper_base_url_override")
         private val KEY_CACHE_CAP_MB = intPreferencesKey("cache_cap_mb")
         private val KEY_LIBRARY_VIEW_MODE = stringPreferencesKey("library_view_mode")
+        private val KEY_SINGLES_VIEW_MODE = stringPreferencesKey("singles_view_mode")
         private val KEY_LIBRARY_SORT_ORDER = stringPreferencesKey("library_sort_order")
         private val KEY_LIBRARY_SORT_DESCENDING = booleanPreferencesKey("library_sort_descending")
         private val KEY_RECENT_SEARCHES = stringPreferencesKey("recent_searches")

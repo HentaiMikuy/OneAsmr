@@ -2,7 +2,6 @@ package com.oneasmr.app.ui.singles
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -10,15 +9,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -44,7 +40,8 @@ import com.oneasmr.app.data.local.CollectionDao
 import com.oneasmr.app.data.local.KeySpec
 import com.oneasmr.app.data.local.PlaybackStateDao
 import com.oneasmr.app.data.local.SingleFile
-import com.oneasmr.app.navigation.LocalBottomClusterHeight
+import com.oneasmr.app.data.local.settings.LibraryViewMode
+import com.oneasmr.app.data.local.settings.SettingsStore
 import com.oneasmr.app.navigation.Routes
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -66,10 +63,18 @@ class CollectionViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val collectionDao: CollectionDao,
     playbackStateDao: PlaybackStateDao,
+    private val settingsStore: SettingsStore,
 ) : ViewModel() {
 
     private val collectionId: Long =
         checkNotNull(savedStateHandle.get<String>(Routes.COLLECTION_ARG)).toLong()
+
+    val viewMode: StateFlow<LibraryViewMode> = settingsStore.singlesViewMode
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), LibraryViewMode.LIST)
+
+    fun setViewMode(mode: LibraryViewMode) {
+        viewModelScope.launch { settingsStore.setSinglesViewMode(mode) }
+    }
 
     // Room 的 Flow 按「表」失效:playback_state 上任何一行写入(哪怕 trackKey
     // 属于作品 "local:" 前缀)都会让上面的前缀查询重跑,结果却逐元素相等。
@@ -142,7 +147,7 @@ class CollectionViewModel @Inject constructor(
 }
 
 /**
- * 收藏夹详情页:成员列表按夹内序;行内操作为「从本夹移除」(移出夹不
+ * 收藏夹详情页:成员卡片/列表按夹内序；操作为「从本夹移除」(移出夹不
  * 影响库与其它夹 —— 播放列表语义)。自定义夹可改名/删除,系统「收藏」
  * 夹两者皆不可。
  */
@@ -153,6 +158,7 @@ fun CollectionScreen(
     viewModel: CollectionViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val viewMode by viewModel.viewMode.collectAsStateWithLifecycle()
     var menu by remember { mutableStateOf(false) }
     var renameDialog by remember { mutableStateOf(false) }
     var deleteDialog by remember { mutableStateOf(false) }
@@ -185,6 +191,7 @@ fun CollectionScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            SinglesViewModeToggle(mode = viewMode, onSelect = viewModel::setViewMode)
             if (collection != null && !collection.isSystem) {
                 Box {
                     IconButton(onClick = { menu = true }) {
@@ -227,22 +234,15 @@ fun CollectionScreen(
                 )
             }
         } else {
-            LazyColumn(
-                Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(bottom = LocalBottomClusterHeight.current),
-            ) {
-                items(state.files, key = { it.file.id }) { row ->
-                    SingleFileListRow(
-                        row = row,
-                        onClick = { onOpenFile(row.file.id) },
-                        onToggleFavorite = { viewModel.toggleFavorite(row) },
-                        overflowActions = listOf(
-                            RowAction("从本夹移除") { viewModel.removeFromCollection(row.file) },
-                        ),
-                    )
-                    HorizontalDivider()
-                }
-            }
+            SingleFileBrowser(
+                files = state.files,
+                viewMode = viewMode,
+                onOpenFile = onOpenFile,
+                onToggleFavorite = viewModel::toggleFavorite,
+                overflowActions = { row ->
+                    listOf(RowAction("从本夹移除") { viewModel.removeFromCollection(row.file) })
+                },
+            )
         }
     }
 

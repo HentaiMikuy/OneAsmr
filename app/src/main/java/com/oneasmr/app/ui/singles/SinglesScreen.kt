@@ -16,16 +16,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material.icons.outlined.AudioFile
 import androidx.compose.material.icons.outlined.FolderSpecial
@@ -65,11 +65,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import com.oneasmr.app.data.local.CollectionWithCount
 import com.oneasmr.app.data.local.SingleFileKind
+import com.oneasmr.app.data.local.settings.LibraryViewMode
 import com.oneasmr.app.navigation.LocalBottomClusterHeight
 
 /**
  * 单档库根标签页:收藏夹区(系统「收藏」置顶 + 自定义夹 + 新建)+
- * 全部文件列表(缩略图/标题/频道·时长、续播进度线、爱心快捷收藏、
+ * 全部文件卡片/列表(缩略图/标题/频道·时长、续播进度线、爱心快捷收藏、
  * 加入收藏夹)。与作品库分体系 —— 无进度状态,组织方式即收藏夹。
  */
 @Composable
@@ -80,6 +81,7 @@ fun SinglesScreen(
     viewModel: SinglesViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val viewMode by viewModel.viewMode.collectAsStateWithLifecycle()
     var createDialog by remember { mutableStateOf(false) }
     var membershipTarget by remember { mutableStateOf<SingleFileRow?>(null) }
     var removeTarget by remember { mutableStateOf<SingleFileRow?>(null) }
@@ -115,9 +117,13 @@ fun SinglesScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            SinglesViewModeToggle(mode = viewMode, onSelect = viewModel::setViewMode)
             Box {
                 IconButton(onClick = { sortMenu = true }) {
-                    Icon(Icons.Filled.Sort, contentDescription = "排序")
+                    Icon(
+                        Icons.Filled.Sort,
+                        contentDescription = "排序：${state.order.label}，${state.order.directionLabel(state.sortDescending)}",
+                    )
                 }
                 DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
                     SinglesOrder.entries.forEach { order ->
@@ -129,8 +135,31 @@ fun SinglesScreen(
                                     onClick = null,
                                 )
                             },
+                            trailingIcon = if (state.order == order) {
+                                {
+                                    Icon(
+                                        if (state.sortDescending) Icons.Filled.ArrowDownward else Icons.Filled.ArrowUpward,
+                                        contentDescription = if (state.sortDescending) "降序" else "升序",
+                                    )
+                                }
+                            } else {
+                                null
+                            },
                             onClick = {
                                 viewModel.setOrder(order)
+                                sortMenu = false
+                            },
+                        )
+                    }
+                    HorizontalDivider()
+                    listOf(false, true).forEach { descending ->
+                        DropdownMenuItem(
+                            text = { Text(state.order.directionLabel(descending)) },
+                            leadingIcon = {
+                                RadioButton(selected = state.sortDescending == descending, onClick = null)
+                            },
+                            onClick = {
+                                viewModel.setSortDescending(descending)
                                 sortMenu = false
                             },
                         )
@@ -155,64 +184,57 @@ fun SinglesScreen(
             return@Column
         }
 
-        LazyColumn(
-            Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(bottom = LocalBottomClusterHeight.current),
-        ) {
-            item(key = "collections_header") {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        "收藏夹",
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.weight(1f),
-                    )
-                    IconButton(onClick = { createDialog = true }) {
-                        Icon(Icons.Filled.Add, contentDescription = "新建收藏夹")
+        val headerInset = if (viewMode == LibraryViewMode.GRID) 4.dp else 16.dp
+        SingleFileBrowser(
+            files = state.files,
+            viewMode = viewMode,
+            onOpenFile = onOpenFile,
+            onToggleFavorite = viewModel::toggleFavorite,
+            overflowActions = { row ->
+                buildList {
+                    add(RowAction("加入收藏夹…") { membershipTarget = row })
+                    // 有 ID 一键补全；无 ID 先手动关联链接。
+                    if (row.file.youtubeId != null) {
+                        add(RowAction("在线补全信息") { viewModel.enrich(row.file.id) })
+                    } else {
+                        add(RowAction("关联视频链接…") { bindTarget = row })
                     }
+                    add(RowAction("从库中移除") { removeTarget = row })
                 }
-            }
-            item(key = "collections_row") {
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    items(state.collections, key = { it.collection.id }) { entry ->
-                        CollectionCard(entry = entry, onClick = { onOpenCollection(entry.collection.id) })
-                    }
-                }
-            }
-            item(key = "files_header") {
-                Text(
-                    "全部文件",
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                )
-            }
-            items(state.files, key = { it.file.id }) { row ->
-                SingleFileListRow(
-                    row = row,
-                    onClick = { onOpenFile(row.file.id) },
-                    onToggleFavorite = { viewModel.toggleFavorite(row) },
-                    overflowActions = buildList {
-                        add(RowAction("加入收藏夹…") { membershipTarget = row })
-                        // 有 ID 一键补全;无 ID 先手动关联链接(裸文件名无从
-                        // 可靠搜索,见 YouTubeLinkParser KDoc)。
-                        if (row.file.youtubeId != null) {
-                            add(RowAction("在线补全信息") { viewModel.enrich(row.file.id) })
-                        } else {
-                            add(RowAction("关联视频链接…") { bindTarget = row })
+            },
+            headerContent = {
+                Column {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = headerInset, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "收藏夹",
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.weight(1f),
+                        )
+                        IconButton(onClick = { createDialog = true }) {
+                            Icon(Icons.Filled.Add, contentDescription = "新建收藏夹")
                         }
-                        add(RowAction("从库中移除") { removeTarget = row })
-                    },
-                )
-                HorizontalDivider()
-            }
-        }
+                    }
+                    LazyRow(
+                        contentPadding = PaddingValues(horizontal = headerInset),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        items(state.collections, key = { it.collection.id }) { entry ->
+                            CollectionCard(entry = entry, onClick = { onOpenCollection(entry.collection.id) })
+                        }
+                    }
+                    Text(
+                        "全部文件",
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.padding(horizontal = headerInset, vertical = 8.dp),
+                    )
+                }
+            },
+        )
     }
 
     if (createDialog) {
@@ -377,7 +399,6 @@ internal fun SingleFileListRow(
 ) {
     val file = row.file
     val greyed = file.missing
-    var menu by remember { mutableStateOf(false) }
     Row(
         Modifier
             .fillMaxWidth()
@@ -458,22 +479,7 @@ internal fun SingleFileListRow(
                 },
             )
         }
-        Box {
-            IconButton(onClick = { menu = true }) {
-                Icon(Icons.Filled.MoreVert, contentDescription = "更多操作")
-            }
-            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                overflowActions.forEach { item ->
-                    DropdownMenuItem(
-                        text = { Text(item.label) },
-                        onClick = {
-                            menu = false
-                            item.action()
-                        },
-                    )
-                }
-            }
-        }
+        SingleFileOverflowMenu(overflowActions)
     }
 }
 

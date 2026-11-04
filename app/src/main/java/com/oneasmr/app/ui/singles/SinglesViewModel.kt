@@ -12,6 +12,8 @@ import com.oneasmr.app.data.local.OneAsmrDatabase
 import com.oneasmr.app.data.local.PlaybackStateDao
 import com.oneasmr.app.data.local.SingleFile
 import com.oneasmr.app.data.local.SingleFileDao
+import com.oneasmr.app.data.local.settings.LibraryViewMode
+import com.oneasmr.app.data.local.settings.SettingsStore
 import com.oneasmr.app.data.repository.EnrichOutcome
 import com.oneasmr.app.data.repository.RootGrantStatus
 import com.oneasmr.app.data.repository.ScanRootKind
@@ -31,14 +33,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-
-/** 全部文件列表的排序模式(仅会话内,不落盘)。 */
-enum class SinglesOrder(val label: String) {
-    ADDED_DESC("最近加入"),
-    TITLE("标题"),
-    DURATION_DESC("时长"),
-}
 
 /** 一行文件 + 派生的展示态(收藏、续播进度)。 */
 data class SingleFileRow(
@@ -51,7 +47,8 @@ data class SingleFileRow(
 data class SinglesUiState(
     val collections: List<CollectionWithCount> = emptyList(),
     val files: List<SingleFileRow> = emptyList(),
-    val order: SinglesOrder = SinglesOrder.ADDED_DESC,
+    val order: SinglesOrder = SinglesOrder.ADDED,
+    val sortDescending: Boolean = true,
     /** fileId -> 所属收藏夹 id 集(归属对话框勾选态的种子)。 */
     val memberships: Map<Long, Set<Long>> = emptyMap(),
     /** 是否已配置任何单文件库根(空态文案分流:去设置 vs 去扫描)。 */
@@ -74,12 +71,20 @@ class SinglesViewModel @Inject constructor(
     private val enricher: SingleFileEnricher,
     playbackStateDao: PlaybackStateDao,
     rootRepository: ScanRootRepository,
+    private val settingsStore: SettingsStore,
 ) : ViewModel() {
 
     private val thumbStore =
         SingleThumbStore(File(context.filesDir, ScanLibraryWorker.SINGLE_THUMBS_DIR))
 
-    private val order = MutableStateFlow(SinglesOrder.ADDED_DESC)
+    private val sorting = MutableStateFlow(SinglesSort())
+
+    val viewMode: StateFlow<LibraryViewMode> = settingsStore.singlesViewMode
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), LibraryViewMode.LIST)
+
+    fun setViewMode(mode: LibraryViewMode) {
+        viewModelScope.launch { settingsStore.setSinglesViewMode(mode) }
+    }
 
     /** 一次性提示文案(补全结果等);UI 消费后置 null。 */
     val message = MutableStateFlow<String?>(null)
@@ -94,8 +99,8 @@ class SinglesViewModel @Inject constructor(
         collectionDao.collectionsWithCountFlow(),
         collectionDao.allItemsFlow(),
         playbackStateDao.getAllForWorkFlow("${KeySpec.SINGLE_SOURCE}:").distinctUntilChanged(),
-        order,
-    ) { files, collections, items, playback, order ->
+        sorting,
+    ) { files, collections, items, playback, sorting ->
         val favoriteIds = items
             .filter { it.collectionId == Collection.FAVORITES_ID }
             .map { it.fileId }
@@ -113,8 +118,9 @@ class SinglesViewModel @Inject constructor(
         }
         SinglesUiState(
             collections = collections,
-            files = sort(rows, order),
-            order = order,
+            files = sorting.sort(rows),
+            order = sorting.order,
+            sortDescending = sorting.descending,
             memberships = items.groupBy({ it.fileId }, { it.collectionId }).mapValues { it.value.toSet() },
             hasSingleRoot = rootRepository.entries.value.any {
                 it.status == RootGrantStatus.AUTHORIZED && it.root.kind != ScanRootKind.WORKS
@@ -126,22 +132,12 @@ class SinglesViewModel @Inject constructor(
         .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SinglesUiState())
 
-    private fun sort(rows: List<SingleFileRow>, order: SinglesOrder): List<SingleFileRow> =
-        when (order) {
-            SinglesOrder.ADDED_DESC -> rows.sortedWith(
-                compareByDescending<SingleFileRow> { it.file.addedAt }.thenBy { it.file.id },
-            )
-            SinglesOrder.TITLE -> rows.sortedWith(
-                compareBy<SingleFileRow> { it.file.titleSortKey }.thenBy { it.file.id },
-            )
-            SinglesOrder.DURATION_DESC -> rows.sortedWith(
-                // 未知时长沉底(compareByDescending 会把 null 当最小,恰好符合)。
-                compareByDescending<SingleFileRow> { it.file.durationMs ?: -1L }.thenBy { it.file.id },
-            )
-        }
-
     fun setOrder(newOrder: SinglesOrder) {
-        order.value = newOrder
+        sorting.update { it.select(newOrder) }
+    }
+
+    fun setSortDescending(descending: Boolean) {
+        sorting.update { it.copy(descending = descending) }
     }
 
     fun toggleFavorite(row: SingleFileRow) {
