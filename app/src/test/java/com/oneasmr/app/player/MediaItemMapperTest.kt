@@ -2,10 +2,12 @@ package com.oneasmr.app.player
 
 import android.net.Uri
 import androidx.media3.common.MediaItem
+import com.oneasmr.app.data.local.KeySpec
 import com.oneasmr.app.domain.player.PlayQueue
 import com.oneasmr.app.domain.player.PlayQueueItem
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -78,6 +80,37 @@ class MediaItemMapperTest {
             "oneasmr-cover://local/RJ100200?censored=1",
             item("content://doc/t3").toMediaItem(censored = true).mediaMetadata.artworkUri.toString(),
         )
+    }
+
+    @Test
+    fun `censored queue retains real title for restoring display and persistence`() {
+        val hidden = item("content://doc/t3").toMediaItem(censored = true)
+        assertEquals("音频 3", hidden.mediaMetadata.title.toString())
+        assertEquals("track3.wav", hidden.originalTrackTitle())
+
+        val shown = hidden.withContentSafety(censored = false)
+        assertEquals("track3.wav", shown.mediaMetadata.title.toString())
+        assertEquals(hidden.mediaId, shown.mediaId)
+        assertEquals(hidden.localConfiguration?.uri, shown.localConfiguration?.uri)
+        assertEquals(coverArtUri("local", "RJ100200", false), shown.mediaMetadata.artworkUri)
+        assertSame(shown, shown.withContentSafety(censored = false))
+    }
+
+    @Test
+    fun `live restriction can hide and restore an existing queue without a player screen`() {
+        val shown = item("content://doc/t3").toMediaItem(censored = false)
+        val hidden = shown.withContentSafety(censored = true)
+        assertEquals("音频 3", hidden.mediaMetadata.title.toString())
+        assertEquals(coverArtUri("local", "RJ100200", true), hidden.mediaMetadata.artworkUri)
+        assertEquals("track3.wav", hidden.withContentSafety(censored = false).mediaMetadata.title.toString())
+    }
+
+    @Test
+    fun `single file metadata is unaffected by work restrictions`() {
+        val single = item("content://doc/t3").toMediaItem(censored = false).buildUpon()
+            .setMediaId(KeySpec.singleFileTrackKey(42))
+            .build()
+        assertSame(single, single.withContentSafety(censored = true))
     }
 
     @Test

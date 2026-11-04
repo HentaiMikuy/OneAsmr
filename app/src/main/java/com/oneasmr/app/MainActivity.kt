@@ -27,10 +27,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.oneasmr.app.data.local.settings.SettingsStore
+import com.oneasmr.app.data.local.settings.ContentSafetySettings
 import com.oneasmr.app.data.local.settings.ThemeMode
 import com.oneasmr.app.data.local.settings.resolveDarkTheme
 import com.oneasmr.app.navigation.OneAsmrNavHost
-import com.oneasmr.app.ui.common.LocalNsfwEnabled
+import com.oneasmr.app.ui.common.LocalContentSafety
 import com.oneasmr.app.ui.common.OneAsmrTheme
 import com.oneasmr.app.ui.launch.LaunchAnimatedStart
 import com.oneasmr.app.ui.launch.LaunchAnimationSession
@@ -120,11 +121,12 @@ class MainActivity : ComponentActivity() {
         setContent {
             val themeMode by settingsStore.themeMode.collectAsStateWithLifecycle(initialValue = ThemeMode.SYSTEM)
             val dynamicColor by settingsStore.dynamicColor.collectAsStateWithLifecycle(initialValue = true)
-            val nsfwEnabled by settingsStore.nsfwEnabled.collectAsStateWithLifecycle(initialValue = true)
+            val contentSafety by settingsStore.contentSafety.collectAsStateWithLifecycle(
+                initialValue = ContentSafetySettings.LOADING,
+            )
             val nsfwChoiceAsked by settingsStore.nsfwChoiceAsked.collectAsStateWithLifecycle(initialValue = false)
-            // 安全模式开关必须在任何封面渲染之前注入(LocalNsfwEnabled 的
-            // 默认值是"开启",提前提供否则首帧会泄露敏感封面)。
-            CompositionLocalProvider(LocalNsfwEnabled provides nsfwEnabled) {
+            // 设置读出前先限制显示，两个开关从同一偏好快照注入。
+            CompositionLocalProvider(LocalContentSafety provides contentSafety) {
                 OneAsmrTheme(
                     darkTheme = themeMode.resolveDarkTheme(isSystemInDarkTheme()),
                     dynamicColor = dynamicColor,
@@ -183,7 +185,7 @@ class MainActivity : ComponentActivity() {
                         },
                     ) {
                         OneAsmrNavHost(deepLinkIntent = deepLinkIntent)
-                        if (!nsfwChoiceAsked) {
+                        if (!nsfwChoiceAsked && !contentSafety.absoluteRestrictionEnabled) {
                             NsfwChoiceDialog(settingsStore = settingsStore)
                         }
                     }

@@ -108,7 +108,6 @@ import com.oneasmr.app.data.local.SingleFile
 import com.oneasmr.app.data.local.SingleFileDao
 import com.oneasmr.app.data.local.SingleFileKind
 import com.oneasmr.app.data.local.WorkDao
-import com.oneasmr.app.data.local.isCensored
 import com.oneasmr.app.data.local.settings.SettingsStore
 import com.oneasmr.app.data.scanner.DocumentFs
 import com.oneasmr.app.data.scanner.FsEntry
@@ -1727,7 +1726,7 @@ class VideoPlayerViewModel @Inject constructor(
         val parts = checkNotNull(KeySpec.parseWorkId(work.id))
         // 通知栏封面:作品附属视频沿用作品封面与和谐决策(安全模式下
         // 同样只显示默认占位,见 MediaItemMapper.coverArtUri)。
-        val censoredArt = !settingsStore.nsfwEnabled.first() && work.ageRating.isCensored()
+        val censoredArt = settingsStore.contentSafety.first().shouldCensor(work.ageRating)
         val artwork = coverArtUri(parts.sourceScope, parts.rjCode, censoredArt)
         return runCatching {
             val fs = fsFactory.create(work.rootFolderUri)

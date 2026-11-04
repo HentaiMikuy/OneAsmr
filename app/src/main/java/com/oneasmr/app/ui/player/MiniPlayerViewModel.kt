@@ -106,7 +106,7 @@ class MiniPlayerViewModel @Inject constructor(
  * Thumb input of the playing item ([MiniPlayerViewModel.cover]).
  *
  * [Work.ageRating] drives safe-mode masking through the shared
- * [com.oneasmr.app.ui.common.safeModeHidesCover] rule (null = 未标记, so a
+ * [com.oneasmr.app.data.local.settings.ContentSafetySettings.shouldCensor] rule (null = 未标记, so a
  * lock under safe mode — exactly like an unrated work in the library grid).
  * [Work.rootFolderUri]/[Work.relativeDir] are the work-folder locators for
  * CoverStore's bundled-cover fallback, the same pair a library card passes;

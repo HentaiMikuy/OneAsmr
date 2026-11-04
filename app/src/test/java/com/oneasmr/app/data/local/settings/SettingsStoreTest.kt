@@ -226,6 +226,7 @@ class SettingsStoreTest {
         val store = storeIn(file("nsfw-default").open())
         assertEquals(true, store.nsfwEnabled.first())
         assertEquals(false, store.nsfwChoiceAsked.first())
+        assertEquals(ContentSafetySettings(), store.contentSafety.first())
     }
 
     @Test
@@ -237,6 +238,29 @@ class SettingsStoreTest {
         val restarted = storeIn(tf.restart())
         assertEquals(false, restarted.nsfwEnabled.first())
         assertEquals(true, restarted.nsfwChoiceAsked.first())
+    }
+
+    @Test
+    fun `absolute restriction persists and prevents nsfw changes until disabled`() = runTest {
+        for (nsfwEnabled in listOf(false, true)) {
+            val tf = file("absolute-$nsfwEnabled")
+            val store = storeIn(tf.open())
+            store.setNsfwEnabled(nsfwEnabled)
+            store.setAbsoluteRestrictionEnabled(true)
+            val restarted = storeIn(tf.restart())
+            assertEquals(
+                ContentSafetySettings(nsfwEnabled, absoluteRestrictionEnabled = true),
+                restarted.contentSafety.first(),
+            )
+            restarted.setNsfwEnabled(!nsfwEnabled)
+            assertEquals(nsfwEnabled, restarted.nsfwEnabled.first())
+            assertFalse(restarted.contentSafety.first().effectiveNsfwEnabled)
+
+            restarted.setAbsoluteRestrictionEnabled(false)
+            assertEquals(ContentSafetySettings(nsfwEnabled), restarted.contentSafety.first())
+            restarted.setNsfwEnabled(!nsfwEnabled)
+            assertEquals(!nsfwEnabled, restarted.nsfwEnabled.first())
+        }
     }
 
     // ---------- 冷启动启动动画 ----------

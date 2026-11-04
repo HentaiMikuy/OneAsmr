@@ -25,10 +25,12 @@ import com.oneasmr.app.data.repository.CoverType
  * Uses the default Coil singleton loader, which OneAsmrApp wires to the
  * Hilt-provided ImageLoader (CoverModule).
  *
- * Safe-mode hook: with NSFW off (see [LocalNsfwEnabled]) and a sensitive
- * [ageRating] (null/R15/R18) the cover renders as [FrostedCensoredCover]
+ * Safe-mode hook: [LocalContentSafety] censors sensitive [ageRating] values
+ * (null/R15/R18) with NSFW off, and all ratings under absolute restriction.
+ * The cover renders as [FrostedCensoredCover]
  * instead — a tiny (24px) decode box-blurred on the CPU plus a frosted
- * overlay, never a full-resolution decode. The decision comes from [safeModeHidesCover]
+ * overlay, never a full-resolution decode. The decision comes from
+ * [com.oneasmr.app.data.local.settings.ContentSafetySettings.shouldCensor]
  * and nowhere else, so every caller that passes the work row's real rating
  * (list card, search row, mini player) masks the cover at exactly the same
  * threshold.
@@ -55,7 +57,7 @@ fun CoverImage(
     LaunchedEffect(rjCode, type, rootFolderUri, relativeDir) {
         model = coverStore.coverModelFor(rjCode, type, rootFolderUri, relativeDir)
     }
-    if (safeModeHidesCover(LocalNsfwEnabled.current, ageRating)) {
+    if (LocalContentSafety.current.shouldCensor(ageRating)) {
         FrostedCensoredCover(model = model, modifier = modifier)
         return
     }

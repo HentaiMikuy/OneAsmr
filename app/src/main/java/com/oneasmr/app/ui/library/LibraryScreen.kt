@@ -97,7 +97,6 @@ import androidx.paging.cachedIn
 import androidx.paging.compose.LazyPagingItems
 import androidx.paging.compose.collectAsLazyPagingItems
 import com.oneasmr.app.data.local.AgeRating
-import com.oneasmr.app.data.local.isCensored
 import com.oneasmr.app.data.local.OneAsmrDatabase
 import com.oneasmr.app.data.local.ProgressState
 import com.oneasmr.app.data.local.ScrapeStatus
@@ -122,7 +121,7 @@ import com.oneasmr.app.data.scanner.removeWork
 import com.oneasmr.app.navigation.LocalBottomClusterHeight
 import coil3.compose.AsyncImage
 import com.oneasmr.app.ui.common.FrostedCensoredCover
-import com.oneasmr.app.ui.common.LocalNsfwEnabled
+import com.oneasmr.app.ui.common.LocalContentSafety
 import com.oneasmr.app.ui.common.formatScanSummary
 import com.oneasmr.app.ui.common.progressLabel
 import com.oneasmr.app.ui.common.rememberPressScale
@@ -207,6 +206,13 @@ fun LibraryScreen(
             Text(
                 "作品库",
                 style = MaterialTheme.typography.displaySmall,
+                maxLines = 1,
+            )
+            Text(
+                text = state.workCount.toString(),
+                modifier = Modifier.padding(start = 12.dp),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
             )
             Spacer(Modifier.weight(1f))
@@ -1072,7 +1078,7 @@ private fun LibraryCoverImage(
     modifier: Modifier = Modifier,
     colorFilter: ColorFilter? = null,
 ) {
-    val censored = censored || (!LocalNsfwEnabled.current && ageRating.isCensored())
+    val censored = censored || LocalContentSafety.current.shouldCensor(ageRating)
     var model by remember(rjCode, type, rootFolderUri, relativeDir) { mutableStateOf<Any?>(null) }
     LaunchedEffect(rjCode, type, rootFolderUri, relativeDir) {
         model = coverStore.coverModelFor(rjCode, type, rootFolderUri, relativeDir)

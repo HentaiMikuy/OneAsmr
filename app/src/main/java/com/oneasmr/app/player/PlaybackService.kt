@@ -36,7 +36,6 @@ import com.oneasmr.app.data.local.ProgressState
 import com.oneasmr.app.data.local.Review
 import com.oneasmr.app.data.local.ReviewDao
 import com.oneasmr.app.data.local.WorkDao
-import com.oneasmr.app.data.local.isCensored
 import com.oneasmr.app.data.local.settings.PersistedQueue
 import com.oneasmr.app.data.local.settings.QueueStore
 import com.oneasmr.app.data.local.settings.SettingsStore
@@ -49,10 +48,12 @@ import javax.inject.Inject
 import kotlin.random.Random
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 /**
@@ -168,6 +169,8 @@ class PlaybackService : MediaSessionService() {
 
     private var savedAudioContext: SavedAudioContext? = null
     private var videoMode: Boolean = false
+    private var contentSafetyJob: Job? = null
+    private var updatingContentSafety: Boolean = false
 
     override fun onCreate() {
         super.onCreate()
@@ -214,6 +217,12 @@ class PlaybackService : MediaSessionService() {
             sleepTimer.state.collect {
                 updateButtonLabels()
                 broadcastSleepTimerState()
+            }
+        }
+        // 即使播放页已退出，设置切换仍必须刷新通知栏的封面与曲名。
+        serviceScope.launch {
+            settingsStore.contentSafety.distinctUntilChanged().collect {
+                refreshSessionContentSafety()
             }
         }
         restoreSession()
@@ -549,7 +558,10 @@ class PlaybackService : MediaSessionService() {
 
     private val queueSnapshotListener = object : Player.Listener {
         override fun onTimelineChanged(timeline: Timeline, reason: Int) {
-            captureSession()
+            if (!updatingContentSafety) {
+                captureSession()
+                refreshSessionContentSafety()
+            }
         }
 
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
@@ -737,7 +749,7 @@ class PlaybackService : MediaSessionService() {
                     sourceScope = parts.sourceScope,
                     rjCode = parts.rjCode,
                     trackIndex = parts.trackIndex,
-                    trackTitle = mediaItem.mediaMetadata.title?.toString() ?: "",
+                    trackTitle = mediaItem.originalTrackTitle().orEmpty(),
                     workTitle = mediaItem.mediaMetadata.artist?.toString() ?: "",
                     uri = mediaItem.localConfiguration?.uri?.toString() ?: "",
                 )
@@ -780,6 +792,51 @@ class PlaybackService : MediaSessionService() {
                     ),
                 )
             }
+        }
+    }
+
+    /** 更新显示元数据，不重建队列，保留播放进度、播放状态和随机顺序。 */
+    private fun refreshSessionContentSafety() {
+        contentSafetyJob?.cancel()
+        contentSafetyJob = serviceScope.launch {
+            val settings = settingsStore.contentSafety.first()
+            val decisions = mutableMapOf<String, Boolean>()
+            val items = (0 until player.mediaItemCount).map(player::getMediaItemAt) +
+                savedAudioContext?.items.orEmpty()
+            val workIds = items.mapNotNull { item ->
+                val parts = KeySpec.parseTrackKey(item.mediaId)
+                parts?.takeIf { it.sourceScope == KeySpec.LOCAL_SOURCE }
+                    ?.let { KeySpec.workId(it.sourceScope, it.rjCode) }
+            }.distinct()
+            for (workId in workIds) {
+                decisions[workId] = settings.shouldCensor(workDao.getById(workId)?.ageRating)
+            }
+            // 视频暂存的音频队列也同步，返回音频时直接恢复当前规则下的元数据。
+            savedAudioContext = savedAudioContext?.let { saved ->
+                saved.copy(items = saved.items.map { item ->
+                    val parts = KeySpec.parseTrackKey(item.mediaId)
+                    val censored = parts?.let { decisions[KeySpec.workId(it.sourceScope, it.rjCode)] }
+                    if (censored == null) item else item.withContentSafety(censored)
+                })
+            }
+            // 查询期间队列可能已改变，只为仍能匹配到本次决策的作品更新。
+            var changed = false
+            updatingContentSafety = true
+            try {
+                for (index in 0 until player.mediaItemCount) {
+                    val item = player.getMediaItemAt(index)
+                    val parts = KeySpec.parseTrackKey(item.mediaId) ?: continue
+                    val censored = decisions[KeySpec.workId(parts.sourceScope, parts.rjCode)] ?: continue
+                    val updated = item.withContentSafety(censored, hideTrackTitle = !videoMode)
+                    if (updated !== item) {
+                        changed = true
+                        player.replaceMediaItem(index, updated)
+                    }
+                }
+            } finally {
+                updatingContentSafety = false
+            }
+            if (changed) captureSession()
         }
     }
 
@@ -830,14 +887,13 @@ class PlaybackService : MediaSessionService() {
             val startKey = persisted.items.getOrNull(startIndex)
                 ?.let { KeySpec.trackKey(it.sourceScope, it.rjCode, it.trackIndex) }
             val startPositionMs = resumePositionResolver.resolve(startKey)
-            // 通知栏封面(见 MediaItemMapper):冷恢复也要按当前 NSFW 开关 +
-            // 作品评级重建和谐决策,否则恢复出的队列在安全模式下会漏出真实封面。
+            // 冷恢复同样遵循绝对限制、NSFW 和作品评级的统一显示规则。
             val work = if (KeySpec.parseWorkId(persisted.workId)?.sourceScope == KeySpec.LOCAL_SOURCE) {
                 workDao.getById(persisted.workId)
             } else {
                 null
             }
-            val censoredArt = !settingsStore.nsfwEnabled.first() && work?.ageRating.isCensored()
+            val censoredArt = settingsStore.contentSafety.first().shouldCensor(work?.ageRating)
             player.setMediaItems(persisted.items.map { it.toMediaItem(censoredArt) }, startIndex, startPositionMs)
             Log.i(
                 TAG,

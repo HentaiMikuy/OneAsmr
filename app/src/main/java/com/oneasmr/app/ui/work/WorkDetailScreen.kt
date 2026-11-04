@@ -88,7 +88,6 @@ import coil3.compose.AsyncImage
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.oneasmr.app.data.local.AgeRating
-import com.oneasmr.app.data.local.isCensored
 import com.oneasmr.app.data.local.KeySpec
 import com.oneasmr.app.data.local.ProgressState
 import com.oneasmr.app.data.local.ScrapeStatus
@@ -102,7 +101,7 @@ import com.oneasmr.app.data.scanner.TrackNodeType
 import com.oneasmr.app.domain.trackgroup.TrackGroup
 import com.oneasmr.app.domain.trackgroup.TrackGroupResult
 import com.oneasmr.app.ui.common.FrostedCensoredCover
-import com.oneasmr.app.ui.common.LocalNsfwEnabled
+import com.oneasmr.app.ui.common.LocalContentSafety
 import com.oneasmr.app.ui.common.sharedWorkCover
 import com.oneasmr.app.ui.library.rememberCoverStore
 
@@ -489,8 +488,8 @@ private fun WorkHeader(
             rjCode, CoverType.THUMB_360, work.rootFolderUri, work.relativeDir,
         )
     }
-    // 安全模式:敏感作品(未分级/R15/R18)的 backdrop 与 hero 都换成毛玻璃封面。
-    val censored = !LocalNsfwEnabled.current && work.ageRating.isCensored()
+    // 安全模式限制敏感评级，绝对限制则对所有作品应用毛玻璃封面。
+    val censored = LocalContentSafety.current.shouldCensor(work.ageRating)
     // 封面边长显式取屏宽 0.62 份，背景高度随之推导（见 KDoc），
     // 不再用固定 420dp 去凑按宽度比例变化的封面。
     val coverSize = (LocalConfiguration.current.screenWidthDp * 0.62f).dp

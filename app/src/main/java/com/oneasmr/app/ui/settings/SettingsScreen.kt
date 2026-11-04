@@ -92,6 +92,7 @@ import com.oneasmr.app.BuildConfig
 import com.oneasmr.app.data.local.ScrapeStatus
 import com.oneasmr.app.data.local.WorkDao
 import com.oneasmr.app.data.local.settings.ResumeMode
+import com.oneasmr.app.data.local.settings.ContentSafetySettings
 import com.oneasmr.app.data.local.settings.ScrapingLanguage
 import com.oneasmr.app.data.local.settings.SettingsStore
 import com.oneasmr.app.data.local.settings.ThemeMode
@@ -150,7 +151,7 @@ fun SettingsScreen(
     val asmrOneFallbackEnabled by viewModel.asmrOneFallbackEnabled.collectAsStateWithLifecycle()
     val asmrOneBaseUrl by viewModel.asmrOneBaseUrl.collectAsStateWithLifecycle()
     val asmrOneMirrorDialogVisible by viewModel.asmrOneMirrorDialogVisible.collectAsStateWithLifecycle()
-    val nsfwEnabled by viewModel.nsfwEnabled.collectAsStateWithLifecycle()
+    val contentSafety by viewModel.contentSafety.collectAsStateWithLifecycle()
     val updateState by updateViewModel.state.collectAsStateWithLifecycle()
     var updateDialogVisible by rememberSaveable { mutableStateOf(false) }
     var installAfterPermission by rememberSaveable { mutableStateOf(false) }
@@ -362,15 +363,35 @@ fun SettingsScreen(
         },
         SettingsEntry(
             SettingsSection.LIBRARY,
+            "绝对限制",
+            "绝对限制 强制 安全模式 全年龄 分级 隐私 隐藏 模糊 封面 曲名 nsfw",
+        ) { shape ->
+            SettingsSwitchItem(
+                icon = Icons.Outlined.Shield,
+                title = "绝对限制",
+                subtitle = "忽略年龄分级，所有作品的封面与曲名均按敏感内容处理；开启后 NSFW 模式失效且不可修改",
+                checked = contentSafety.absoluteRestrictionEnabled,
+                onCheckedChange = viewModel::setAbsoluteRestrictionEnabled,
+                shape = shape,
+                accent = SettingsAccent.Secondary,
+            )
+        },
+        SettingsEntry(
+            SettingsSection.LIBRARY,
             "NSFW 模式",
             "nsfw 安全模式 成人 r18 r15 分级 隐私 隐藏 封面 曲名",
         ) { shape ->
             SettingsSwitchItem(
                 icon = Icons.Outlined.Shield,
                 title = "NSFW 模式",
-                subtitle = "关闭后进入安全模式：未分级/R15/R18 作品的封面与曲名将被隐藏",
-                checked = nsfwEnabled,
+                subtitle = if (contentSafety.absoluteRestrictionEnabled) {
+                    "绝对限制已开启，NSFW 模式暂时失效；关闭绝对限制后恢复原设置"
+                } else {
+                    "关闭后进入安全模式：未分级/R15/R18 作品的封面与曲名将被隐藏"
+                },
+                checked = contentSafety.effectiveNsfwEnabled,
                 onCheckedChange = viewModel::setNsfwEnabled,
+                enabled = !contentSafety.absoluteRestrictionEnabled,
                 shape = shape,
                 accent = SettingsAccent.Secondary,
             )
@@ -1074,6 +1095,8 @@ class SettingsViewModel @Inject constructor(
         .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, "")
     val nsfwEnabled: StateFlow<Boolean> = settingsStore.nsfwEnabled
         .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, true)
+    val contentSafety: StateFlow<ContentSafetySettings> = settingsStore.contentSafety
+        .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, ContentSafetySettings.LOADING)
 
     private val _cacheUsageBytes = MutableStateFlow(0L)
     val cacheUsageBytes: StateFlow<Long> = _cacheUsageBytes.asStateFlow()
@@ -1130,6 +1153,10 @@ class SettingsViewModel @Inject constructor(
 
     fun setNsfwEnabled(enabled: Boolean) {
         viewModelScope.launch { settingsStore.setNsfwEnabled(enabled) }
+    }
+
+    fun setAbsoluteRestrictionEnabled(enabled: Boolean) {
+        viewModelScope.launch { settingsStore.setAbsoluteRestrictionEnabled(enabled) }
     }
 
     fun setResumeMode(mode: ResumeMode) {

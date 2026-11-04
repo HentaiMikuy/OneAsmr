@@ -466,6 +466,24 @@ class SettingsViewModelTest {
         assertEquals(true, harness.viewModel.nsfwEnabled.first { it })
     }
 
+    @Test
+    fun `absolute restriction overrides nsfw and restores the saved choice when disabled`() = runTest(scheduler) {
+        harness.viewModel.contentSafety.first { !it.absoluteRestrictionEnabled }
+        harness.viewModel.setNsfwEnabled(true)
+        harness.viewModel.setAbsoluteRestrictionEnabled(true)
+        val restricted = harness.viewModel.contentSafety.first { it.absoluteRestrictionEnabled }
+        assertTrue(restricted.nsfwEnabled)
+        assertTrue(!restricted.effectiveNsfwEnabled)
+        assertTrue(settings.contentSafety.first().absoluteRestrictionEnabled)
+
+        harness.viewModel.setNsfwEnabled(false)
+        scheduler.advanceUntilIdle()
+        assertTrue(settings.nsfwEnabled.first())
+
+        harness.viewModel.setAbsoluteRestrictionEnabled(false)
+        assertTrue(harness.viewModel.contentSafety.first { !it.absoluteRestrictionEnabled }.effectiveNsfwEnabled)
+    }
+
     // ---- 冷启动启动动画开关 --------------------------------------------------
 
     @Test

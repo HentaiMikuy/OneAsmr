@@ -197,9 +197,18 @@ class SettingsStore @Inject constructor(
      * NSFW 模式开关(安全模式)。默认开 = 完整显示所有封面与曲名;关 =
      * 安全模式,未分级(null)/R15/R18 作品的封面与曲名被隐藏,适合公共场合。
      * 首次启动的对话框选定一次,之后由设置页开关随时修改。
+     * 此处保留用户原始选择；绝对限制期间不生效，显示端应读取 [contentSafety]。
      */
     val nsfwEnabled: Flow<Boolean> =
         dataStore.data.map { it[KEY_NSFW_ENABLED] ?: true }
+
+    /** 从同一份偏好快照读取两个开关，显示逻辑统一使用此规则。 */
+    val contentSafety: Flow<ContentSafetySettings> = dataStore.data.map {
+        ContentSafetySettings(
+            nsfwEnabled = it[KEY_NSFW_ENABLED] ?: true,
+            absoluteRestrictionEnabled = it[KEY_ABSOLUTE_RESTRICTION_ENABLED] ?: false,
+        )
+    }
 
     /** 首次启动 NSFW 对话框是否已应答(应答一次后永不再问)。 */
     val nsfwChoiceAsked: Flow<Boolean> =
@@ -246,7 +255,16 @@ class SettingsStore @Inject constructor(
     }
 
     suspend fun setNsfwEnabled(enabled: Boolean) {
-        dataStore.edit { it[KEY_NSFW_ENABLED] = enabled }
+        dataStore.edit {
+            if (it[KEY_ABSOLUTE_RESTRICTION_ENABLED] != true) {
+                it[KEY_NSFW_ENABLED] = enabled
+            }
+        }
+    }
+
+    /** 保留原有 NSFW 选择，解除绝对限制后恢复；限制期间不允许修改它。 */
+    suspend fun setAbsoluteRestrictionEnabled(enabled: Boolean) {
+        dataStore.edit { it[KEY_ABSOLUTE_RESTRICTION_ENABLED] = enabled }
     }
 
     /** Records that the first-launch NSFW dialog was answered (idempotent). */
@@ -326,6 +344,7 @@ class SettingsStore @Inject constructor(
         private val KEY_VIDEO_REPEAT_MODE = intPreferencesKey("video_repeat_mode")
         private val KEY_ASMR_ONE_BASE_URL = stringPreferencesKey("asmr_one_base_url")
         private val KEY_NSFW_ENABLED = booleanPreferencesKey("nsfw_enabled")
+        private val KEY_ABSOLUTE_RESTRICTION_ENABLED = booleanPreferencesKey("absolute_restriction_enabled")
         private val KEY_NSFW_CHOICE_ASKED = booleanPreferencesKey("nsfw_choice_asked")
         private val KEY_LAUNCH_ANIMATION_ENABLED = booleanPreferencesKey("launch_animation_enabled")
 

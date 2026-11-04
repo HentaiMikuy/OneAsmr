@@ -107,10 +107,10 @@ import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
 import com.oneasmr.app.data.local.KeySpec
-import com.oneasmr.app.data.local.isCensored
 import com.oneasmr.app.data.local.Work
 import com.oneasmr.app.data.local.WorkDao
 import com.oneasmr.app.data.local.settings.QueueStore
+import com.oneasmr.app.data.local.settings.ContentSafetySettings
 import com.oneasmr.app.data.local.settings.SettingsStore
 import com.oneasmr.app.data.lyrics.LyricsLoader
 import com.oneasmr.app.data.lyrics.LyricsMatcher
@@ -124,11 +124,10 @@ import com.oneasmr.app.domain.lyrics.LrcLyrics
 import com.oneasmr.app.domain.player.AudioRepeatMode
 import com.oneasmr.app.domain.player.PlayQueue
 import com.oneasmr.app.domain.player.PlaybackSpeed
-import com.oneasmr.app.domain.player.harmonizedTitles
 import com.oneasmr.app.domain.player.safeModeTitle
 import com.oneasmr.app.navigation.Routes
 import com.oneasmr.app.player.PlayQueueBuilder
-import com.oneasmr.app.player.coverArtUri
+import com.oneasmr.app.player.withContentSafety
 import com.oneasmr.app.player.toMediaItems
 import com.oneasmr.app.ui.player.SpeedPickerSheet
 import com.oneasmr.app.player.PlaybackService
@@ -256,8 +255,8 @@ class PlayerViewModel @Inject constructor(
     private var controller: MediaController? = null
     private var controllerFuture: ListenableFuture<MediaController>? = null
 
-    /** NSFW 开关当前值缓存(init 里随 DataStore 流刷新;默认开 = 现状行为)。 */
-    private val nsfwEnabledState = MutableStateFlow(true)
+    /** 随设置流更新的显示规则；设置尚未读出时先限制显示。 */
+    private val contentSafetyState = MutableStateFlow(ContentSafetySettings.LOADING)
 
     /** Live track tree of the playing work (lyrics matching needs it). */
     private var treeRoot: TrackNode? = null
@@ -299,8 +298,8 @@ class PlayerViewModel @Inject constructor(
         // 安全模式开关变化 → 重算封面和谐状态,并把会话队列曲名同步为
         // 「音频 N」或还原真实曲名(见 syncQueueTitlesToSafeMode)。
         viewModelScope.launch {
-            settingsStore.nsfwEnabled.collect { enabled ->
-                nsfwEnabledState.value = enabled
+            settingsStore.contentSafety.collect { settings ->
+                contentSafetyState.value = settings
                 refreshFromController()
                 syncQueueTitlesToSafeMode()
             }
@@ -486,25 +485,20 @@ class PlayerViewModel @Inject constructor(
                     root = tree.root,
                     startTrackIndex = trackIndex,
                 )
-                // 真实曲名先缓存,安全模式开关切回开启时靠它还原(harmonizedTitles 只改 trackTitle)。
+                // 真实曲名先缓存，解除限制时靠它还原。
                 realTitlesByIndex = queue.items.associate { it.trackIndex to it.trackTitle }
                 if (!queue.isPlayable) {
                     throw IllegalStateException("该作品没有可播放的音频")
                 }
-                // 安全模式(NSFW 关 + 敏感评级):队列交给会话前把曲名
+                // 按统一显示规则，在队列交给会话前把曲名
                 // 和谐为「音频 N」,通知栏封面同刻换默认占位 —— 和谐决策
                 // 编码进 artworkUri 的 censored 参数(见 MediaItemMapper)。
-                val censoredArt = !settingsStore.nsfwEnabled.first() && work.ageRating.isCensored()
-                val finalQueue = if (censoredArt) {
-                    queue.harmonizedTitles()
-                } else {
-                    queue
-                }
-                val startItem = finalQueue.items[finalQueue.startIndex]
+                val censoredArt = settingsStore.contentSafety.first().shouldCensor(work.ageRating)
+                val startItem = queue.items[queue.startIndex]
                 val startPositionMs = resumePositionResolver.resolve(
                     KeySpec.trackKey(startItem.sourceScope, startItem.rjCode, startItem.trackIndex),
                 )
-                PlaybackLaunch(finalQueue, startPositionMs, work, censoredArt)
+                PlaybackLaunch(queue, startPositionMs, work, censoredArt)
             }
         }
     }
@@ -513,7 +507,9 @@ class PlayerViewModel @Inject constructor(
         _uiState.update {
             it.copy(
                 workTitle = launch.work.title,
-                trackTitle = launch.queue.items[launch.queue.startIndex].trackTitle,
+                trackTitle = launch.queue.items[launch.queue.startIndex].let { item ->
+                    safeModeTitle(item.trackIndex, item.trackTitle, item.trackTitle, launch.censoredArt).orEmpty()
+                },
             )
         }
         controller.setMediaItems(
@@ -549,17 +545,17 @@ class PlayerViewModel @Inject constructor(
     )
 
     /**
-     * 重算当前封面和谐状态:NSFW 关 且 评级敏感(未分级/R15/R18;评级
-     * 未知按敏感处理) → 封面换占位。评级写入后(详情页设置年龄分级)
+     * 重算当前封面和谐状态：绝对限制，或 NSFW 关且评级敏感时隐藏。
+     * 评级写入后(详情页设置年龄分级)
      * 刷新即生效。
      */
     private fun updateCensored() {
-        val censored = !nsfwEnabledState.value && workRow?.ageRating.isCensored()
+        val censored = contentSafetyState.value.shouldCensor(workRow?.ageRating)
         _uiState.update { it.copy(censored = censored) }
     }
 
     /**
-     * 安全模式开关变化后同步会话队列:NSFW 关 且 评级敏感 → 曲名全部替换
+     * 显示规则变化后同步会话队列：需要限制显示时，曲名全部替换
      * 为「音频 N」且 artworkUri 换和谐形态;重新打开 → 还原真实曲名与真实
      * 封面 URI(真实曲名依赖 [realTitlesByIndex],缺失时先补加载音轨树)。
      * 只换 metadata 里的 title/artworkUri,mediaId/uri 不变;保留当前曲目、
@@ -568,56 +564,34 @@ class PlayerViewModel @Inject constructor(
     private suspend fun syncQueueTitlesToSafeMode() {
         val c = controller ?: return
         if (c.mediaItemCount == 0) return
-        var harmonize = !nsfwEnabledState.value && workRow?.ageRating.isCensored()
+        var harmonize = contentSafetyState.value.shouldCensor(workRow?.ageRating)
         if (!harmonize && realTitlesByIndex.isEmpty()) {
             loadWorkTree()
             if (realTitlesByIndex.isEmpty()) return
             // 补加载后 workRow 已从库刷新(评级可能已变),重新决策,避免用旧评级。
-            harmonize = !nsfwEnabledState.value && workRow?.ageRating.isCensored()
+            harmonize = contentSafetyState.value.shouldCensor(workRow?.ageRating)
         }
         val timeline = c.currentTimeline
-        val replacement = mutableListOf<androidx.media3.common.MediaItem>()
-        var changed = false
+        val replacement = mutableListOf<Pair<Int, androidx.media3.common.MediaItem>>()
         var currentItemTitle: String? = null
         for (i in 0 until timeline.windowCount) {
             val window = androidx.media3.common.Timeline.Window()
             timeline.getWindow(i, window)
             val item = window.mediaItem ?: continue
-            val currentTitle = item.mediaMetadata.title?.toString()
             val parts = item.mediaId?.let(KeySpec::parseTrackKey)
             val trackIndex = parts?.trackIndex
-            val desired = safeModeTitle(
-                trackIndex = trackIndex,
+            val updated = item.withContentSafety(
+                censored = harmonize,
                 realTitle = trackIndex?.let(realTitlesByIndex::get),
-                currentTitle = currentTitle,
-                harmonize = harmonize,
             )
-            // 封面与曲名共用 harmonize 决策:目标 artworkUri 编码了 censored
-            // 状态(Media3 通知侧按 URI 缓存,状态必须进 URI 才能换图)。
-            val desiredArtwork = parts?.let { coverArtUri(it.sourceScope, it.rjCode, harmonize) }
-            val artworkChanged = desiredArtwork != null &&
-                item.mediaMetadata.artworkUri != desiredArtwork
-            if (i == c.currentMediaItemIndex) currentItemTitle = desired ?: currentTitle
-            if ((desired == null || desired == currentTitle) && !artworkChanged) {
-                replacement += item
-                continue
+            if (i == c.currentMediaItemIndex) {
+                currentItemTitle = updated.mediaMetadata.title?.toString()
             }
-            changed = true
-            val metadata = item.mediaMetadata.buildUpon()
-                .setTitle(desired ?: currentTitle)
-                .apply { desiredArtwork?.let(::setArtworkUri) }
-                .build()
-            replacement += item.buildUpon()
-                .setMediaMetadata(metadata)
-                .build()
+            if (updated !== item) replacement += i to updated
         }
-        if (!changed) return
-        val index = c.currentMediaItemIndex
-        val positionMs = c.currentPosition
-        val playWhenReady = c.playWhenReady
-        c.setMediaItems(replacement, index, positionMs)
-        c.playWhenReady = playWhenReady
-        // setMediaItems 异步落地,此刻 refreshFromController 读到的还是旧标题;
+        if (replacement.isEmpty()) return
+        replacement.forEach { (index, item) -> c.replaceMediaItem(index, item) }
+        // 元数据替换异步落地，此刻 refreshFromController 读到的还是旧标题；
         // 曲名按预期值乐观更新,队列面板由 onTimelineChanged 落地后自动刷新。
         _uiState.update { it.copy(trackTitle = currentItemTitle ?: it.trackTitle) }
     }

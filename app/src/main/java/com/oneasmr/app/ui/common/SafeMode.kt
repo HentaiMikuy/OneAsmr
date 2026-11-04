@@ -21,24 +21,10 @@ import coil3.request.transformations
 import coil3.size.Precision
 import coil3.size.Size
 import coil3.transform.Transformation
-import com.oneasmr.app.data.local.AgeRating
-import com.oneasmr.app.data.local.isCensored
+import com.oneasmr.app.data.local.settings.ContentSafetySettings
 
-/** 全局 NSFW 模式开关(MainActivity 从 SettingsStore 提供)。 */
-val LocalNsfwEnabled = staticCompositionLocalOf { true }
-
-/**
- * 封面和谐判定(UI 侧单一权威):安全模式(NSFW 关)且评级敏感时隐藏。
- * 评级未知(null,尚未在详情页标记或作品行查不到)按敏感处理 —— 安全第一,
- * 与 [FrostedCensoredCover] 的"宁可多糊一个"立场一致。
- *
- * 入参是作品行的真实评级(列表查询/VM 已带出),不是预先算好的"是否和谐"
- * 布尔值 —— 判定只此一处,胶囊与作品库不可能各锁一半。播放服务的通知栏
- * 封面是同一规则的另一执行点:那边没有 CompositionLocal 可读,改为在构建
- * 队列时把决策编码进 artworkUri(见 CoverArtBitmapLoader)。
- */
-fun safeModeHidesCover(nsfwEnabled: Boolean, ageRating: AgeRating?): Boolean =
-    !nsfwEnabled && ageRating.isCensored()
+/** MainActivity 提供的全局显示规则；UI 与播放服务使用同一 shouldCensor 判定。 */
+val LocalContentSafety = staticCompositionLocalOf { ContentSafetySettings.LOADING }
 
 /**
  * 和谐封面「毛玻璃」效果:把真实封面以 [FROSTED_DECODE_PX] 像素的极小尺寸
